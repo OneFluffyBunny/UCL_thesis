@@ -29,8 +29,8 @@ def CMAES(config, fitness):
     print("\n ♪┏(°.°)┛┗(°.°)┓ Starting Evolution ┗(°.°)┛┏(°.°)┓ ♪ \n")
     tic = time.time()
 
-    objective_solution_best = np.Inf
-    objective_solution_centroid = np.Inf
+    objective_solution_best = np.inf
+    objective_solution_centroid = np.inf
     objectives_centroid = []
     objectives_best = []
     gen = 0
@@ -62,6 +62,9 @@ def CMAES(config, fitness):
 
             if gen % config["print_every"] == 0:
                 es.disp()
+                best_score = -es.best.f if config["maximise"] else es.best.f
+                pop_mean_score = -np.mean(fitvals) if config["maximise"] else np.mean(fitvals)
+                print(f"  Gen {gen:4d} | Best: {best_score:.2f}/4 correct | Pop mean: {pop_mean_score:.2f}/4 | Sigma: {es.sigma:.4f}")
 
             # Store best solution
             objective_current_best_sol = es.best.f
@@ -71,7 +74,7 @@ def CMAES(config, fitness):
                 solution_best = es.best.x
 
             # Store best mean solution
-            objective_current_centroid_sol = es.fit.fit.mean()
+            objective_current_centroid_sol = np.mean(es.fit.fit)
             objectives_centroid.append(objective_current_centroid_sol)
             if objective_current_centroid_sol <= objective_solution_centroid:
                 objective_solution_centroid = objective_current_centroid_sol
