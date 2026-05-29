@@ -65,6 +65,7 @@ mlp_weight_values_bias: True
 transform_model_bias: True
 
 recurrent_activation_function: "tanh" #  null
+use_torch: false  # if false, MLP forward passes run in numpy (faster for small networks)
 
 ############################
 # Training hyperparameters #
