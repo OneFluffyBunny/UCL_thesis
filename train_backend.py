@@ -12,7 +12,10 @@ import powerlaw
 from scipy.stats import kstest
 from typing import List, Tuple, Dict, Union, Optional, Callable
 
-from NDP import *
+from NDP import (MLP, NumpyMLP, torch_mlp_to_numpy,
+                  generate_initial_graph, bfs_diameter, W_to_nx,
+                  propagate_features, query_pairs_of_node_embeddings,
+                  predict_new_nodes, update_weights, add_new_nodes)
 from optimizers import CMAES
 from utils import dimensions_env, animate_graph, seed_python_numpy_torch_cuda, environment_max_reward
 
@@ -20,16 +23,16 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.autograd.set_grad_enabled(False)
 
 
-def env_rollout(G: nx.graph, config: dict, render=False, animate_graph_rollout: bool = False, solution_id: str = None, seed: int = None) -> float:
+def env_rollout(W: np.ndarray, config: dict, render=False, animate_graph_rollout: bool = False, solution_id: str = None, seed: int = None) -> float:
     if animate_graph_rollout:
-        graph = copy.deepcopy(G)
+        graph = W_to_nx(W, config["undirected"])
 
     try:
-        diameter = nx.diameter(G.to_undirected())
+        diameter = bfs_diameter(W)
     except:
-        diameter = int(np.sqrt(len(G)))
+        diameter = int(np.sqrt(W.shape[0]))
         print(f"WARNING: Graph is not connected due to prunning. Diameter manually set to {diameter}.")
-    policy_connectivity = nx.to_numpy_array(G)
+    policy_connectivity = W
 
     # Instatiate the environment
     if render:
@@ -59,7 +62,7 @@ def env_rollout(G: nx.graph, config: dict, render=False, animate_graph_rollout: 
         # Visualise the network's information flow
         if animate_graph_rollout:
             animate_graph(
-                G=graph,
+                G=graph,  # graph is already a NetworkX object for visualisation
                 network_state=network_state,
                 celluloid_camera=config["celluloid_camera"],
                 layout=config["layout"],
@@ -84,6 +87,7 @@ def env_rollout(G: nx.graph, config: dict, render=False, animate_graph_rollout: 
             additive_update=config["additive_update"],
             persistent_observation=persistent_observation,
             feature_transformation_model=None,
+            use_torch=config.get("use_torch", False),
         )
 
         # Select action from the output nodes
@@ -131,9 +135,9 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
 
             # Define networks
             if config["shared_intial_graph_bool"]:
-                G = config["shared_intial_graph"]
+                W = config["shared_intial_graph"].copy()
             else:
-                G = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
+                W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
 
             # Initialise the network state
             if config["coevolve_initial_embeddings"]:
@@ -208,15 +212,24 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                     mlp_weight_values.parameters(),
                 )
 
+            # Optionally convert torch MLPs to numpy for faster inference
+            use_torch = config.get("use_torch", False)
+            if not use_torch:
+                mlp_growth_model = torch_mlp_to_numpy(mlp_growth_model)
+                if config["NN_transform_node_embedding_during_growth"]:
+                    mlp_feature_transformation = torch_mlp_to_numpy(mlp_feature_transformation)
+                if config["node_based_growth"] and not config["binary_connectivity"]:
+                    mlp_weight_values = torch_mlp_to_numpy(mlp_weight_values)
+
             network_state = copy.deepcopy(initial_network_state)
             obs_action_dim_tuple = None if "Network" in config["environment"] else (2, 2) if "gate" in config["environment"] else (config["observation_dim"], config["action_dim"])
 
             if render or checksum:
                 ns = np.sum(network_state)
-                gs = np.sum(nx.to_numpy_array(G))
+                gs = np.sum(W)
                 print(f"\nChecksum of initial network state before growth: {ns}")
                 print(f"Checksum of graph G before growth: {gs}")
-                print(f"The final grown graph has {len(G)} nodes and {len(G.edges)} edges.")
+                print(f"The final grown graph has {W.shape[0]} nodes and {int(np.count_nonzero(W))} edges.")
                 config["checksum_best_State_grown"] = ns
                 config["checksum_best_Graph_grown"] = gs
 
@@ -225,7 +238,7 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
 
                 if animate_graph_growth and growth_cycle_nb == 0:
                     animate_graph(
-                        G=G,
+                        G=W_to_nx(W, config["undirected"]),
                         network_state=network_state,
                         celluloid_camera=config["celluloid_camera"],
                         layout=config["layout"],
@@ -237,26 +250,27 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
 
                 # Define network thinking time based on its current diameter
                 try:
-                    diameter = nx.diameter(G.to_undirected())
+                    diameter = bfs_diameter(W)
                 except:
-                    diameter = int(np.sqrt(len(G)))
+                    diameter = int(np.sqrt(W.shape[0]))
                     print(f"\nWARNING: Graph is not connected due to prunning. Diameter manually set to {diameter}.")
                 network_thinking_time = diameter + config["network_thinking_time_extra_growth"]
 
                 # Local propagation of node features — i.e thinking time
                 network_state = propagate_features(
                     network_state=network_state,
-                    W=nx.to_numpy_array(G),
+                    W=W,
                     network_thinking_time=network_thinking_time,
                     recurrent_activation_function=config["recurrent_activation_function"],
                     additive_update=config["additive_update"],
                     persistent_observation=None,
                     feature_transformation_model=mlp_feature_transformation if config["NN_transform_node_embedding_during_growth"] else None,
+                    use_torch=use_torch,
                 )
 
                 if animate_graph_growth:
                     animate_graph(
-                        G=G,
+                        G=W_to_nx(W, config["undirected"]),
                         network_state=network_state,
                         celluloid_camera=config["celluloid_camera"],
                         layout=config["layout"],
@@ -270,7 +284,7 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                 if config["node_pairs_based_growth"]:
                     # Query pairs of node embeddings
                     node_embeddings_concatenated_dict, embeddings_for_growth_model = query_pairs_of_node_embeddings(
-                        W=nx.to_numpy_array(G),
+                        W=W,
                         network_state=network_state,
                         self_link_allowed=config["self_link_allowed_during_querying"],
                     )
@@ -281,22 +295,23 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                     raise NotImplementedError
 
                 # Predict new nodes
-                new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"])
+                new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch)
 
                 # Add new nodes and increase the network_state vector accordingly
-                G, network_state = add_new_nodes(
-                    G=copy.deepcopy(G),
-                    config=config,
+                W, network_state = add_new_nodes(
+                    W=W.copy(),
                     network_state=network_state,
                     node_embeddings_concatenated_dict=node_embeddings_concatenated_dict,
                     new_nodes_predictions=new_nodes_predictions,
                     node_based_growth=config["node_based_growth"],
                     node_pairs_based_growth=config["node_pairs_based_growth"],
+                    binary_connectivity=config["binary_connectivity"],
+                    undirected=config["undirected"],
                 )
 
                 if animate_graph_growth:
                     animate_graph(
-                        G=G,
+                        G=W_to_nx(W, config["undirected"]),
                         network_state=network_state,
                         celluloid_camera=config["celluloid_camera"],
                         layout=config["layout"],
@@ -306,11 +321,11 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                         growth_cycle=growth_cycle_nb,
                     )
 
-                if len(G) > 1 and not config["binary_connectivity"]:
-                    G = update_weights(G=G, network_state=network_state, model=mlp_weight_values, config=config)
+                if W.shape[0] > 1 and not config["binary_connectivity"]:
+                    W = update_weights(W=W, network_state=network_state, model=mlp_weight_values, undirected=config["undirected"], use_torch=use_torch)
                     if animate_graph_growth:
                         animate_graph(
-                            G=G,
+                            G=W_to_nx(W, config["undirected"]),
                             network_state=network_state,
                             celluloid_camera=config["celluloid_camera"],
                             layout=config["layout"],
@@ -321,11 +336,10 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                         )
 
                 if config["prunning_phase"]:
-                    edges_to_be_removed = [(a, b) for a, b, attrs in G.edges(data=True) if abs(attrs["weight"]) <= config["prunning_threshold"]]
-                    G.remove_edges_from(edges_to_be_removed)
+                    W[np.abs(W) <= config["prunning_threshold"]] = 0
                     if animate_graph_growth:
                         animate_graph(
-                            G=G,
+                            G=W_to_nx(W, config["undirected"]),
                             network_state=network_state,
                             celluloid_camera=config["celluloid_camera"],
                             layout=config["layout"],
@@ -337,42 +351,43 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
 
             if render or checksum:
                 ns = np.sum(network_state)
-                gs = np.sum(nx.to_numpy_array(G))
+                gs = np.sum(W)
                 print(f"Checksum of network state after growth: {ns}")
                 print(f"Checksum of graph G after growth: {gs}")
-                print(f"The final grown graph has {len(G)} nodes and {len(G.edges)} edges.")
+                print(f"The final grown graph has {W.shape[0]} nodes and {int(np.count_nonzero(W))} edges.")
                 config["checksum_best_State_grown"] = ns
                 config["checksum_best_Graph_grown"] = gs
 
             if animate_graph_growth:
                 figWeights, axWeights = pyplot.subplots(1, 1, figsize=(12, 8))
                 axWeights.set_title("Weights distributions")
-                axWeights.hist(np.array([G[i][j]["weight"] for (i, j) in G.edges()]), bins=20)
+                edges = np.array(np.nonzero(W)).T
+                axWeights.hist(np.array([W[i, j] for i, j in edges]), bins=20)
                 figWeights.savefig(config["_path"] + "/weights_" + solution_id + ".png")
 
             # Run the environment
             if not animate_graph_growth:  # Here we don't want to render the environment if we are just animating the graph growth when calling visualise_graph()
                 # If the graph is too small, we don't want to evaluate it and return bad score directly
-                if len(G) < config["min_network_size"]:
+                if W.shape[0] < config["min_network_size"]:
                     if render:
                         print("\nNetwork too small")
                     if config["maximise"]:
-                        return len(G) - config["min_network_size"]
+                        return W.shape[0] - config["min_network_size"]
                     else:
-                        return config["min_network_size"] - len(G)
+                        return config["min_network_size"] - W.shape[0]
 
                 mean_episode_reward = 0
                 for _ in range(config["nb_episode_evals"]):
                     if config["environment"] == "SmallWorldNetwork":
-                        episode_reward = small_world_ness_fitness(G=G, niter=5, nrand=10, seed=config["seed"], sigma=config["sigma"], omega=config["omega"], render=render)
+                        episode_reward = small_world_ness_fitness(G=W_to_nx(W, config["undirected"]), niter=5, nrand=10, seed=config["seed"], sigma=config["sigma"], omega=config["omega"], render=render)
                     elif "gate" in config["environment"]:
-                        episode_reward = bool_gates_fitness(G=G, config=config, render=render, animate_graph_rollout=animate_graph_rollout)
+                        episode_reward = bool_gates_fitness(W=W, config=config, render=render, animate_graph_rollout=animate_graph_rollout)
                     elif config["environment"] == "ScaleFreeNetwork":
-                        episode_reward = scalefree_fitness(G=G, ks_test=config["ks_test"], render=render)
+                        episode_reward = scalefree_fitness(G=W_to_nx(W, config["undirected"]), ks_test=config["ks_test"], render=render)
                     else:
                         seed_env_eval = int(np.random.default_rng(config["env_seed"]).integers(2**32, size=1)[0])
                         animate_graph_rollout_ = True if (_ == 0 and animate_graph_rollout) else False
-                        episode_reward = env_rollout(G=G, config=config, render=render, animate_graph_rollout=animate_graph_rollout_, solution_id=solution_id, seed=seed_env_eval)
+                        episode_reward = env_rollout(W=W, config=config, render=render, animate_graph_rollout=animate_graph_rollout_, solution_id=solution_id, seed=seed_env_eval)
                     mean_episode_reward += episode_reward
 
                 if render:
@@ -386,20 +401,19 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             print("\n---------------------------------------------\n")
 
         if config["fewer_edges"]:
-            # print(f'Current reward: {mean_reward}')
             env_max_reward = environment_max_reward(config["environment"])
-            sparsity_penalty = (len(G.edges) / len(G) ** 2) * (env_max_reward)
+            n_nodes = W.shape[0]
+            sparsity_penalty = (np.count_nonzero(W) / n_nodes ** 2) * env_max_reward
             mean_reward -= sparsity_penalty
 
         if config["fewer_nodes"]:
             env_max_reward = environment_max_reward(config["environment"])
-            nb_nodes = len(G)
-            nb_nodes_penalty = 10 * nb_nodes * (env_max_reward)
+            nb_nodes_penalty = 10 * W.shape[0] * env_max_reward
             mean_reward -= nb_nodes_penalty
 
         if config["balanced_weights"]:
             env_max_reward = environment_max_reward(config["environment"])
-            mean_weights = abs(np.array([G[i][j]["weight"] for (i, j) in G.edges()]).mean())
+            mean_weights = abs(W[np.nonzero(W)].mean())
             unbalance_penalty = mean_weights * env_max_reward
             mean_reward -= unbalance_penalty
 
@@ -408,7 +422,7 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
     return fitness
 
 
-def bool_gates_fitness(G: nx.Graph, config: dict, render=False, animate_graph_rollout: bool = False):
+def bool_gates_fitness(W: np.ndarray, config: dict, render=False, animate_graph_rollout: bool = False):
     """
     Returns a scalar measure of how many elements of the boolean gate truth table are correctly predicted by the graph G.
     """
@@ -433,14 +447,14 @@ def bool_gates_fitness(G: nx.Graph, config: dict, render=False, animate_graph_ro
         Y = np.array([1, 0, 0, 1])
 
     if animate_graph_rollout:
-        graph = copy.deepcopy(G)
+        graph = W_to_nx(W, config["undirected"])
 
     try:
-        diameter = nx.diameter(G.to_undirected())
+        diameter = bfs_diameter(W)
     except:
-        diameter = int(np.sqrt(len(G)))
+        diameter = int(np.sqrt(W.shape[0]))
         print(f"WARNING: Graph is not connected due to prunning. Diameter manually set to {diameter}.")
-    policy_connectivity = nx.to_numpy_array(G)
+    policy_connectivity = W
 
     network_state = np.zeros(policy_connectivity.shape[0])
     network_thinking_time = diameter + config["network_thinking_time_extra_rollout"]
@@ -475,6 +489,7 @@ def bool_gates_fitness(G: nx.Graph, config: dict, render=False, animate_graph_ro
             additive_update=config["additive_update"],
             persistent_observation=persistent_observation,
             feature_transformation_model=None,
+            use_torch=config.get("use_torch", False),
         )
 
         # Select action from the output nodes
@@ -630,7 +645,7 @@ def train_model(config):
     )
     print(f"The growth model has {config['nb_trainable_parameters']} trainable parameters")
 
-    # Generate initial graph
+    # Generate initial graph (stored as numpy adjacency matrix)
     if config["shared_intial_graph_bool"]:
         config["shared_intial_graph"] = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], config["seed"])
 
