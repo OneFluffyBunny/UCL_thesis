@@ -65,6 +65,8 @@ mlp_weight_values_bias: True
 transform_model_bias: True
 
 recurrent_activation_function: "tanh" #  null
+use_torch: false  # if false, MLP forward passes run in numpy (faster for small networks)
+profile: false    # if true, print per-component timing breakdown after each fitness eval (run with threads: 1)
 
 ############################
 # Training hyperparameters #
@@ -93,7 +95,7 @@ seed: null
 env_seed: null
 
 # Visualisation and monitoring
-save_model: 1
+save_model: 0
 render: 1
 print_every: 10
 visualise_network: 1

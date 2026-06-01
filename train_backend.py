@@ -12,24 +12,39 @@ import powerlaw
 from scipy.stats import kstest
 from typing import List, Tuple, Dict, Union, Optional, Callable
 
-from NDP import *
+from NDP import (MLP, NumpyMLP, torch_mlp_to_numpy, make_numpy_mlp,
+                  generate_initial_graph, bfs_diameter, W_to_nx,
+                  propagate_features, query_pairs_of_node_embeddings,
+                  predict_new_nodes, update_weights, add_new_nodes)
 from optimizers import CMAES
-from utils import dimensions_env, animate_graph, seed_python_numpy_torch_cuda, environment_max_reward
+from utils import dimensions_env, animate_graph, seed_python_numpy_torch_cuda, environment_max_reward, nx_layout
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.autograd.set_grad_enabled(False)
 
 
-def env_rollout(G: nx.graph, config: dict, render=False, animate_graph_rollout: bool = False, solution_id: str = None, seed: int = None) -> float:
+import contextlib
+
+@contextlib.contextmanager
+def _timed(label, timings, active):
+    if active:
+        t = time.perf_counter()
+        yield
+        timings[label] = timings.get(label, 0.0) + time.perf_counter() - t
+    else:
+        yield
+
+
+def env_rollout(W: np.ndarray, config: dict, render=False, animate_graph_rollout: bool = False, solution_id: str = None, seed: int = None) -> float:
     if animate_graph_rollout:
-        graph = copy.deepcopy(G)
+        graph = W_to_nx(W, config["undirected"])
 
     try:
-        diameter = nx.diameter(G.to_undirected())
+        diameter = bfs_diameter(W)
     except:
-        diameter = int(np.sqrt(len(G)))
+        diameter = int(np.sqrt(W.shape[0]))
         print(f"WARNING: Graph is not connected due to prunning. Diameter manually set to {diameter}.")
-    policy_connectivity = nx.to_numpy_array(G)
+    policy_connectivity = W
 
     # Instatiate the environment
     if render:
@@ -59,7 +74,7 @@ def env_rollout(G: nx.graph, config: dict, render=False, animate_graph_rollout: 
         # Visualise the network's information flow
         if animate_graph_rollout:
             animate_graph(
-                G=graph,
+                G=graph,  # graph is already a NetworkX object for visualisation
                 network_state=network_state,
                 celluloid_camera=config["celluloid_camera"],
                 layout=config["layout"],
@@ -84,6 +99,7 @@ def env_rollout(G: nx.graph, config: dict, render=False, animate_graph_rollout: 
             additive_update=config["additive_update"],
             persistent_observation=persistent_observation,
             feature_transformation_model=None,
+            use_torch=config.get("use_torch", False),
         )
 
         # Select action from the output nodes
@@ -115,11 +131,14 @@ def env_rollout(G: nx.graph, config: dict, render=False, animate_graph_rollout: 
 
 
 def fitness_functional(config: dict, render=False, animate_graph_growth=False, animate_graph_rollout=False, solution_id=None, checksum=False) -> Callable[np.ndarray, float]:  # type: ignore
+    profile = config.get("profile", False)
+
     def fitness(evolved_parameters: np.array) -> float:
         """
         Evaluate an agent 'evolved_parameters' in an environment 'environment' during a lifetime.
         Returns the negative episodic fitness of the agent.
         """
+        timings = {}
 
         # To average out the growth process stochasticity
         mean_reward = 0
@@ -131,9 +150,9 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
 
             # Define networks
             if config["shared_intial_graph_bool"]:
-                G = config["shared_intial_graph"]
+                W = config["shared_intial_graph"].copy()
             else:
-                G = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
+                W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
 
             # Initialise the network state
             if config["coevolve_initial_embeddings"]:
@@ -145,87 +164,109 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             else:
                 initial_network_state = np.ones((config["initial_network_size"], config["node_embedding_size"]))
 
-            # Create the growth-decision network
-            mlp_growth_model = MLP(
-                input_dim=config["input_size_growth_model"],
-                output_dim=1,
-                hidden_layers_dims=config["mlp_growth_hidden_layers_dims"],
-                last_layer_activated=config["growth_model_last_layer_activated"],
-                activation=torch.nn.Tanh(),
-                bias=config["growth_model_bias"],
-            )
-
-            # Create the network that transforms node embeddings
-            if config["NN_transform_node_embedding_during_growth"]:
-                mlp_feature_transformation = MLP(
-                    input_dim=config["node_embedding_size"],
-                    output_dim=config["node_embedding_size"],
-                    hidden_layers_dims=config["mlp_embedding_transform_hidden_layers_dims"],
-                    last_layer_activated=config["transform_model_last_layer_activated"],
-                    activation=torch.nn.Tanh(),
-                    bias=config["transform_model_bias"],
-                )
-
-            # Create the network that dermines weights based on pair of node embeddings for node-based-growth with non-binary connectivity
-            if config["node_based_growth"] and not config["binary_connectivity"]:
-                mlp_weight_values = MLP(
-                    input_dim=2 * config["node_embedding_size"],
-                    output_dim=1,
-                    hidden_layers_dims=config["mlp_weight_values_hidden_layers_dims"],
-                    last_layer_activated=config["mlp_weight_values_last_layer_activated"],
-                    activation=torch.nn.Tanh(),
-                    bias=config["mlp_weight_values_bias"],
-                )
-
-            # Create indeces for unpaacking the evolved parameters
+            # Slice indices into the flat parameter vector
             n1 = config["node_embedding_size"] if config["coevolve_initial_embeddings"] else 0
             n2 = n1 + config["nb_params_growth_model"]
             n3 = n2 + config["nb_params_feature_transformation"]
             n4 = n3 + config["nb_params_mlp_weight_values"]
 
-            # Load evolved weights into the growth-decision network
-            torch.nn.utils.vector_to_parameters(torch.tensor(evolved_parameters[n1:n2], dtype=torch.float64, requires_grad=False), mlp_growth_model.parameters())
+            use_torch = config.get("use_torch", False)
+            _tp = time.perf_counter() if profile else 0
 
-            # Load evolved weights into network that updates the node embeddings
-            if config["NN_transform_node_embedding_during_growth"]:
+            if use_torch:
+                mlp_growth_model = MLP(
+                    input_dim=config["input_size_growth_model"],
+                    output_dim=1,
+                    hidden_layers_dims=config["mlp_growth_hidden_layers_dims"],
+                    last_layer_activated=config["growth_model_last_layer_activated"],
+                    activation=torch.nn.Tanh(),
+                    bias=config["growth_model_bias"],
+                )
                 torch.nn.utils.vector_to_parameters(
-                    torch.tensor(
+                    torch.tensor(evolved_parameters[n1:n2], dtype=torch.float64, requires_grad=False),
+                    mlp_growth_model.parameters(),
+                )
+                if config["NN_transform_node_embedding_during_growth"]:
+                    mlp_feature_transformation = MLP(
+                        input_dim=config["node_embedding_size"],
+                        output_dim=config["node_embedding_size"],
+                        hidden_layers_dims=config["mlp_embedding_transform_hidden_layers_dims"],
+                        last_layer_activated=config["transform_model_last_layer_activated"],
+                        activation=torch.nn.Tanh(),
+                        bias=config["transform_model_bias"],
+                    )
+                    torch.nn.utils.vector_to_parameters(
+                        torch.tensor(evolved_parameters[n2:n3], dtype=torch.float64, requires_grad=False),
+                        mlp_feature_transformation.parameters(),
+                    )
+                if config["node_based_growth"] and not config["binary_connectivity"]:
+                    mlp_weight_values = MLP(
+                        input_dim=2 * config["node_embedding_size"],
+                        output_dim=1,
+                        hidden_layers_dims=config["mlp_weight_values_hidden_layers_dims"],
+                        last_layer_activated=config["mlp_weight_values_last_layer_activated"],
+                        activation=torch.nn.Tanh(),
+                        bias=config["mlp_weight_values_bias"],
+                    )
+                    torch.nn.utils.vector_to_parameters(
+                        torch.tensor(evolved_parameters[n3:n4], dtype=torch.float64, requires_grad=False),
+                        mlp_weight_values.parameters(),
+                    )
+            else:
+                # Build NumpyMLPs directly from parameter slices — no torch object creation
+                mlp_growth_model = make_numpy_mlp(
+                    evolved_parameters[n1:n2],
+                    input_dim=config["input_size_growth_model"],
+                    hidden_dims=config["mlp_growth_hidden_layers_dims"],
+                    output_dim=1,
+                    has_bias=config["growth_model_bias"],
+                    last_activated=config["growth_model_last_layer_activated"],
+                )
+                if config["NN_transform_node_embedding_during_growth"]:
+                    mlp_feature_transformation = make_numpy_mlp(
                         evolved_parameters[n2:n3],
-                        dtype=torch.float64,
-                        requires_grad=False,
-                    ),
-                    mlp_feature_transformation.parameters(),
-                )
-
-            # Load evolved weights into network that dermines weights based on pair of node embeddings for node-based-growth with non-binary connectivity
-            if config["node_based_growth"] and not config["binary_connectivity"]:
-                torch.nn.utils.vector_to_parameters(
-                    torch.tensor(
+                        input_dim=config["node_embedding_size"],
+                        hidden_dims=config["mlp_embedding_transform_hidden_layers_dims"],
+                        output_dim=config["node_embedding_size"],
+                        has_bias=config["transform_model_bias"],
+                        last_activated=config["transform_model_last_layer_activated"],
+                    )
+                if config["node_based_growth"] and not config["binary_connectivity"]:
+                    mlp_weight_values = make_numpy_mlp(
                         evolved_parameters[n3:n4],
-                        dtype=torch.float64,
-                        requires_grad=False,
-                    ),
-                    mlp_weight_values.parameters(),
-                )
+                        input_dim=2 * config["node_embedding_size"],
+                        hidden_dims=config["mlp_weight_values_hidden_layers_dims"],
+                        output_dim=1,
+                        has_bias=config["mlp_weight_values_bias"],
+                        last_activated=config["mlp_weight_values_last_layer_activated"],
+                    )
+
+            if profile: timings["mlp_build"] = timings.get("mlp_build", 0.0) + time.perf_counter() - _tp
 
             network_state = copy.deepcopy(initial_network_state)
             obs_action_dim_tuple = None if "Network" in config["environment"] else (2, 2) if "gate" in config["environment"] else (config["observation_dim"], config["action_dim"])
 
             if render or checksum:
                 ns = np.sum(network_state)
-                gs = np.sum(nx.to_numpy_array(G))
+                gs = np.sum(W)
                 print(f"\nChecksum of initial network state before growth: {ns}")
                 print(f"Checksum of graph G before growth: {gs}")
-                print(f"The final grown graph has {len(G)} nodes and {len(G.edges)} edges.")
+                print(f"The final grown graph has {W.shape[0]} nodes and {int(np.count_nonzero(W))} edges.")
                 config["checksum_best_State_grown"] = ns
                 config["checksum_best_Graph_grown"] = gs
+
+            # Compute diameter once; recompute only when graph grows
+            try:
+                diameter = bfs_diameter(W)
+            except Exception:
+                diameter = int(np.sqrt(W.shape[0]))
 
             for growth_cycle_nb in range(config["number_of_growth_cycles"]):
                 # Draw the graph
 
                 if animate_graph_growth and growth_cycle_nb == 0:
                     animate_graph(
-                        G=G,
+                        G=W_to_nx(W, config["undirected"]),
                         network_state=network_state,
                         celluloid_camera=config["celluloid_camera"],
                         layout=config["layout"],
@@ -235,28 +276,25 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                         growth_cycle=growth_cycle_nb,
                     )
 
-                # Define network thinking time based on its current diameter
-                try:
-                    diameter = nx.diameter(G.to_undirected())
-                except:
-                    diameter = int(np.sqrt(len(G)))
-                    print(f"\nWARNING: Graph is not connected due to prunning. Diameter manually set to {diameter}.")
                 network_thinking_time = diameter + config["network_thinking_time_extra_growth"]
 
                 # Local propagation of node features — i.e thinking time
+                if profile: _tp = time.perf_counter()
                 network_state = propagate_features(
                     network_state=network_state,
-                    W=nx.to_numpy_array(G),
+                    W=W,
                     network_thinking_time=network_thinking_time,
                     recurrent_activation_function=config["recurrent_activation_function"],
                     additive_update=config["additive_update"],
                     persistent_observation=None,
                     feature_transformation_model=mlp_feature_transformation if config["NN_transform_node_embedding_during_growth"] else None,
+                    use_torch=use_torch,
                 )
+                if profile: timings["propagate_growth"] = timings.get("propagate_growth", 0.0) + time.perf_counter() - _tp
 
                 if animate_graph_growth:
                     animate_graph(
-                        G=G,
+                        G=W_to_nx(W, config["undirected"]),
                         network_state=network_state,
                         celluloid_camera=config["celluloid_camera"],
                         layout=config["layout"],
@@ -267,10 +305,11 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                     )
 
                 # Query node/edges embeddings
+                if profile: _tp = time.perf_counter()
                 if config["node_pairs_based_growth"]:
                     # Query pairs of node embeddings
                     node_embeddings_concatenated_dict, embeddings_for_growth_model = query_pairs_of_node_embeddings(
-                        W=nx.to_numpy_array(G),
+                        W=W,
                         network_state=network_state,
                         self_link_allowed=config["self_link_allowed_during_querying"],
                     )
@@ -279,24 +318,38 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                     node_embeddings_concatenated_dict = None
                 elif config["edge_based_growth"]:
                     raise NotImplementedError
+                if profile: timings["query_pairs"] = timings.get("query_pairs", 0.0) + time.perf_counter() - _tp
 
                 # Predict new nodes
-                new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"])
+                if profile: _tp = time.perf_counter()
+                new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch)
+                if profile: timings["predict_grow"] = timings.get("predict_grow", 0.0) + time.perf_counter() - _tp
 
                 # Add new nodes and increase the network_state vector accordingly
-                G, network_state = add_new_nodes(
-                    G=copy.deepcopy(G),
-                    config=config,
+                if profile: _tp = time.perf_counter()
+                prev_n = W.shape[0]
+                W, network_state = add_new_nodes(
+                    W=W,
                     network_state=network_state,
                     node_embeddings_concatenated_dict=node_embeddings_concatenated_dict,
                     new_nodes_predictions=new_nodes_predictions,
                     node_based_growth=config["node_based_growth"],
                     node_pairs_based_growth=config["node_pairs_based_growth"],
+                    binary_connectivity=config["binary_connectivity"],
+                    undirected=config["undirected"],
                 )
+                if profile: timings["add_nodes"] = timings.get("add_nodes", 0.0) + time.perf_counter() - _tp
+                if W.shape[0] != prev_n:
+                    if profile: _tp = time.perf_counter()
+                    try:
+                        diameter = bfs_diameter(W)
+                    except Exception:
+                        diameter = int(np.sqrt(W.shape[0]))
+                    if profile: timings["bfs_diameter"] = timings.get("bfs_diameter", 0.0) + time.perf_counter() - _tp
 
                 if animate_graph_growth:
                     animate_graph(
-                        G=G,
+                        G=W_to_nx(W, config["undirected"]),
                         network_state=network_state,
                         celluloid_camera=config["celluloid_camera"],
                         layout=config["layout"],
@@ -306,11 +359,13 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                         growth_cycle=growth_cycle_nb,
                     )
 
-                if len(G) > 1 and not config["binary_connectivity"]:
-                    G = update_weights(G=G, network_state=network_state, model=mlp_weight_values, config=config)
+                if W.shape[0] > 1 and not config["binary_connectivity"]:
+                    if profile: _tp = time.perf_counter()
+                    W = update_weights(W=W, network_state=network_state, model=mlp_weight_values, undirected=config["undirected"], use_torch=use_torch)
+                    if profile: timings["update_weights"] = timings.get("update_weights", 0.0) + time.perf_counter() - _tp
                     if animate_graph_growth:
                         animate_graph(
-                            G=G,
+                            G=W_to_nx(W, config["undirected"]),
                             network_state=network_state,
                             celluloid_camera=config["celluloid_camera"],
                             layout=config["layout"],
@@ -321,11 +376,10 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                         )
 
                 if config["prunning_phase"]:
-                    edges_to_be_removed = [(a, b) for a, b, attrs in G.edges(data=True) if abs(attrs["weight"]) <= config["prunning_threshold"]]
-                    G.remove_edges_from(edges_to_be_removed)
+                    W[np.abs(W) <= config["prunning_threshold"]] = 0
                     if animate_graph_growth:
                         animate_graph(
-                            G=G,
+                            G=W_to_nx(W, config["undirected"]),
                             network_state=network_state,
                             celluloid_camera=config["celluloid_camera"],
                             layout=config["layout"],
@@ -337,42 +391,45 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
 
             if render or checksum:
                 ns = np.sum(network_state)
-                gs = np.sum(nx.to_numpy_array(G))
+                gs = np.sum(W)
                 print(f"Checksum of network state after growth: {ns}")
                 print(f"Checksum of graph G after growth: {gs}")
-                print(f"The final grown graph has {len(G)} nodes and {len(G.edges)} edges.")
+                print(f"The final grown graph has {W.shape[0]} nodes and {int(np.count_nonzero(W))} edges.")
                 config["checksum_best_State_grown"] = ns
                 config["checksum_best_Graph_grown"] = gs
 
             if animate_graph_growth:
                 figWeights, axWeights = pyplot.subplots(1, 1, figsize=(12, 8))
                 axWeights.set_title("Weights distributions")
-                axWeights.hist(np.array([G[i][j]["weight"] for (i, j) in G.edges()]), bins=20)
+                edges = np.array(np.nonzero(W)).T
+                axWeights.hist(np.array([W[i, j] for i, j in edges]), bins=20)
                 figWeights.savefig(config["_path"] + "/weights_" + solution_id + ".png")
 
             # Run the environment
             if not animate_graph_growth:  # Here we don't want to render the environment if we are just animating the graph growth when calling visualise_graph()
                 # If the graph is too small, we don't want to evaluate it and return bad score directly
-                if len(G) < config["min_network_size"]:
+                if W.shape[0] < config["min_network_size"]:
                     if render:
                         print("\nNetwork too small")
                     if config["maximise"]:
-                        return len(G) - config["min_network_size"]
+                        return W.shape[0] - config["min_network_size"]
                     else:
-                        return config["min_network_size"] - len(G)
+                        return config["min_network_size"] - W.shape[0]
 
                 mean_episode_reward = 0
                 for _ in range(config["nb_episode_evals"]):
+                    if profile: _tp = time.perf_counter()
                     if config["environment"] == "SmallWorldNetwork":
-                        episode_reward = small_world_ness_fitness(G=G, niter=5, nrand=10, seed=config["seed"], sigma=config["sigma"], omega=config["omega"], render=render)
+                        episode_reward = small_world_ness_fitness(G=W_to_nx(W, config["undirected"]), niter=5, nrand=10, seed=config["seed"], sigma=config["sigma"], omega=config["omega"], render=render)
                     elif "gate" in config["environment"]:
-                        episode_reward = bool_gates_fitness(G=G, config=config, render=render, animate_graph_rollout=animate_graph_rollout)
+                        episode_reward = bool_gates_fitness(W=W, config=config, render=render, animate_graph_rollout=animate_graph_rollout)
                     elif config["environment"] == "ScaleFreeNetwork":
-                        episode_reward = scalefree_fitness(G=G, ks_test=config["ks_test"], render=render)
+                        episode_reward = scalefree_fitness(G=W_to_nx(W, config["undirected"]), ks_test=config["ks_test"], render=render)
                     else:
                         seed_env_eval = int(np.random.default_rng(config["env_seed"]).integers(2**32, size=1)[0])
                         animate_graph_rollout_ = True if (_ == 0 and animate_graph_rollout) else False
-                        episode_reward = env_rollout(G=G, config=config, render=render, animate_graph_rollout=animate_graph_rollout_, solution_id=solution_id, seed=seed_env_eval)
+                        episode_reward = env_rollout(W=W, config=config, render=render, animate_graph_rollout=animate_graph_rollout_, solution_id=solution_id, seed=seed_env_eval)
+                    if profile: timings["env_eval"] = timings.get("env_eval", 0.0) + time.perf_counter() - _tp
                     mean_episode_reward += episode_reward
 
                 if render:
@@ -386,29 +443,36 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             print("\n---------------------------------------------\n")
 
         if config["fewer_edges"]:
-            # print(f'Current reward: {mean_reward}')
             env_max_reward = environment_max_reward(config["environment"])
-            sparsity_penalty = (len(G.edges) / len(G) ** 2) * (env_max_reward)
+            n_nodes = W.shape[0]
+            sparsity_penalty = (np.count_nonzero(W) / n_nodes ** 2) * env_max_reward
             mean_reward -= sparsity_penalty
 
         if config["fewer_nodes"]:
             env_max_reward = environment_max_reward(config["environment"])
-            nb_nodes = len(G)
-            nb_nodes_penalty = 10 * nb_nodes * (env_max_reward)
+            nb_nodes_penalty = 10 * W.shape[0] * env_max_reward
             mean_reward -= nb_nodes_penalty
 
         if config["balanced_weights"]:
             env_max_reward = environment_max_reward(config["environment"])
-            mean_weights = abs(np.array([G[i][j]["weight"] for (i, j) in G.edges()]).mean())
+            mean_weights = abs(W[np.nonzero(W)].mean())
             unbalance_penalty = mean_weights * env_max_reward
             mean_reward -= unbalance_penalty
+
+        if profile:
+            total = sum(timings.values()) or 1e-9
+            print("\n=== Fitness Eval Timing Breakdown ===")
+            for k, v in sorted(timings.items(), key=lambda x: -x[1]):
+                print(f"  {k:25s}: {v*1000:8.3f}ms  ({100*v/total:5.1f}%)")
+            print(f"  {'TOTAL':25s}: {total*1000:8.3f}ms")
+            print("=====================================")
 
         return mean_reward
 
     return fitness
 
 
-def bool_gates_fitness(G: nx.Graph, config: dict, render=False, animate_graph_rollout: bool = False):
+def bool_gates_fitness(W: np.ndarray, config: dict, render=False, animate_graph_rollout: bool = False):
     """
     Returns a scalar measure of how many elements of the boolean gate truth table are correctly predicted by the graph G.
     """
@@ -433,14 +497,14 @@ def bool_gates_fitness(G: nx.Graph, config: dict, render=False, animate_graph_ro
         Y = np.array([1, 0, 0, 1])
 
     if animate_graph_rollout:
-        graph = copy.deepcopy(G)
+        graph = W_to_nx(W, config["undirected"])
 
     try:
-        diameter = nx.diameter(G.to_undirected())
+        diameter = bfs_diameter(W)
     except:
-        diameter = int(np.sqrt(len(G)))
+        diameter = int(np.sqrt(W.shape[0]))
         print(f"WARNING: Graph is not connected due to prunning. Diameter manually set to {diameter}.")
-    policy_connectivity = nx.to_numpy_array(G)
+    policy_connectivity = W
 
     network_state = np.zeros(policy_connectivity.shape[0])
     network_thinking_time = diameter + config["network_thinking_time_extra_rollout"]
@@ -475,6 +539,7 @@ def bool_gates_fitness(G: nx.Graph, config: dict, render=False, animate_graph_ro
             additive_update=config["additive_update"],
             persistent_observation=persistent_observation,
             feature_transformation_model=None,
+            use_torch=config.get("use_torch", False),
         )
 
         # Select action from the output nodes
@@ -630,7 +695,7 @@ def train_model(config):
     )
     print(f"The growth model has {config['nb_trainable_parameters']} trainable parameters")
 
-    # Generate initial graph
+    # Generate initial graph (stored as numpy adjacency matrix)
     if config["shared_intial_graph_bool"]:
         config["shared_intial_graph"] = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], config["seed"])
 
@@ -647,6 +712,208 @@ def train_model(config):
         raise NotImplementedError
 
     return solution_best, solution_centroid, early_stopping_executed, logger
+
+
+def grow_network(evolved_parameters: np.ndarray, config: dict):
+    """Grow a network from evolved_parameters and return (W, network_state) after all growth cycles."""
+    seed_python_numpy_torch_cuda(config["seed"])
+
+    if config["shared_intial_graph_bool"]:
+        W = config["shared_intial_graph"].copy()
+    else:
+        W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
+
+    if config["coevolve_initial_embeddings"]:
+        initial_network_state = np.expand_dims(evolved_parameters[:config["node_embedding_size"]], axis=0)
+    elif not config["shared_intial_embedding"] and config["initial_embeddings_random"]:
+        initial_network_state = np.random.default_rng(None).uniform(-1, +1, (config["initial_network_size"], config["node_embedding_size"]))
+    elif config["shared_intial_embedding"] and config["initial_embeddings_random"]:
+        initial_network_state = config["initial_network_state"]
+    else:
+        initial_network_state = np.ones((config["initial_network_size"], config["node_embedding_size"]))
+
+    n1 = config["node_embedding_size"] if config["coevolve_initial_embeddings"] else 0
+    n2 = n1 + config["nb_params_growth_model"]
+    n3 = n2 + config["nb_params_feature_transformation"]
+    n4 = n3 + config["nb_params_mlp_weight_values"]
+
+    use_torch = config.get("use_torch", False)
+    if use_torch:
+        mlp_growth_model = MLP(
+            input_dim=config["input_size_growth_model"],
+            output_dim=1,
+            hidden_layers_dims=config["mlp_growth_hidden_layers_dims"],
+            last_layer_activated=config["growth_model_last_layer_activated"],
+            activation=torch.nn.Tanh(),
+            bias=config["growth_model_bias"],
+        )
+        torch.nn.utils.vector_to_parameters(
+            torch.tensor(evolved_parameters[n1:n2], dtype=torch.float64, requires_grad=False),
+            mlp_growth_model.parameters(),
+        )
+        mlp_feature_transformation = None
+        if config["NN_transform_node_embedding_during_growth"]:
+            mlp_feature_transformation = MLP(
+                input_dim=config["node_embedding_size"],
+                output_dim=config["node_embedding_size"],
+                hidden_layers_dims=config["mlp_embedding_transform_hidden_layers_dims"],
+                last_layer_activated=config["transform_model_last_layer_activated"],
+                activation=torch.nn.Tanh(),
+                bias=config["transform_model_bias"],
+            )
+            torch.nn.utils.vector_to_parameters(
+                torch.tensor(evolved_parameters[n2:n3], dtype=torch.float64, requires_grad=False),
+                mlp_feature_transformation.parameters(),
+            )
+        mlp_weight_values = None
+        if config["node_based_growth"] and not config["binary_connectivity"]:
+            mlp_weight_values = MLP(
+                input_dim=2 * config["node_embedding_size"],
+                output_dim=1,
+                hidden_layers_dims=config["mlp_weight_values_hidden_layers_dims"],
+                last_layer_activated=config["mlp_weight_values_last_layer_activated"],
+                activation=torch.nn.Tanh(),
+                bias=config["mlp_weight_values_bias"],
+            )
+            torch.nn.utils.vector_to_parameters(
+                torch.tensor(evolved_parameters[n3:n4], dtype=torch.float64, requires_grad=False),
+                mlp_weight_values.parameters(),
+            )
+    else:
+        mlp_growth_model = make_numpy_mlp(
+            evolved_parameters[n1:n2],
+            input_dim=config["input_size_growth_model"],
+            hidden_dims=config["mlp_growth_hidden_layers_dims"],
+            output_dim=1,
+            has_bias=config["growth_model_bias"],
+            last_activated=config["growth_model_last_layer_activated"],
+        )
+        mlp_feature_transformation = None
+        if config["NN_transform_node_embedding_during_growth"]:
+            mlp_feature_transformation = make_numpy_mlp(
+                evolved_parameters[n2:n3],
+                input_dim=config["node_embedding_size"],
+                hidden_dims=config["mlp_embedding_transform_hidden_layers_dims"],
+                output_dim=config["node_embedding_size"],
+                has_bias=config["transform_model_bias"],
+                last_activated=config["transform_model_last_layer_activated"],
+            )
+        mlp_weight_values = None
+        if config["node_based_growth"] and not config["binary_connectivity"]:
+            mlp_weight_values = make_numpy_mlp(
+                evolved_parameters[n3:n4],
+                input_dim=2 * config["node_embedding_size"],
+                hidden_dims=config["mlp_weight_values_hidden_layers_dims"],
+                output_dim=1,
+                has_bias=config["mlp_weight_values_bias"],
+                last_activated=config["mlp_weight_values_last_layer_activated"],
+            )
+
+    network_state = copy.deepcopy(initial_network_state)
+    try:
+        diameter = bfs_diameter(W)
+    except Exception:
+        diameter = int(np.sqrt(W.shape[0]))
+
+    for _ in range(config["number_of_growth_cycles"]):
+        network_state = propagate_features(
+            network_state=network_state,
+            W=W,
+            network_thinking_time=diameter + config["network_thinking_time_extra_growth"],
+            recurrent_activation_function=config["recurrent_activation_function"],
+            additive_update=config["additive_update"],
+            persistent_observation=None,
+            feature_transformation_model=mlp_feature_transformation,
+            use_torch=use_torch,
+        )
+
+        if config["node_pairs_based_growth"]:
+            node_embeddings_concatenated_dict, embeddings_for_growth_model = query_pairs_of_node_embeddings(
+                W=W, network_state=network_state, self_link_allowed=config["self_link_allowed_during_querying"]
+            )
+        else:
+            embeddings_for_growth_model = network_state
+            node_embeddings_concatenated_dict = None
+
+        new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch)
+        prev_n = W.shape[0]
+        W, network_state = add_new_nodes(
+            W=W,
+            network_state=network_state,
+            node_embeddings_concatenated_dict=node_embeddings_concatenated_dict,
+            new_nodes_predictions=new_nodes_predictions,
+            node_based_growth=config["node_based_growth"],
+            node_pairs_based_growth=config["node_pairs_based_growth"],
+            binary_connectivity=config["binary_connectivity"],
+            undirected=config["undirected"],
+        )
+        if W.shape[0] != prev_n:
+            try:
+                diameter = bfs_diameter(W)
+            except Exception:
+                diameter = int(np.sqrt(W.shape[0]))
+
+        if W.shape[0] > 1 and not config["binary_connectivity"] and mlp_weight_values is not None:
+            W = update_weights(W=W, network_state=network_state, model=mlp_weight_values, undirected=config["undirected"], use_torch=use_torch)
+
+        if config["prunning_phase"]:
+            W[np.abs(W) <= config["prunning_threshold"]] = 0
+
+    return W, network_state
+
+
+def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, save_path: str):
+    """Save a static PNG of the final grown graph. Nodes are coloured by role; edge width encodes |weight|."""
+    from matplotlib.patches import Patch
+
+    G = W_to_nx(W, config["undirected"])
+    n = len(G)
+
+    if "Network" in config["environment"]:
+        obs_dim, act_dim = None, None
+    elif "gate" in config["environment"]:
+        obs_dim, act_dim = 2, 2
+    else:
+        obs_dim, act_dim = config.get("observation_dim", 0), config.get("action_dim", 0)
+
+    if obs_dim is not None:
+        color_map = [
+            "indianred" if node < obs_dim else ("slategray" if node >= n - act_dim else "white")
+            for node in G.nodes()
+        ]
+    else:
+        color_map = ["white"] * n
+
+    pos = nx_layout(G, config["layout"])
+    labels = {i: str(i) for i in range(n)}
+
+    fig, ax = pyplot.subplots(figsize=(14, 10))
+    nx.draw_networkx(
+        G,
+        ax=ax,
+        pos=pos,
+        labels=labels,
+        edgecolors="black",
+        font_size=8,
+        node_size=600,
+        node_color=color_map,
+        arrows=config["arrows"],
+        width=[max(0.2, abs(G[u][v]["weight"]) * 3) for u, v in G.edges()],
+    )
+    ax.set_title(f"{config['environment']} — best DNA  |  {n} nodes, {len(G.edges())} edges", fontsize=13)
+    pyplot.box(False)
+
+    if obs_dim is not None:
+        legend_elements = [
+            Patch(facecolor="indianred", edgecolor="black", label=f"Input (nodes 0-{obs_dim-1})"),
+            Patch(facecolor="white", edgecolor="black", label="Hidden"),
+            Patch(facecolor="slategray", edgecolor="black", label=f"Output (last {act_dim} nodes)"),
+        ]
+        ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
+
+    fig.savefig(save_path, bbox_inches="tight", dpi=150)
+    pyplot.close(fig)
+    print(f"Graph snapshot saved to {save_path}")
 
 
 if __name__ == "__main__":
