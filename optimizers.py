@@ -80,6 +80,12 @@ def CMAES(config, fitness):
                 objective_solution_centroid = objective_current_centroid_sol
                 solution_centroid = es.mean
 
+            # Success stop: best fitness reached the target
+            target = config.get("target")
+            if target is not None and config["maximise"] and -objective_current_best_sol >= target:
+                print(f"\nTarget fitness {target} reached at generation {gen}. Stopping.\n")
+                break
+
             gen += 1
 
             if gen % config["evolution_feval_check_every"] == 0:

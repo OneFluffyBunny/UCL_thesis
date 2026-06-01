@@ -283,11 +283,16 @@ def update_weights(W, network_state, model, undirected, use_torch=False):
     Returns:
         np.ndarray: Updated adjacency matrix.
     """
-    edges = np.array(np.nonzero(W)).T  # shape (E, 2)
-    if len(edges) == 0:
+    if undirected:
+        # Upper triangle only — avoids processing each edge twice on a symmetric matrix
+        rows, cols = np.where(np.triu(np.abs(W) > 0))
+    else:
+        rows, cols = np.nonzero(W)
+
+    if len(rows) == 0:
         return W
 
-    pairs = np.concatenate([network_state[edges[:, 0]], network_state[edges[:, 1]]], axis=1)
+    pairs = np.concatenate([network_state[rows], network_state[cols]], axis=1)
 
     if use_torch:
         with torch.no_grad():
@@ -296,9 +301,9 @@ def update_weights(W, network_state, model, undirected, use_torch=False):
         weights = model(pairs).squeeze(axis=-1)
 
     new_W = W.copy()
-    new_W[edges[:, 0], edges[:, 1]] = weights
+    new_W[rows, cols] = weights
     if undirected:
-        new_W[edges[:, 1], edges[:, 0]] = weights
+        new_W[cols, rows] = weights  # mirror: both directions get the same weight
 
     return new_W
 

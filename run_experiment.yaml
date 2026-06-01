@@ -95,7 +95,7 @@ seed: null
 env_seed: null
 
 # Visualisation and monitoring
-save_model: 1
+save_model: 0
 render: 1
 print_every: 10
 visualise_network: 1

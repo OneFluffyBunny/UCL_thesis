@@ -276,6 +276,8 @@ def environment_max_reward(env_name):
         return 500
     elif env_name == "SmallWorldNetwork":
         return 20
+    elif "gate" in env_name:
+        return 4
     else:
         raise NotImplementedError
 

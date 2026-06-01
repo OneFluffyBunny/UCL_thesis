@@ -5,7 +5,7 @@ import numpy as np
 import warnings
 import torch
 
-from train_backend import train_model
+from train_backend import train_model, grow_network, snapshot_graph_png
 from utils import seed_python_numpy_torch_cuda, visualise_graph
 
 from tests_checks.test_config import all_config_checks
@@ -49,6 +49,15 @@ def train(config):
         # Save config file
         with open(config["_path"] + "/" + "config.yml", "w") as outfile:
             yaml.dump(config, outfile, default_flow_style=False)
+
+        # Static graph snapshot (no ffmpeg required)
+        if config.get("snapshot"):
+            png_path = config["_path"] + "/graph_best.png"
+            W, network_state = grow_network(solution_best, config)
+            snapshot_graph_png(W, network_state, config, png_path)
+            if config.get("show"):
+                import os
+                os.startfile(os.path.abspath(png_path))
 
         # Visaulise graph development
         if config["visualise_network"]:
@@ -94,7 +103,11 @@ if __name__ == "__main__":
     parser.add_argument("--generations", type=int, default=None, help="Override generations from config")
     parser.add_argument("--threads", type=int, default=None, help="Override threads from config")
     parser.add_argument("--popsize", type=int, default=None, help="Override popsize from config")
-    parser.add_argument("--visualise", action="store_true", help="Enable graph visualisation (off by default)")
+    parser.add_argument("--visualise", action="store_true", help="Enable graph visualisation (off by default, requires ffmpeg)")
+    parser.add_argument("--save-dna", action="store_true", help="Save best and centroid DNA as .npy files after training")
+    parser.add_argument("--snapshot", action="store_true", help="Save a static PNG of the final grown graph for the best solution")
+    parser.add_argument("--show", action="store_true", help="Save and open the best brain PNG after training (implies --snapshot)")
+    parser.add_argument("--target", type=float, default=None, help="Stop evolution as soon as best fitness reaches this value (default: env max reward)")
     args = parser.parse_args()
     with open(args.conf) as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
@@ -110,6 +123,18 @@ if __name__ == "__main__":
     if args.popsize is not None:
         config["popsize"] = args.popsize
     config["visualise_network"] = 1 if args.visualise else 0
+    if args.save_dna:
+        config["save_model"] = True
+    config["snapshot"] = args.snapshot or args.show
+    config["show"] = args.show
+    if args.target is not None:
+        config["target"] = args.target
+    else:
+        from utils import environment_max_reward
+        try:
+            config["target"] = environment_max_reward(config["environment"])
+        except NotImplementedError:
+            config["target"] = None
 
     # Check config file makes sense
     all_config_checks(config)
