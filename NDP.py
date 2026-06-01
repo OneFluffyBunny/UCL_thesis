@@ -4,7 +4,7 @@ import gymnasium as gym
 from gymnasium.wrappers import RecordVideo
 import networkx as nx
 from scipy import stats, sparse
-from scipy.sparse.csgraph import connected_components, shortest_path
+from scipy.sparse.csgraph import connected_components
 from numpy.random import default_rng
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -38,6 +38,30 @@ def torch_mlp_to_numpy(torch_model):
             b = layer.bias.detach().numpy().copy() if layer.bias is not None else None
             has_act = (i + 1 < len(children)) and isinstance(children[i + 1], torch.nn.Tanh)
             layers.append((W, b, np.tanh if has_act else None))
+    return NumpyMLP(layers)
+
+
+def make_numpy_mlp(params, input_dim, hidden_dims, output_dim, has_bias, last_activated):
+    """Build a NumpyMLP directly from a flat parameter array, bypassing torch entirely.
+
+    Parameter ordering matches torch.nn.utils.parameters_to_vector: for each Linear
+    layer, weight (fan_out × fan_in) is packed first, then bias (fan_out) if present.
+    """
+    layers = []
+    dims = [input_dim] + list(hidden_dims) + [output_dim]
+    offset = 0
+    for i in range(len(dims) - 1):
+        fan_in, fan_out = dims[i], dims[i + 1]
+        W = params[offset : offset + fan_out * fan_in].reshape(fan_out, fan_in).copy()
+        offset += fan_out * fan_in
+        if has_bias:
+            b = params[offset : offset + fan_out].copy()
+            offset += fan_out
+        else:
+            b = None
+        is_last = i == len(dims) - 2
+        act = np.tanh if (not is_last or last_activated) else None
+        layers.append((W, b, act))
     return NumpyMLP(layers)
 
 
@@ -100,7 +124,9 @@ def generate_initial_graph(network_size, sparsity, binary_connectivity, undirect
 
 
 def bfs_diameter(W):
-    """Compute the diameter of the graph represented by adjacency matrix W using scipy shortest paths.
+    """Compute the diameter of the graph represented by adjacency matrix W.
+
+    Uses numpy Floyd-Warshall — no scipy call overhead, fast for the small graphs NDP produces.
 
     Args:
         W (np.ndarray): Adjacency matrix.
@@ -111,10 +137,15 @@ def bfs_diameter(W):
     n = W.shape[0]
     if n <= 1:
         return 0
-    adj = (np.abs(W) > 0).astype(float)
-    dist = shortest_path(adj, method='D', directed=False, unweighted=True)
-    finite_dists = dist[np.isfinite(dist)]
-    return int(finite_dists.max()) if len(finite_dists) > 0 else int(np.sqrt(n))
+    adj = np.abs(W) > 0
+    adj = adj | adj.T  # treat as undirected
+    dist = np.full((n, n), np.inf)
+    np.fill_diagonal(dist, 0.0)
+    dist[adj] = 1.0
+    for k in range(n):
+        dist = np.minimum(dist, dist[:, k : k + 1] + dist[k : k + 1, :])
+    finite = dist[np.isfinite(dist)]
+    return int(finite.max()) if len(finite) > 0 else int(np.sqrt(n))
 
 
 def W_to_nx(W, undirected=True):
@@ -204,28 +235,19 @@ def query_pairs_of_node_embeddings(W: np.array, network_state: np.array, self_li
         node_embeddings_concatenated_dict (dict): A dictionary of the concatenated node embeddings for every node pair.
         node_embeddings_concatenated_array (np.array): An array of the concatenated node embeddings for every node pair.
     """
-    node_embeddings_concatenated_dict = {}
-    idx = np.arange(len(W))
-
     # Make every node-node pair appear only once
-    W = abs(W)
-    links = np.clip((np.tril(W) + np.triu(W).T), 0, 1)
+    W_abs = np.abs(W)
+    links = np.clip(np.tril(W_abs) + np.triu(W_abs).T, 0, 1)
     if not self_link_allowed:
         np.fill_diagonal(links, 0)
 
-    # print(f'Number of pair-wise undirected links: {np.sum(links)}')
-    for i in range(len(W)):
-        nbr = links[i] > 0  # mask of neighbors
-
-        for j in idx[nbr]:
-            concatenated_features = np.concatenate([network_state[i], network_state[j]])
-            node_embeddings_concatenated_dict[len(node_embeddings_concatenated_dict)] = {
-                "from_node": i,
-                "to_node": j,
-                "concatenated_features": concatenated_features,
-            }
-
-    return node_embeddings_concatenated_dict, np.array([node_embeddings_concatenated_dict[e]["concatenated_features"] for e in node_embeddings_concatenated_dict])
+    rows, cols = np.where(links > 0)
+    arr = np.concatenate([network_state[rows], network_state[cols]], axis=1)
+    node_embeddings_concatenated_dict = {
+        k: {"from_node": int(rows[k]), "to_node": int(cols[k]), "concatenated_features": arr[k]}
+        for k in range(len(rows))
+    }
+    return node_embeddings_concatenated_dict, arr
 
 
 def predict_new_nodes(growth_decision_model, embeddings_for_growth_model, node_embedding_size, use_torch=False):
@@ -342,38 +364,32 @@ def add_new_nodes(
                 n += 1
 
     elif node_based_growth:
-        # Pre-compute neighbors (including self) for every existing node
-        if n == 1:
-            all_neighbors = [np.array([0])]
-        else:
-            all_neighbors = []
-            for idx_node in range(n):
-                nbrs = np.where(np.abs(W[idx_node]) > 0)[0]
-                if not undirected:
-                    nbrs = np.unique(np.concatenate([nbrs, np.where(np.abs(W[:, idx_node]) > 0)[0]]))
-                nbrs = np.unique(np.append(nbrs, idx_node))
-                all_neighbors.append(nbrs)
-
         grow_nodes = np.where(new_nodes_predictions[:n])[0]
         num_new = len(grow_nodes)
         if num_new == 0:
             return W, network_state
 
+        # Adjacency with self-loops, computed once for the whole matrix
+        adj = np.abs(W) > 0
+        if not undirected:
+            adj = adj | adj.T
+        np.fill_diagonal(adj, True)
+
         new_n = n + num_new
         new_W = np.zeros((new_n, new_n))
         new_W[:n, :n] = W
 
-        new_embeddings = np.zeros((num_new,) + network_state.shape[1:], dtype=network_state.dtype)
-
-        for k, idx_node in enumerate(grow_nodes):
+        # Edge assignments: loop only over growing nodes (num_new, not n)
+        for k, src in enumerate(grow_nodes):
             new_idx = n + k
-            nbrs = all_neighbors[idx_node]
+            nbrs = np.where(adj[src])[0]
             new_W[nbrs, new_idx] = 1
-            if undirected:
-                new_W[new_idx, nbrs] = 1
-            else:
-                new_W[new_idx, nbrs] = 1
-            new_embeddings[k] = np.mean(network_state[nbrs], axis=0)
+            new_W[new_idx, nbrs] = 1
+
+        # Vectorized mean-embedding: one matmul instead of per-node np.mean
+        adj_grow = adj[grow_nodes].astype(network_state.dtype)   # (num_new, n)
+        row_sums = adj_grow.sum(axis=1, keepdims=True)            # (num_new, 1)
+        new_embeddings = (adj_grow @ network_state) / row_sums    # (num_new, embed_dim)
 
         W = new_W
         network_state = np.concatenate([network_state, new_embeddings], axis=0)

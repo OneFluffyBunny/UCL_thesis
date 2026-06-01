@@ -26,7 +26,7 @@ def CMAES(config, fitness):
     print("\n.......................................................")
     print("\nInitilisating CMA-ES with", nb_parameters, "trainable parameters \n")
 
-    print("\n ♪┏(°.°)┛┗(°.°)┓ Starting Evolution ┗(°.°)┛┏(°.°)┓ ♪ \n")
+    print("\n--- Starting Evolution ---\n")
     tic = time.time()
 
     objective_solution_best = np.inf
@@ -41,15 +41,15 @@ def CMAES(config, fitness):
     print(f"\nUsing {num_cores} cores\n")
 
     # Optimisation loop
+    pool = Pool(num_cores) if num_cores > 1 else None
     while not es.stop() or gen < config["generations"]:
         try:
             # Generate candidate solutions
             X = es.ask()
 
             # Evaluate in parallel
-            if num_cores > 1:
-                with Pool(num_cores) as pool:
-                    fitvals = pool.map_async(fitness, X).get()
+            if pool is not None:
+                fitvals = pool.map(fitness, X)
             else:
                 fitvals = [fitness(x) for x in X]
 
@@ -116,6 +116,9 @@ def CMAES(config, fitness):
                 print(f"\nObjective flattening!\nStd last {config['flattening_stopping_conditions']['last_generations']} generation is: {std_objective}\nStopping evolution.\n")
                 print(20 * "*")
                 break
+
+    if pool is not None:
+        pool.terminate()
 
     # losses/Loss arrays
     objectives_centroid = np.array(objectives_centroid)

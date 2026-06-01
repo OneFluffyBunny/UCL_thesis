@@ -89,10 +89,27 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Configuration file path")
-    parser.add_argument("--conf", type=str, default="run_experiment.yaml", metavar="", help="Path to yaml configuration file")
+    parser.add_argument("--conf", type=str, default="run_experiment.yaml", help="Path to yaml configuration file")
+    parser.add_argument("--profile", action="store_true", help="Print per-component timing breakdown after each fitness eval (implies --threads 1)")
+    parser.add_argument("--generations", type=int, default=None, help="Override generations from config")
+    parser.add_argument("--threads", type=int, default=None, help="Override threads from config")
+    parser.add_argument("--popsize", type=int, default=None, help="Override popsize from config")
+    parser.add_argument("--visualise", action="store_true", help="Enable graph visualisation (off by default)")
     args = parser.parse_args()
     with open(args.conf) as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
+
+    if args.profile:
+        config["profile"] = True
+        if args.threads is None:
+            config["threads"] = 1
+    if args.generations is not None:
+        config["generations"] = args.generations
+    if args.threads is not None:
+        config["threads"] = args.threads
+    if args.popsize is not None:
+        config["popsize"] = args.popsize
+    config["visualise_network"] = 1 if args.visualise else 0
 
     # Check config file makes sense
     all_config_checks(config)
