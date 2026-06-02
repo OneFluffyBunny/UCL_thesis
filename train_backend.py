@@ -411,6 +411,13 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                 if W.shape[0] < config["min_network_size"]:
                     if render:
                         print("\nNetwork too small")
+                    if profile:
+                        total = sum(timings.values()) or 1e-9
+                        print("\n=== Fitness Eval Timing Breakdown (network too small — no env eval) ===")
+                        for k, v in sorted(timings.items(), key=lambda x: -x[1]):
+                            print(f"  {k:25s}: {v*1000:8.3f}ms  ({100*v/total:5.1f}%)")
+                        print(f"  {'TOTAL':25s}: {total*1000:8.3f}ms")
+                        print("======================================================================")
                     if config["maximise"]:
                         return W.shape[0] - config["min_network_size"]
                     else:
@@ -863,8 +870,9 @@ def grow_network(evolved_parameters: np.ndarray, config: dict):
 
 
 def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, save_path: str):
-    """Save a static PNG of the final grown graph. Nodes are coloured by role; edge width encodes |weight|."""
+    """Save a static PNG of the final grown graph. Nodes are coloured by role; edge width encodes |weight|; edge colour encodes sign (blue=excitatory, red=inhibitory)."""
     from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
 
     G = W_to_nx(W, config["undirected"])
     n = len(G)
@@ -887,6 +895,11 @@ def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, s
     pos = nx_layout(G, config["layout"])
     labels = {i: str(i) for i in range(n)}
 
+    edges = list(G.edges())
+    edge_weights = [G[u][v]["weight"] for u, v in edges]
+    edge_widths = [max(0.2, abs(w) * 3) for w in edge_weights]
+    edge_colors = ["steelblue" if w >= 0 else "tomato" for w in edge_weights]
+
     fig, ax = pyplot.subplots(figsize=(14, 10))
     nx.draw_networkx(
         G,
@@ -898,18 +911,24 @@ def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, s
         node_size=600,
         node_color=color_map,
         arrows=config["arrows"],
-        width=[max(0.2, abs(G[u][v]["weight"]) * 3) for u, v in G.edges()],
+        width=edge_widths,
+        edge_color=edge_colors,
     )
-    ax.set_title(f"{config['environment']} — best DNA  |  {n} nodes, {len(G.edges())} edges", fontsize=13)
+    ax.set_title(f"{config['environment']} — best DNA  |  {n} nodes, {len(edges)} edges", fontsize=13)
     pyplot.box(False)
 
+    legend_elements = []
     if obs_dim is not None:
-        legend_elements = [
+        legend_elements += [
             Patch(facecolor="indianred", edgecolor="black", label=f"Input (nodes 0-{obs_dim-1})"),
             Patch(facecolor="white", edgecolor="black", label="Hidden"),
             Patch(facecolor="slategray", edgecolor="black", label=f"Output (last {act_dim} nodes)"),
         ]
-        ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
+    legend_elements += [
+        Line2D([0], [0], color="steelblue", linewidth=2, label="Excitatory (weight > 0)"),
+        Line2D([0], [0], color="tomato", linewidth=2, label="Inhibitory (weight < 0)"),
+    ]
+    ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
 
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     pyplot.close(fig)

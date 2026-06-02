@@ -107,6 +107,8 @@ if __name__ == "__main__":
     parser.add_argument("--save-dna", action="store_true", help="Save best and centroid DNA as .npy files after training")
     parser.add_argument("--snapshot", action="store_true", help="Save a static PNG of the final grown graph for the best solution")
     parser.add_argument("--show", action="store_true", help="Save and open the best brain PNG after training (implies --snapshot)")
+    parser.add_argument("--nb-episode-evals", type=int, default=None, help="Override nb_episode_evals from config")
+    parser.add_argument("--sigma-init", type=float, default=None, help="Override sigma_init from config")
     parser.add_argument("--target", type=float, default=None, help="Stop evolution as soon as best fitness reaches this value (default: env max reward)")
     args = parser.parse_args()
     with open(args.conf) as file:
@@ -122,6 +124,13 @@ if __name__ == "__main__":
         config["threads"] = args.threads
     if args.popsize is not None:
         config["popsize"] = args.popsize
+    if args.nb_episode_evals is not None:
+        config["nb_episode_evals"] = args.nb_episode_evals
+        n = args.nb_episode_evals
+        feval_n = config["evolution_feval_check_N"]
+        config["evolution_feval_check_N"] = max(n, (feval_n // n) * n)
+    if args.sigma_init is not None:
+        config["sigma_init"] = args.sigma_init
     config["visualise_network"] = 1 if args.visualise else 0
     if args.save_dna:
         config["save_model"] = True
