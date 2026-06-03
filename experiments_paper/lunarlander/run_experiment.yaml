@@ -7,7 +7,7 @@ group: default
 notes experiment: null
 device: 0
 return_loss: 0
-environment: LunarLander-v2
+environment: LunarLander-v3
 
 #########
 # Model #
