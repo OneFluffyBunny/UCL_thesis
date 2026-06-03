@@ -16,18 +16,23 @@ def setup_config(config, seed=42):
     config["seed"] = seed
     config["profile"] = False
 
+    extra_hidden = 0 if config["extra_nodes"] == -1 else config["extra_nodes"]
     if "gate" in config["environment"]:
+        config["observation_dim"] = 2
+        config["action_dim"] = 2
         config["min_network_size"] = 4
-        config["initial_network_size"] = 1 if config["extra_nodes"] == -1 else config["extra_nodes"]
+        config["initial_network_size"] = config["observation_dim"] + config["action_dim"] + extra_hidden
     else:
         from utils import dimensions_env
         obs_dim, act_dim, _ = dimensions_env(config["environment"])
         config["observation_dim"] = obs_dim
         config["action_dim"] = act_dim
-        config["initial_network_size"] = 1 if config["extra_nodes"] == -1 else obs_dim + act_dim + config["extra_nodes"]
+        config["initial_network_size"] = obs_dim + act_dim + extra_hidden
         config["min_network_size"] = obs_dim + act_dim
 
-    config["nb_params_coevolve_initial_embeddings"] = config["node_embedding_size"] if config["coevolve_initial_embeddings"] else 0
+    has_io_roles = "Network" not in config["environment"]
+    config["has_io_roles"] = has_io_roles
+    config["nb_params_coevolve_initial_embeddings"] = ((2 if has_io_roles else 1) * config["node_embedding_size"]) if config["coevolve_initial_embeddings"] else 0
     config["input_size_growth_model"] = config["node_embedding_size"] * 2 if config["node_pairs_based_growth"] else config["node_embedding_size"]
 
     mlp_g = MLP(config["input_size_growth_model"], 1, config["mlp_growth_hidden_layers_dims"], torch.nn.Tanh(), config["growth_model_last_layer_activated"], config["growth_model_bias"])

@@ -233,12 +233,12 @@ def animate_graph(
     labels = dict([(i, np.round(vector_embedding, 3)) for i, vector_embedding in enumerate(network_state)]) if print_labels else None
     if nodes_role_dims is not None:
         observation_dim, action_dim = nodes_role_dims
-        color_map_nodes = [("indianred" if node < observation_dim else ("slategray" if node >= len(G) - action_dim else "white")) for node in G.nodes()]
+        color_map_nodes = [("indianred" if node < observation_dim else ("slategray" if observation_dim <= node < observation_dim + action_dim else "white")) for node in G.nodes()]
     else:
         color_map_nodes = ["white" for node in G.nodes()]
-    # Color yellow the node of the action_dim with the highnest activation
+    # Color orange the output node with the highest activation (outputs are at fixed indices)
     if roullout:
-        color_map_nodes[np.argmax(network_state[-action_dim:]) - action_dim] = "orange"
+        color_map_nodes[observation_dim + int(np.argmax(network_state[observation_dim : observation_dim + action_dim]))] = "orange"
 
     nx.draw_networkx(
         G,
