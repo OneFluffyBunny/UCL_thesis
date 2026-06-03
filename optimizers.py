@@ -28,6 +28,7 @@ def CMAES(config, fitness):
 
     print("\n--- Starting Evolution ---\n")
     tic = time.time()
+    gen_tic = time.time()
 
     objective_solution_best = np.inf
     objective_solution_centroid = np.inf
@@ -64,7 +65,13 @@ def CMAES(config, fitness):
                 es.disp()
                 best_score = -es.best.f if config["maximise"] else es.best.f
                 pop_mean_score = -np.mean(fitvals) if config["maximise"] else np.mean(fitvals)
-                print(f"  Gen {gen:4d} | Best: {best_score:.2f}/4 correct | Pop mean: {pop_mean_score:.2f}/4 | Sigma: {es.sigma:.4f}")
+                timing_str = ""
+                if config.get("log_gen_time", True):
+                    elapsed = time.time() - gen_tic
+                    steps = config["print_every"]
+                    timing_str = f" | {elapsed/steps:.1f}s/gen"
+                    gen_tic = time.time()
+                print(f"  Gen {gen:4d} | Best: {best_score:.2f} | Pop mean: {pop_mean_score:.2f} | Sigma: {es.sigma:.4f}{timing_str}")
 
             # Store best solution
             objective_current_best_sol = es.best.f
