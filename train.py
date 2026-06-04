@@ -111,6 +111,9 @@ if __name__ == "__main__":
     parser.add_argument("--sigma-init", type=float, default=None, help="Override sigma_init from config")
     parser.add_argument("--growth-cycles", type=int, default=None, help="Override number_of_growth_cycles from config")
     parser.add_argument("--no-gen-time", action="store_true", help="Disable per-generation timing in progress output")
+    parser.add_argument("--pruning", action="store_true", default=False, help="Enable edge pruning after each growth cycle (overrides config)")
+    parser.add_argument("--size-reg", type=str, default=None, help="Brain size regularisation strategy. Options: 'io_ratio' (penalise hidden nodes relative to seed size)")
+    parser.add_argument("--size-reg-alpha", type=float, default=None, help="Strength of size regularisation penalty (default 1.0)")
     parser.add_argument("--target", type=float, default=None, help="Stop evolution as soon as best fitness reaches this value (default: env max reward)")
     args = parser.parse_args()
     with open(args.conf) as file:
@@ -136,6 +139,12 @@ if __name__ == "__main__":
     if args.growth_cycles is not None:
         config["number_of_growth_cycles"] = args.growth_cycles
     config["log_gen_time"] = not args.no_gen_time
+    if args.pruning:
+        config["prunning_phase"] = True
+    if args.size_reg is not None:
+        config["size_regularisation"] = args.size_reg
+    if args.size_reg_alpha is not None:
+        config["size_reg_alpha"] = args.size_reg_alpha
     config["visualise_network"] = 1 if args.visualise else 0
     if args.save_dna:
         config["save_model"] = True

@@ -7,7 +7,7 @@ import pandas as pd
 from multiprocess import Pool
 
 
-def CMAES(config, fitness):
+def CMAES(config, fitness, fitness_with_stats=None):
     nb_parameters = config["nb_trainable_parameters"]
     x0 = x0_sampling(config["x0_dist"], nb_parameters)
     es = cma.CMAEvolutionStrategy(
@@ -48,30 +48,48 @@ def CMAES(config, fitness):
             # Generate candidate solutions
             X = es.ask()
 
-            # Evaluate in parallel
+            # Evaluate in parallel — use stats variant to get raw reward + brain size
+            use_stats = fitness_with_stats is not None
+            eval_fn = fitness_with_stats if use_stats else fitness
             if pool is not None:
-                fitvals = pool.map(fitness, X)
+                results = pool.map(eval_fn, X)
             else:
-                fitvals = [fitness(x) for x in X]
+                results = [eval_fn(x) for x in X]
 
-            # Correct sign of fevals needed cause this CMA implementation only minimises
+            if use_stats:
+                fitvals = [r[0] for r in results]
+                raw_rewards = [r[1] for r in results]
+                brain_sizes = [r[2] for r in results]
+            else:
+                fitvals = results
+
+            # Correct sign — CMA-ES minimises, we maximise
             if config["maximise"]:
-                fitvals = [-fitval for fitval in fitvals]
+                fitvals_for_cma = [-f for f in fitvals]
+            else:
+                fitvals_for_cma = fitvals
 
             # Inform CMA optimizer of fitness results
-            es.tell(X, fitvals)
+            es.tell(X, fitvals_for_cma)
 
             if gen % config["print_every"] == 0:
                 es.disp()
                 best_score = -es.best.f if config["maximise"] else es.best.f
-                pop_mean_score = -np.mean(fitvals) if config["maximise"] else np.mean(fitvals)
-                timing_str = ""
+                pop_mean_score = np.mean(fitvals)
+
+                extra = ""
+                if use_stats:
+                    # Find best candidate's raw reward and brain size
+                    best_idx = int(np.argmax(fitvals) if config["maximise"] else np.argmin(fitvals))
+                    best_raw = raw_rewards[best_idx]
+                    best_nodes = brain_sizes[best_idx]
+                    mean_nodes = np.mean(brain_sizes)
+                    extra += f" | Raw: {best_raw:.1f} | Nodes: {best_nodes} (mean {mean_nodes:.1f})"
                 if config.get("log_gen_time", True):
                     elapsed = time.time() - gen_tic
-                    steps = config["print_every"]
-                    timing_str = f" | {elapsed/steps:.1f}s/gen"
+                    extra += f" | {elapsed/config['print_every']:.1f}s/gen"
                     gen_tic = time.time()
-                print(f"  Gen {gen:4d} | Best: {best_score:.2f} | Pop mean: {pop_mean_score:.2f} | Sigma: {es.sigma:.4f}{timing_str}")
+                print(f"  Gen {gen:4d} | Best: {best_score:.2f} | Pop mean: {pop_mean_score:.2f} | Sigma: {es.sigma:.4f}{extra}")
 
             # Store best solution
             objective_current_best_sol = es.best.f

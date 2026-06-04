@@ -176,13 +176,14 @@ def env_rollout(W: np.ndarray, config: dict, render=False, animate_graph_rollout
     return episodeReward
 
 
-def fitness_functional(config: dict, render=False, animate_graph_growth=False, animate_graph_rollout=False, solution_id=None, checksum=False) -> Callable[np.ndarray, float]:  # type: ignore
+def fitness_functional(config: dict, render=False, animate_graph_growth=False, animate_graph_rollout=False, solution_id=None, checksum=False, return_stats=False) -> Callable[np.ndarray, float]:  # type: ignore
     profile = config.get("profile", False)
 
-    def fitness(evolved_parameters: np.array) -> float:
-        """
-        Evaluate an agent 'evolved_parameters' in an environment 'environment' during a lifetime.
-        Returns the negative episodic fitness of the agent.
+    def fitness(evolved_parameters: np.array):
+        """Evaluate an agent in its environment.
+
+        Returns a scalar reward normally, or (reg_reward, raw_reward, n_nodes)
+        when return_stats=True (used by the optimizer for richer logging).
         """
         timings = {}
 
@@ -488,16 +489,25 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             print(f"\n-------\n\n(mean) Episodes reward for {config['nb_episode_evals']*config['nb_growth_evals']} runs: {mean_reward}")
             print("\n---------------------------------------------\n")
 
+        raw_reward = mean_reward  # reward before any size penalties
+        n_nodes = W.shape[0]
+
         if config["fewer_edges"]:
             env_max_reward = environment_max_reward(config["environment"])
-            n_nodes = W.shape[0]
             sparsity_penalty = (np.count_nonzero(W) / n_nodes ** 2) * env_max_reward
             mean_reward -= sparsity_penalty
 
         if config["fewer_nodes"]:
             env_max_reward = environment_max_reward(config["environment"])
-            nb_nodes_penalty = 10 * W.shape[0] * env_max_reward
+            nb_nodes_penalty = 10 * n_nodes * env_max_reward
             mean_reward -= nb_nodes_penalty
+
+        size_reg = config.get("size_regularisation")
+        if size_reg == "io_ratio":
+            seed_size = config.get("observation_dim", 0) + config.get("action_dim", 0)
+            if seed_size > 0:
+                alpha = config.get("size_reg_alpha", 1.0)
+                mean_reward -= alpha * max(0, n_nodes / seed_size - 1)
 
         if config["balanced_weights"]:
             env_max_reward = environment_max_reward(config["environment"])
@@ -513,6 +523,8 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             print(f"  {'TOTAL':25s}: {total*1000:8.3f}ms")
             print("=====================================")
 
+        if return_stats:
+            return mean_reward, raw_reward, n_nodes
         return mean_reward
 
     return fitness
@@ -757,10 +769,11 @@ def train_model(config):
         config["initial_network_state"] = np.random.default_rng(config["seed"]).uniform(-1, +1, (config["initial_network_size"], config["node_embedding_size"]))
 
     fitness = fitness_functional(config)
+    fitness_with_stats = fitness_functional(config, return_stats=True)
 
     # Run optimiser
     if config["optimizer"] == "CMAES":
-        solution_best, solution_centroid, early_stopping_executed, logger = CMAES(config, fitness)
+        solution_best, solution_centroid, early_stopping_executed, logger = CMAES(config, fitness, fitness_with_stats)
     else:
         raise NotImplementedError
 
