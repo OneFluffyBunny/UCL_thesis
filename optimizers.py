@@ -7,7 +7,7 @@ import pandas as pd
 from multiprocess import Pool
 
 
-def CMAES(config, fitness):
+def CMAES(config, fitness, fitness_with_stats=None):
     nb_parameters = config["nb_trainable_parameters"]
     x0 = x0_sampling(config["x0_dist"], nb_parameters)
     es = cma.CMAEvolutionStrategy(
@@ -28,6 +28,7 @@ def CMAES(config, fitness):
 
     print("\n--- Starting Evolution ---\n")
     tic = time.time()
+    gen_tic = time.time()
 
     objective_solution_best = np.inf
     objective_solution_centroid = np.inf
@@ -47,24 +48,58 @@ def CMAES(config, fitness):
             # Generate candidate solutions
             X = es.ask()
 
-            # Evaluate in parallel
-            if pool is not None:
-                fitvals = pool.map(fitness, X)
-            else:
-                fitvals = [fitness(x) for x in X]
+            config["current_gen"] = gen
+            warmup = config.get("size_reg_warmup")
+            if warmup is not None and gen == warmup:
+                print(f"\n  [Gen {gen}] Regularisation off — switching to raw fitness\n")
 
-            # Correct sign of fevals needed cause this CMA implementation only minimises
+            # Evaluate in parallel — use stats variant to get raw reward + brain size
+            use_stats = fitness_with_stats is not None
+            eval_fn = fitness_with_stats if use_stats else fitness
+            if pool is not None:
+                results = pool.map(eval_fn, X)
+            else:
+                results = [eval_fn(x) for x in X]
+
+            if use_stats:
+                fitvals = [r[0] for r in results]
+                raw_rewards = [r[1] for r in results]
+                brain_sizes = [r[2] for r in results]
+            else:
+                fitvals = results
+
+            # Correct sign — CMA-ES minimises, we maximise
             if config["maximise"]:
-                fitvals = [-fitval for fitval in fitvals]
+                fitvals_for_cma = [-f for f in fitvals]
+            else:
+                fitvals_for_cma = fitvals
 
             # Inform CMA optimizer of fitness results
-            es.tell(X, fitvals)
+            es.tell(X, fitvals_for_cma)
 
             if gen % config["print_every"] == 0:
                 es.disp()
-                best_score = -es.best.f if config["maximise"] else es.best.f
-                pop_mean_score = -np.mean(fitvals) if config["maximise"] else np.mean(fitvals)
-                print(f"  Gen {gen:4d} | Best: {best_score:.2f}/4 correct | Pop mean: {pop_mean_score:.2f}/4 | Sigma: {es.sigma:.4f}")
+                pop_mean_score = np.mean(fitvals)
+
+                extra = ""
+                if use_stats:
+                    best_idx = int(np.argmax(fitvals) if config["maximise"] else np.argmin(fitvals))
+                    best_reg = fitvals[best_idx]
+                    best_raw = raw_rewards[best_idx]
+                    best_nodes = brain_sizes[best_idx]
+                    mean_nodes = np.mean(brain_sizes)
+                    extra += f" | Nodes: {best_nodes} (mean {mean_nodes:.1f})"
+                    best_str = f"{best_reg:.2f} (raw: {best_raw:.1f})"
+                else:
+                    best_reg = max(fitvals) if config["maximise"] else min(fitvals)
+                    best_str = f"{best_reg:.2f}"
+                if config.get("log_gen_time", True):
+                    elapsed = time.time() - gen_tic
+                    extra += f" | {elapsed/config['print_every']:.1f}s/gen"
+                    gen_tic = time.time()
+                if config.get("size_reg_warmup") is not None:
+                    extra += " | [reg]" if gen < config["size_reg_warmup"] else " | [raw]"
+                print(f"  Gen {gen:4d} | Best: {best_str} | Pop mean: {pop_mean_score:.2f} | Sigma: {es.sigma:.4f}{extra}")
 
             # Store best solution
             objective_current_best_sol = es.best.f

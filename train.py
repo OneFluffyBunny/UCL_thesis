@@ -109,6 +109,15 @@ if __name__ == "__main__":
     parser.add_argument("--show", action="store_true", help="Save and open the best brain PNG after training (implies --snapshot)")
     parser.add_argument("--nb-episode-evals", type=int, default=None, help="Override nb_episode_evals from config")
     parser.add_argument("--sigma-init", type=float, default=None, help="Override sigma_init from config")
+    parser.add_argument("--growth-cycles", type=int, default=None, help="Override number_of_growth_cycles from config")
+    parser.add_argument("--no-gen-time", action="store_true", help="Disable per-generation timing in progress output")
+    parser.add_argument("--pruning", action="store_true", default=False, help="Enable edge pruning after each growth cycle (overrides config)")
+    parser.add_argument("--no-elitism", action="store_true", default=False, help="Disable CMA-ES elitism (default is elitist)")
+    parser.add_argument("--growth-threshold", type=float, default=None, help="Growth MLP output must exceed this to spawn a node (default 0.0)")
+    parser.add_argument("--size-reg", type=str, default=None, help="Brain size regularisation strategy: 'io_ratio' (nodes), 'io_edges' (edges), 'both' (nodes + edges)")
+    parser.add_argument("--size-reg-alpha", type=float, default=None, help="Node regularisation strength (default 1.0)")
+    parser.add_argument("--size-reg-alpha-edges", type=float, default=None, help="Edge regularisation strength (default 1.0)")
+    parser.add_argument("--size-reg-warmup", type=int, default=None, help="Apply size regularisation for the first N generations only; switches to raw fitness afterwards")
     parser.add_argument("--target", type=float, default=None, help="Stop evolution as soon as best fitness reaches this value (default: env max reward)")
     args = parser.parse_args()
     with open(args.conf) as file:
@@ -131,11 +140,28 @@ if __name__ == "__main__":
         config["evolution_feval_check_N"] = max(n, (feval_n // n) * n)
     if args.sigma_init is not None:
         config["sigma_init"] = args.sigma_init
+    if args.growth_cycles is not None:
+        config["number_of_growth_cycles"] = args.growth_cycles
+    config["log_gen_time"] = not args.no_gen_time
+    if args.pruning:
+        config["prunning_phase"] = True
+    if args.no_elitism:
+        config["CMA_elitist"] = False
+    if args.growth_threshold is not None:
+        config["growth_threshold"] = args.growth_threshold
+    if args.size_reg is not None:
+        config["size_regularisation"] = args.size_reg
+    if args.size_reg_alpha is not None:
+        config["size_reg_alpha"] = args.size_reg_alpha
+    if args.size_reg_alpha_edges is not None:
+        config["size_reg_alpha_edges"] = args.size_reg_alpha_edges
     config["visualise_network"] = 1 if args.visualise else 0
     if args.save_dna:
         config["save_model"] = True
     config["snapshot"] = args.snapshot or args.show
     config["show"] = args.show
+    if args.size_reg_warmup is not None:
+        config["size_reg_warmup"] = args.size_reg_warmup
     if args.target is not None:
         config["target"] = args.target
     else:

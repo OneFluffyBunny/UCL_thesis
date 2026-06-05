@@ -250,7 +250,7 @@ def query_pairs_of_node_embeddings(W: np.array, network_state: np.array, self_li
     return node_embeddings_concatenated_dict, arr
 
 
-def predict_new_nodes(growth_decision_model, embeddings_for_growth_model, node_embedding_size, use_torch=False):
+def predict_new_nodes(growth_decision_model, embeddings_for_growth_model, node_embedding_size, use_torch=False, growth_threshold=0.0):
     """This function predicts the new nodes based on the concatenated node embeddings.
 
     Args:
@@ -258,6 +258,7 @@ def predict_new_nodes(growth_decision_model, embeddings_for_growth_model, node_e
         embeddings_for_growth_model (np.array): Node embeddings to query.
         node_embedding_size (int): Size of each node embedding.
         use_torch (bool): If True, wrap input in a torch tensor before calling the model.
+        growth_threshold (float): MLP output must exceed this value to trigger growth (default 0.0).
 
     Returns:
         new_nodes_predictions (np.array): Boolean array of growth decisions.
@@ -267,7 +268,7 @@ def predict_new_nodes(growth_decision_model, embeddings_for_growth_model, node_e
             probs = growth_decision_model(torch.tensor(embeddings_for_growth_model, dtype=torch.float64)).detach().numpy()
     else:
         probs = growth_decision_model(embeddings_for_growth_model)
-    return (probs > 0).squeeze()
+    return (probs > growth_threshold).squeeze()
 
 
 def update_weights(W, network_state, model, undirected, use_torch=False):

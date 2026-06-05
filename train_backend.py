@@ -35,6 +35,51 @@ def _timed(label, timings, active):
         yield
 
 
+def build_initial_network_state(config: dict, evolved_parameters: np.ndarray) -> np.ndarray:
+    """Construct the initial node-embedding matrix for the seed graph.
+
+    For I/O tasks the seed graph has the input nodes at indices 0..obs_dim-1, the
+    output nodes at obs_dim..obs_dim+action_dim-1, and any extra hidden seed nodes
+    after that. Input and output nodes are given distinct *role* embeddings so the
+    (weight-shared) growth program can tell sensory from motor neurons and grow
+    asymmetric structure around them. Hidden seed nodes keep a neutral (zero)
+    embedding.
+
+    Graph-property tasks ("Network" in the environment name) have no I/O roles and
+    retain the original single-embedding / ones / random behaviour.
+
+    Returns:
+        np.ndarray of shape (initial_network_size, node_embedding_size).
+    """
+    E = config["node_embedding_size"]
+    n_total = config["initial_network_size"]
+
+    if config.get("has_io_roles", "Network" not in config["environment"]):
+        obs_dim = config["observation_dim"]
+        act_dim = config["action_dim"]
+        if config["coevolve_initial_embeddings"]:
+            in_role = evolved_parameters[:E]
+            out_role = evolved_parameters[E : 2 * E]
+        else:
+            # Fixed, distinct role constants so the program can still distinguish I/O
+            in_role = np.full(E, 1.0)
+            out_role = np.full(E, -1.0)
+        state = np.zeros((n_total, E))
+        state[:obs_dim] = in_role
+        state[obs_dim : obs_dim + act_dim] = out_role
+        return state
+
+    # Graph-property tasks: original behaviour
+    if config["coevolve_initial_embeddings"]:
+        return np.expand_dims(evolved_parameters[:E], axis=0)
+    elif (not config["shared_intial_embedding"]) and config["initial_embeddings_random"]:
+        return np.random.default_rng(None).uniform(-1, +1, (n_total, E))
+    elif config["shared_intial_embedding"] and config["initial_embeddings_random"]:
+        return config["initial_network_state"]
+    else:
+        return np.ones((n_total, E))
+
+
 def env_rollout(W: np.ndarray, config: dict, render=False, animate_graph_rollout: bool = False, solution_id: str = None, seed: int = None) -> float:
     if animate_graph_rollout:
         graph = W_to_nx(W, config["undirected"])
@@ -102,8 +147,8 @@ def env_rollout(W: np.ndarray, config: dict, render=False, animate_graph_rollout
             use_torch=config.get("use_torch", False),
         )
 
-        # Select action from the output nodes
-        action = network_state[-config["action_dim"] :]
+        # Select action from the output nodes (fixed indices: right after the input nodes)
+        action = network_state[config["observation_dim"] : config["observation_dim"] + config["action_dim"]]
 
         # Bound the action or convert it to a discrete action
         if isinstance(env.action_space, gym.spaces.Box):
@@ -126,17 +171,19 @@ def env_rollout(W: np.ndarray, config: dict, render=False, animate_graph_rollout
 
         timestep += 1
 
-    # print(episodeReward)
+    # Close the env so RecordVideo flushes the .mp4 to disk (otherwise no video is written)
+    env.close()
     return episodeReward
 
 
-def fitness_functional(config: dict, render=False, animate_graph_growth=False, animate_graph_rollout=False, solution_id=None, checksum=False) -> Callable[np.ndarray, float]:  # type: ignore
+def fitness_functional(config: dict, render=False, animate_graph_growth=False, animate_graph_rollout=False, solution_id=None, checksum=False, return_stats=False) -> Callable[np.ndarray, float]:  # type: ignore
     profile = config.get("profile", False)
 
-    def fitness(evolved_parameters: np.array) -> float:
-        """
-        Evaluate an agent 'evolved_parameters' in an environment 'environment' during a lifetime.
-        Returns the negative episodic fitness of the agent.
+    def fitness(evolved_parameters: np.array):
+        """Evaluate an agent in its environment.
+
+        Returns a scalar reward normally, or (reg_reward, raw_reward, n_nodes)
+        when return_stats=True (used by the optimizer for richer logging).
         """
         timings = {}
 
@@ -154,18 +201,11 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             else:
                 W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
 
-            # Initialise the network state
-            if config["coevolve_initial_embeddings"]:
-                initial_network_state = np.expand_dims(evolved_parameters[: config["node_embedding_size"]], axis=0)
-            elif (not config["shared_intial_embedding"]) and config["initial_embeddings_random"]:
-                initial_network_state = np.random.default_rng(None).uniform(-1, +1, (config["initial_network_size"], config["node_embedding_size"]))
-            elif config["shared_intial_embedding"] and config["initial_embeddings_random"]:
-                initial_network_state = config["initial_network_state"]
-            else:
-                initial_network_state = np.ones((config["initial_network_size"], config["node_embedding_size"]))
+            # Initialise the network state (role-based seed embeddings for I/O tasks)
+            initial_network_state = build_initial_network_state(config, evolved_parameters)
 
             # Slice indices into the flat parameter vector
-            n1 = config["node_embedding_size"] if config["coevolve_initial_embeddings"] else 0
+            n1 = config["nb_params_coevolve_initial_embeddings"]
             n2 = n1 + config["nb_params_growth_model"]
             n3 = n2 + config["nb_params_feature_transformation"]
             n4 = n3 + config["nb_params_mlp_weight_values"]
@@ -322,7 +362,7 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
 
                 # Predict new nodes
                 if profile: _tp = time.perf_counter()
-                new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch)
+                new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch, growth_threshold=config.get("growth_threshold", 0.0))
                 if profile: timings["predict_grow"] = timings.get("predict_grow", 0.0) + time.perf_counter() - _tp
 
                 # Add new nodes and increase the network_state vector accordingly
@@ -449,16 +489,40 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             print(f"\n-------\n\n(mean) Episodes reward for {config['nb_episode_evals']*config['nb_growth_evals']} runs: {mean_reward}")
             print("\n---------------------------------------------\n")
 
+        raw_reward = mean_reward  # reward before any size penalties
+        n_nodes = W.shape[0]
+
         if config["fewer_edges"]:
             env_max_reward = environment_max_reward(config["environment"])
-            n_nodes = W.shape[0]
             sparsity_penalty = (np.count_nonzero(W) / n_nodes ** 2) * env_max_reward
             mean_reward -= sparsity_penalty
 
         if config["fewer_nodes"]:
             env_max_reward = environment_max_reward(config["environment"])
-            nb_nodes_penalty = 10 * W.shape[0] * env_max_reward
+            nb_nodes_penalty = 10 * n_nodes * env_max_reward
             mean_reward -= nb_nodes_penalty
+
+        size_reg = config.get("size_regularisation")
+        reg_warmup = config.get("size_reg_warmup")
+        apply_reg = reg_warmup is None or config.get("current_gen", 0) < reg_warmup
+
+        if apply_reg:
+            if size_reg in ("io_ratio", "both"):
+                seed_size = config.get("observation_dim", 0) + config.get("action_dim", 0)
+                if seed_size > 0:
+                    alpha = config.get("size_reg_alpha", 1.0)
+                    mean_reward -= alpha * max(0, n_nodes / seed_size - 1)
+
+            if size_reg in ("io_edges", "both"):
+                seed_size = config.get("observation_dim", 0) + config.get("action_dim", 0)
+                # Baseline = fully-connected seed graph (seed_size^2 edges), so only
+                # edges added beyond the seed are penalised. Using obs*act (=32 for
+                # LunarLander) was too aggressive — it penalised the seed itself.
+                baseline_edges = seed_size ** 2
+                if baseline_edges > 0:
+                    alpha_edges = config.get("size_reg_alpha_edges", 1.0)
+                    n_edges = int(np.count_nonzero(W))
+                    mean_reward -= alpha_edges * max(0, n_edges / baseline_edges - 1)
 
         if config["balanced_weights"]:
             env_max_reward = environment_max_reward(config["environment"])
@@ -474,6 +538,8 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             print(f"  {'TOTAL':25s}: {total*1000:8.3f}ms")
             print("=====================================")
 
+        if return_stats:
+            return mean_reward, raw_reward, n_nodes
         return mean_reward
 
     return fitness
@@ -549,8 +615,8 @@ def bool_gates_fitness(W: np.ndarray, config: dict, render=False, animate_graph_
             use_torch=config.get("use_torch", False),
         )
 
-        # Select action from the output nodes
-        bool_prediction = np.argmax(network_state[-2:])
+        # Select action from the output nodes (fixed indices 2:4, right after the 2 input nodes)
+        bool_prediction = np.argmax(network_state[2:4])
 
         if bool_prediction == Y[idx]:
             fitness += 1
@@ -636,11 +702,12 @@ def train_model(config):
         else:
             config["initial_network_size"] = config["extra_nodes"]
     elif "gate" in config["environment"]:
+        # Boolean gates: 2 input bits, 2 output nodes (argmax over the two)
+        config["observation_dim"] = 2
+        config["action_dim"] = 2
         config["min_network_size"] = 4
-        if config["extra_nodes"] == -1:
-            config["initial_network_size"] = 1
-        else:
-            config["initial_network_size"] = config["extra_nodes"]
+        extra_hidden = 0 if config["extra_nodes"] == -1 else config["extra_nodes"]
+        config["initial_network_size"] = config["observation_dim"] + config["action_dim"] + extra_hidden
     else:
         # Figure out environment dimennsions and type
         observation_dim, action_dim, pixel_env = dimensions_env(config["environment"])
@@ -650,14 +717,20 @@ def train_model(config):
         if pixel_env:
             raise NotImplementedError
         else:
-            if config["extra_nodes"] == -1:
-                config["initial_network_size"] = 1
-            else:
-                config["initial_network_size"] = observation_dim + action_dim + config["extra_nodes"]
+            # Seed graph always contains the input + output nodes; extra_nodes adds hidden seeds
+            extra_hidden = 0 if config["extra_nodes"] == -1 else config["extra_nodes"]
+            config["initial_network_size"] = observation_dim + action_dim + extra_hidden
         config["min_network_size"] = observation_dim + action_dim
 
-    # Find number of trainable parameters
-    config["nb_params_coevolve_initial_embeddings"] = config["node_embedding_size"] if config["coevolve_initial_embeddings"] else 0
+    # Find number of trainable parameters.
+    # I/O tasks evolve two role embeddings (input-role, output-role); graph-property
+    # ("Network") tasks keep the single coevolved embedding.
+    has_io_roles = "Network" not in config["environment"]
+    config["has_io_roles"] = has_io_roles
+    if config["coevolve_initial_embeddings"]:
+        config["nb_params_coevolve_initial_embeddings"] = (2 if has_io_roles else 1) * config["node_embedding_size"]
+    else:
+        config["nb_params_coevolve_initial_embeddings"] = 0
 
     config["input_size_growth_model"] = config["node_embedding_size"] * 2 if config["node_pairs_based_growth"] else config["node_embedding_size"]
     mlp_growth_model = MLP(
@@ -711,10 +784,11 @@ def train_model(config):
         config["initial_network_state"] = np.random.default_rng(config["seed"]).uniform(-1, +1, (config["initial_network_size"], config["node_embedding_size"]))
 
     fitness = fitness_functional(config)
+    fitness_with_stats = fitness_functional(config, return_stats=True)
 
     # Run optimiser
     if config["optimizer"] == "CMAES":
-        solution_best, solution_centroid, early_stopping_executed, logger = CMAES(config, fitness)
+        solution_best, solution_centroid, early_stopping_executed, logger = CMAES(config, fitness, fitness_with_stats)
     else:
         raise NotImplementedError
 
@@ -730,16 +804,9 @@ def grow_network(evolved_parameters: np.ndarray, config: dict):
     else:
         W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
 
-    if config["coevolve_initial_embeddings"]:
-        initial_network_state = np.expand_dims(evolved_parameters[:config["node_embedding_size"]], axis=0)
-    elif not config["shared_intial_embedding"] and config["initial_embeddings_random"]:
-        initial_network_state = np.random.default_rng(None).uniform(-1, +1, (config["initial_network_size"], config["node_embedding_size"]))
-    elif config["shared_intial_embedding"] and config["initial_embeddings_random"]:
-        initial_network_state = config["initial_network_state"]
-    else:
-        initial_network_state = np.ones((config["initial_network_size"], config["node_embedding_size"]))
+    initial_network_state = build_initial_network_state(config, evolved_parameters)
 
-    n1 = config["node_embedding_size"] if config["coevolve_initial_embeddings"] else 0
+    n1 = config["nb_params_coevolve_initial_embeddings"]
     n2 = n1 + config["nb_params_growth_model"]
     n3 = n2 + config["nb_params_feature_transformation"]
     n4 = n3 + config["nb_params_mlp_weight_values"]
@@ -842,7 +909,7 @@ def grow_network(evolved_parameters: np.ndarray, config: dict):
             embeddings_for_growth_model = network_state
             node_embeddings_concatenated_dict = None
 
-        new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch)
+        new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch, growth_threshold=config.get("growth_threshold", 0.0))
         prev_n = W.shape[0]
         W, network_state = add_new_nodes(
             W=W,
@@ -886,7 +953,7 @@ def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, s
 
     if obs_dim is not None:
         color_map = [
-            "indianred" if node < obs_dim else ("slategray" if node >= n - act_dim else "white")
+            "indianred" if node < obs_dim else ("slategray" if obs_dim <= node < obs_dim + act_dim else "white")
             for node in G.nodes()
         ]
     else:
@@ -897,8 +964,9 @@ def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, s
 
     edges = list(G.edges())
     edge_weights = [G[u][v]["weight"] for u, v in edges]
-    edge_widths = [max(0.2, abs(w) * 3) for w in edge_weights]
-    edge_colors = ["steelblue" if w >= 0 else "tomato" for w in edge_weights]
+    # Floor the width so weak (but present) edges stay visible; sign is shown by colour
+    edge_widths = [max(1.2, abs(w) * 4) for w in edge_weights]
+    edge_colors = ["steelblue" if w >= 0 else "crimson" for w in edge_weights]
 
     fig, ax = pyplot.subplots(figsize=(14, 10))
     nx.draw_networkx(
@@ -922,11 +990,11 @@ def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, s
         legend_elements += [
             Patch(facecolor="indianred", edgecolor="black", label=f"Input (nodes 0-{obs_dim-1})"),
             Patch(facecolor="white", edgecolor="black", label="Hidden"),
-            Patch(facecolor="slategray", edgecolor="black", label=f"Output (last {act_dim} nodes)"),
+            Patch(facecolor="slategray", edgecolor="black", label=f"Output (nodes {obs_dim}-{obs_dim + act_dim - 1})"),
         ]
     legend_elements += [
         Line2D([0], [0], color="steelblue", linewidth=2, label="Excitatory (weight > 0)"),
-        Line2D([0], [0], color="tomato", linewidth=2, label="Inhibitory (weight < 0)"),
+        Line2D([0], [0], color="crimson", linewidth=2, label="Inhibitory (weight < 0)"),
     ]
     ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
 
