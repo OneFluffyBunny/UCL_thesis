@@ -362,7 +362,7 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
 
                 # Predict new nodes
                 if profile: _tp = time.perf_counter()
-                new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch)
+                new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch, growth_threshold=config.get("growth_threshold", 0.0))
                 if profile: timings["predict_grow"] = timings.get("predict_grow", 0.0) + time.perf_counter() - _tp
 
                 # Add new nodes and increase the network_state vector accordingly
@@ -503,11 +503,26 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             mean_reward -= nb_nodes_penalty
 
         size_reg = config.get("size_regularisation")
-        if size_reg == "io_ratio":
-            seed_size = config.get("observation_dim", 0) + config.get("action_dim", 0)
-            if seed_size > 0:
-                alpha = config.get("size_reg_alpha", 1.0)
-                mean_reward -= alpha * max(0, n_nodes / seed_size - 1)
+        reg_warmup = config.get("size_reg_warmup")
+        apply_reg = reg_warmup is None or config.get("current_gen", 0) < reg_warmup
+
+        if apply_reg:
+            if size_reg in ("io_ratio", "both"):
+                seed_size = config.get("observation_dim", 0) + config.get("action_dim", 0)
+                if seed_size > 0:
+                    alpha = config.get("size_reg_alpha", 1.0)
+                    mean_reward -= alpha * max(0, n_nodes / seed_size - 1)
+
+            if size_reg in ("io_edges", "both"):
+                seed_size = config.get("observation_dim", 0) + config.get("action_dim", 0)
+                # Baseline = fully-connected seed graph (seed_size^2 edges), so only
+                # edges added beyond the seed are penalised. Using obs*act (=32 for
+                # LunarLander) was too aggressive — it penalised the seed itself.
+                baseline_edges = seed_size ** 2
+                if baseline_edges > 0:
+                    alpha_edges = config.get("size_reg_alpha_edges", 1.0)
+                    n_edges = int(np.count_nonzero(W))
+                    mean_reward -= alpha_edges * max(0, n_edges / baseline_edges - 1)
 
         if config["balanced_weights"]:
             env_max_reward = environment_max_reward(config["environment"])
@@ -894,7 +909,7 @@ def grow_network(evolved_parameters: np.ndarray, config: dict):
             embeddings_for_growth_model = network_state
             node_embeddings_concatenated_dict = None
 
-        new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch)
+        new_nodes_predictions = predict_new_nodes(mlp_growth_model, embeddings_for_growth_model, config["node_embedding_size"], use_torch=use_torch, growth_threshold=config.get("growth_threshold", 0.0))
         prev_n = W.shape[0]
         W, network_state = add_new_nodes(
             W=W,

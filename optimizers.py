@@ -48,6 +48,11 @@ def CMAES(config, fitness, fitness_with_stats=None):
             # Generate candidate solutions
             X = es.ask()
 
+            config["current_gen"] = gen
+            warmup = config.get("size_reg_warmup")
+            if warmup is not None and gen == warmup:
+                print(f"\n  [Gen {gen}] Regularisation off — switching to raw fitness\n")
+
             # Evaluate in parallel — use stats variant to get raw reward + brain size
             use_stats = fitness_with_stats is not None
             eval_fn = fitness_with_stats if use_stats else fitness
@@ -74,22 +79,27 @@ def CMAES(config, fitness, fitness_with_stats=None):
 
             if gen % config["print_every"] == 0:
                 es.disp()
-                best_score = -es.best.f if config["maximise"] else es.best.f
                 pop_mean_score = np.mean(fitvals)
 
                 extra = ""
                 if use_stats:
-                    # Find best candidate's raw reward and brain size
                     best_idx = int(np.argmax(fitvals) if config["maximise"] else np.argmin(fitvals))
+                    best_reg = fitvals[best_idx]
                     best_raw = raw_rewards[best_idx]
                     best_nodes = brain_sizes[best_idx]
                     mean_nodes = np.mean(brain_sizes)
-                    extra += f" | Raw: {best_raw:.1f} | Nodes: {best_nodes} (mean {mean_nodes:.1f})"
+                    extra += f" | Nodes: {best_nodes} (mean {mean_nodes:.1f})"
+                    best_str = f"{best_reg:.2f} (raw: {best_raw:.1f})"
+                else:
+                    best_reg = max(fitvals) if config["maximise"] else min(fitvals)
+                    best_str = f"{best_reg:.2f}"
                 if config.get("log_gen_time", True):
                     elapsed = time.time() - gen_tic
                     extra += f" | {elapsed/config['print_every']:.1f}s/gen"
                     gen_tic = time.time()
-                print(f"  Gen {gen:4d} | Best: {best_score:.2f} | Pop mean: {pop_mean_score:.2f} | Sigma: {es.sigma:.4f}{extra}")
+                if config.get("size_reg_warmup") is not None:
+                    extra += " | [reg]" if gen < config["size_reg_warmup"] else " | [raw]"
+                print(f"  Gen {gen:4d} | Best: {best_str} | Pop mean: {pop_mean_score:.2f} | Sigma: {es.sigma:.4f}{extra}")
 
             # Store best solution
             objective_current_best_sol = es.best.f
