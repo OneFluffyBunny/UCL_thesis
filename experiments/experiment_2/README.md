@@ -22,7 +22,8 @@ that difference is the contribution.
 - `model.py` — `DirectGenome`: genome = weights + biases; fixed topology
   (`[inputs, hidden, outputs]`, edges IH|HH|HO, no self-loops), synchronous
   recurrent inference — dynamics identical to experiment 1.
-- `tasks.py` — verbatim copy of experiment 1's tasks (keep them in sync).
+- `tasks.py` — thin shim that re-exports `../shared_tasks.py` (the single shared
+  task definitions, imported identically by every experiment).
 - `train.py` — CMA-ES loop; balanced accuracy, optional `--fitness margin`,
   fixed-goal or `--mvg` (AND↔OR switching). Mirrors experiment 1.
 

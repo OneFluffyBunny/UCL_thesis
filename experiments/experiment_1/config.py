@@ -88,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="training signal for selection: raw balanced accuracy (default, as before) "
                           "or a smooth hinged signed-margin surrogate on the tanh output "
                           "(accuracy is still what gets logged / early-stopped / reported)")
-    evo.add_argument("--popsize", "--n-individuals", dest="popsize", type=int, default=64,
+    evo.add_argument("--popsize", type=int, default=64,
                      help="population size (individuals per generation)")
     evo.add_argument("--generations", type=int, default=1000, help="number of generations")
     evo.add_argument("--sigma-init", type=float, default=0.1, help="initial ES mutation scale")
