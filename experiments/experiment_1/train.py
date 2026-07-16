@@ -105,7 +105,8 @@ def train_seed(brain_cfg, run_cfg, seed):
     def goal_op(gen):
         if not run_cfg.mvg:
             return run_cfg.operation
-        return ["and", "or"][(gen // run_cfg.switch_interval) % 2]
+        ops = run_cfg.mvg_ops
+        return ops[(gen // run_cfg.switch_interval) % len(ops)]
 
     run_name = f"{run_cfg.task}_seed{seed}"
     print(f"[seed {seed}] task={run_cfg.task} op0={goal_op(0)} mvg={run_cfg.mvg} "

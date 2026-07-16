@@ -1,10 +1,16 @@
-"""Command-line configuration for experiment 1.
+"""Command-line configuration for experiment 2 (direct encoding).
+
+Deliberately mirrors ``experiment_1/config.py`` so the two experiments share the
+same flags, defaults and structure and are directly comparable. The ONLY
+difference is the architecture group: direct encoding has NO encoding knobs
+(no K / type_dim / pos_dim / g_width / g_depth) — the genome IS the weight
+vector, so the only architectural choices are the topology + inference dynamics.
 
 Groups:
-  * architecture -- maps directly onto model.BrainConfig (built now).
-  * evolution    -- CMA-ES / search settings (used by the training loop, TBD).
+  * architecture -- maps directly onto model.BrainConfig.
+  * evolution    -- CMA-ES / search settings.
   * task         -- Kashtan-Alon logic task + modularly-varying-goal settings.
-  * analysis     -- modularity measurement / logging.
+  * analysis     -- density measurement / logging / visualisation.
 
 Run `python config.py --help` to see every flag, or `python config.py ...` to
 print the resolved configuration.
@@ -21,7 +27,7 @@ import jax.numpy as jnp
 from model import BrainConfig
 
 
-# sigma (activation) options selectable from the CLI
+# sigma (activation) options selectable from the CLI (same set as experiment 1)
 ACTIVATIONS = {
     "tanh": jnp.tanh,
     "relu": jax.nn.relu,
@@ -32,7 +38,13 @@ ACTIVATIONS = {
 
 @dataclasses.dataclass(frozen=True)
 class RunConfig:
-    """Everything that is not part of the brain architecture itself."""
+    """Everything that is not part of the brain architecture itself.
+
+    A trimmed mirror of experiment_1's RunConfig: it drops the fields exp 1
+    carries but never reads (elitism / eval_reps / test_reps / n_examples --
+    dead there because the tasks are deterministic full enumerations), so this
+    only lists knobs that actually affect a run.
+    """
     # evolution / search
     strategy: str
     fitness: str            # 'accuracy' (raw 0/1) or 'margin' (smooth hinged surrogate)
@@ -42,14 +54,10 @@ class RunConfig:
     seed: int
     n_seeds: int            # how many seeds to run in one invocation
     target: float           # stop a seed early once best accuracy reaches this
-    elitism: bool
-    eval_reps: int          # fresh task draws averaged per fitness eval (honest eval)
-    test_reps: int          # held-out reps for reporting generalisation
     # task
     task: str
     operation: str
     input_encoding: str     # bipolar {-1,+1} or binary {0,1}
-    n_examples: int         # examples per evaluation (0 -> full enumeration)
     mvg: bool               # modularly-varying goal: switch target every interval
     switch_interval: int    # generations between goal switches (if mvg)
     mvg_ops: tuple          # ops to cycle through under mvg, e.g. ("and", "or") or ("xor", "and")
@@ -64,29 +72,26 @@ class RunConfig:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Experiment 1: evolve a DNA that grows a static modular brain.",
+        description="Experiment 2: evolve a DIRECTLY-encoded network (K-A-style control).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     # --- architecture (-> BrainConfig) ----------------------------------------
+    # NOTE: no --n-types / --type-dim / --pos-dim / --g-width / --g-depth here --
+    # direct encoding has no encoding hyper-parameters, just the topology.
     arch = p.add_argument_group("architecture")
     arch.add_argument("--n-in", type=int, default=8, help="number of input neurons")
     arch.add_argument("--n-hidden", type=int, default=20, help="number of hidden neurons (fixed total)")
     arch.add_argument("--n-out", type=int, default=1, help="number of output neurons")
-    arch.add_argument("--n-types", "-K", type=int, default=4, help="distinct hidden cell-types (K)")
-    arch.add_argument("--type-dim", type=int, default=4, help="dim of an evolved type identity vector")
-    arch.add_argument("--pos-dim", type=int, default=4, help="dim of the fixed positional code (I/O only)")
-    arch.add_argument("--g-width", type=int, default=16, help="hidden width of the connection rule g")
-    arch.add_argument("--g-depth", type=int, default=1, help="hidden layers in g (1 or 2 recommended)")
     arch.add_argument("--rnn-iters", type=int, default=8, help="synchronous recurrent passes at inference")
-    arch.add_argument("--no-bias", action="store_true", help="disable the per-type neuron bias")
+    arch.add_argument("--no-bias", action="store_true", help="disable the per-neuron bias")
     arch.add_argument("--activation", choices=sorted(ACTIVATIONS), default="tanh", help="sigma activation")
 
     # --- evolution / search ---------------------------------------------------
     evo = p.add_argument_group("evolution")
     evo.add_argument("--strategy", default="CMA_ES", help="evosax strategy (CMA-ES for now)")
     evo.add_argument("--fitness", choices=["accuracy", "margin"], default="accuracy",
-                     help="training signal for selection: raw balanced accuracy (default, as before) "
+                     help="training signal for selection: raw balanced accuracy (default) "
                           "or a smooth hinged signed-margin surrogate on the tanh output "
                           "(accuracy is still what gets logged / early-stopped / reported)")
     evo.add_argument("--popsize", type=int, default=64,
@@ -96,9 +101,6 @@ def build_parser() -> argparse.ArgumentParser:
     evo.add_argument("--seed", type=int, default=0, help="PRNG seed (first seed)")
     evo.add_argument("--n-seeds", type=int, default=1, help="run this many consecutive seeds")
     evo.add_argument("--target", type=float, default=1.0, help="stop a seed early once best accuracy reaches this")
-    evo.add_argument("--no-elitism", action="store_true", help="disable carrying the best member forward")
-    evo.add_argument("--eval-reps", type=int, default=4, help="fresh task draws averaged per fitness eval")
-    evo.add_argument("--test-reps", type=int, default=16, help="held-out reps for reported generalisation")
 
     # --- task -----------------------------------------------------------------
     task = p.add_argument_group("task")
@@ -108,7 +110,6 @@ def build_parser() -> argparse.ArgumentParser:
     task.add_argument("--operation", choices=["and", "or", "xor"], default="xor", help="combining operation OP(L,R)")
     task.add_argument("--input-encoding", choices=["bipolar", "binary"], default="bipolar",
                       help="bipolar: bits -> {-1,+1}; binary: bits -> {0,1}")
-    task.add_argument("--n-examples", type=int, default=0, help="examples per eval (0 = full enumeration)")
     task.add_argument("--mvg", action="store_true", help="modularly-varying goal: switch target periodically")
     task.add_argument("--switch-interval", type=int, default=20, help="generations between goal switches (if --mvg)")
     task.add_argument("--mvg-ops", type=str, default="and,or",
@@ -133,11 +134,6 @@ def build_brain_config(args: argparse.Namespace) -> BrainConfig:
         n_in=args.n_in,
         n_hidden=args.n_hidden,
         n_out=args.n_out,
-        n_types=args.n_types,
-        type_dim=args.type_dim,
-        pos_dim=args.pos_dim,
-        g_width=args.g_width,
-        g_depth=args.g_depth,
         rnn_iters=args.rnn_iters,
         use_bias=not args.no_bias,
         activation=ACTIVATIONS[args.activation],
@@ -154,13 +150,9 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         seed=args.seed,
         n_seeds=args.n_seeds,
         target=args.target,
-        elitism=not args.no_elitism,
-        eval_reps=args.eval_reps,
-        test_reps=args.test_reps,
         task=args.task,
         operation=args.operation,
         input_encoding=args.input_encoding,
-        n_examples=args.n_examples,
         mvg=args.mvg,
         switch_interval=args.switch_interval,
         mvg_ops=tuple(op.strip() for op in args.mvg_ops.split(",")),
@@ -184,7 +176,6 @@ if __name__ == "__main__":
     for f in dataclasses.fields(brain_cfg):
         print(f"  {f.name:14s} = {getattr(brain_cfg, f.name)}")
     print(f"  {'n_total':14s} = {brain_cfg.n_total}")
-    print(f"  {'feat_dim':14s} = {brain_cfg.feat_dim}")
     print("\nRunConfig:")
     for f in dataclasses.fields(run_cfg):
         print(f"  {f.name:16s} = {getattr(run_cfg, f.name)}")
