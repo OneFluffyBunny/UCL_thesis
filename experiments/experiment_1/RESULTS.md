@@ -319,6 +319,10 @@ break past chance-of-one-side a real modularity signal.
   recoverable basin?).
 - **Build a modularity metric** (graph `Q` / block structure on the grown weight
   matrix) — prerequisite for studying the K-vs-modularity relationship above.
+  Prior metric decision (carry over): was leaning **Infomap** over **Louvain/Newman
+  `Q`** because it handles the *directed* weight graph better; an `infomap-env`
+  conda env already exists. A task-aware left/right block score is the cheap first
+  cut before a general community-detection metric.
 - **Test the evolvability hypothesis directly:** modularly-varying goal (`--mvg`,
   AND↔OR switching) — does a switching pressure carve reachable modular solutions
   that a static goal cannot? This is the actual thesis question.
