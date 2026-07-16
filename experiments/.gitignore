@@ -1,0 +1,14 @@
+# run outputs
+runs/
+*.eqx
+*.png
+
+# python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
