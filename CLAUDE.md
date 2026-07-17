@@ -16,21 +16,30 @@ encouraged by a compressed DNA→brain encoding (a genomic bottleneck)**.
 - **Fixed neuron count** — only *connections* evolve.
 - **Parsimony first** — the smallest model that can show the effect.
 
-## The two experiments (both under `experiments/`)
+## The experiments (all under `experiments/`)
+Two axes are varied one at a time: exp_1↔exp_2 vary the **encoding**; exp_2↔exp_3
+vary the **optimiser** (exp_2 and exp_3 share the *same* direct-encoding model,
+`shared_direct_model.py`).
 - **experiment_1/ — treatment (compressed g-encoding).** Genome ≈ O(K): K
   cell-type identities + one shared connection rule `g`; weight of edge i→j =
   `g(feat_i, feat_j)`. Search is confined to a low-dim manifold of *regular*
   networks → structural bias toward modularity.
-- **experiment_2/ — control (direct encoding).** Genome IS the raw weight vector
-  (one free number per edge). No rule, no sharing — a Kashtan-Alon-style baseline
-  the bottleneck is measured against. Same tasks / CMA-ES loop / metrics; only the
-  encoding differs.
+- **experiment_2/ — control (direct encoding, CMA-ES).** Genome IS the raw weight
+  vector (one free number per edge). No rule, no sharing — a Kashtan-Alon-style
+  baseline the bottleneck is measured against. Same tasks / CMA-ES loop / metrics;
+  only the encoding differs from exp_1.
+- **experiment_3/ — optimiser control (direct encoding, gradient descent).** Same
+  network as exp_2, trained by backprop + Optax instead of CMA-ES. Loss is a
+  differentiable surrogate (`margin`, the exact one CMA-ES maximises → fair
+  head-to-head; or `bce` → gradient-oracle bound); accuracy stays the reported
+  (non-differentiable) metric. Isolates "how much does the gradient help?".
 
 ## Where the detail lives (read these; don't restate them here)
 - `experiments/experiment_1/RESULTS.md` — the lab notebook: every run, the
   shortcut-trap caution, the representability-vs-reachability findings, open threads.
 - `experiments/README.md` — full experiment-1 encoding spec.
-- `experiments/experiment_2/README.md` — control framing + next steps.
+- `experiments/experiment_2/README.md` — direct-encoding control framing + `RESULTS.md`.
+- `experiments/experiment_3/README.md` — GD-vs-EC optimiser control; differentiability notes.
 - `experiments/HISTORY.md` — the pre-migration git history (2 old commits).
 
 ## Established facts (don't relitigate)
