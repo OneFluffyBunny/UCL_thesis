@@ -34,6 +34,17 @@ vary the **optimiser** (exp_2 and exp_3 share the *same* direct-encoding model,
   head-to-head; or `bce` → gradient-oracle bound); accuracy stays the reported
   (non-differentiable) metric. Isolates "how much does the gradient help?".
 
+## External reference reproduction (`kashtan_alon/`)
+Not one of the three experiments — a **faithful reproduction of Kashtan–Alon 2005**
+(the retina MVG→modularity result) using *their* network (layered net 8-8-4-2-1,
+discrete integer weights, mutation GA), deliberately outside our NDP/g-encoding
+framework. It exists to (a) give a trustworthy external baseline for the
+MVG→modularity claim and (b) host the project's Newman-**Q** modularity metric
+(`kashtan_alon/modularity.py`, framework-agnostic → promotable to shared). Shares
+only the retina task (`experiments/shared_tasks.py`). Run it with
+`conda run -n lndp python kashtan_alon/run_paper.py` (the "exactly as in the paper"
+command); see `kashtan_alon/README.md` + `PAPER_SPEC.md`.
+
 ## Where the detail lives (read these; don't restate them here)
 - `experiments/experiment_1/RESULTS.md` — the lab notebook: every run, the
   shortcut-trap caution, the representability-vs-reachability findings, open threads.
