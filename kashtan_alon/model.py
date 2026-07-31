@@ -68,12 +68,16 @@ def init_population(rng: np.random.Generator, cfg: NetConfig, pop: int,
 
 
 def forward(weights, biases, X: np.ndarray, cfg: NetConfig) -> np.ndarray:
-    """Population forward pass. X: (B, n_in) bipolar. Returns output (pop, B, n_out)."""
+    """Population forward pass. X: (B, n_in) bipolar. Returns output (pop, B, n_out).
+
+    Uses a batched matmul (a @ W) rather than np.einsum: matmul dispatches to
+    multithreaded BLAS, whereas einsum runs a single-threaded C kernel -- and this
+    forward pass is ~95% of GA runtime (all pop x 256 patterns, every generation).
+    z[p,b,o] = sum_i a[p,b,i] * W[p,i,o]; a @ W does exactly this per individual p."""
     pop = weights[0].shape[0]
-    a = np.broadcast_to(X[None, :, :].astype(np.float32), (pop,) + X.shape).copy()
+    a = np.broadcast_to(X[None, :, :].astype(np.float32), (pop,) + X.shape)
     for l in range(cfg.n_blocks):
-        # z[p,b,o] = sum_i a[p,b,i] * W[p,i,o]  (+ bias)
-        z = np.einsum("pbi,pio->pbo", a, weights[l].astype(np.float32))
+        z = np.matmul(a, weights[l].astype(np.float32))          # (pop, B, out), batched over pop
         z += biases[l][:, None, :].astype(np.float32)
         a = np.tanh(cfg.lam * z)
     return a

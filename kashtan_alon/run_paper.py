@@ -28,6 +28,8 @@ is the "as in the paper" preset. For sweeps/variations use train.py directly.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 
 import numpy as np
 
@@ -57,6 +59,10 @@ def main():
                     help="disable visualisation")
     ap.add_argument("--smoke", action="store_true",
                     help="tiny fast run (pop 60, 300 gens) to verify the pipeline, NOT the paper")
+    ap.add_argument("--fresh", action="store_true",
+                    help="ignore checkpoints/results and restart every run from scratch")
+    ap.add_argument("--checkpoint-interval", type=int, default=1000,
+                    help="generations between full-state checkpoints (0 = off); enables resume")
     cli = ap.parse_args()
 
     # Paper-locked parameters (do not expose -- this is the faithful preset).
@@ -66,9 +72,10 @@ def main():
                  tournament_k=3, n_elite=1, fitness="raw",
                  switch_interval=20, mvg_ops="and,or",
                  weighted_q=False, log_interval=10, target=1.0,
-                 out_dir=cli.out_dir, viz=cli.viz)
+                 out_dir=cli.out_dir, viz=cli.viz,
+                 resume=not cli.fresh, checkpoint_interval=cli.checkpoint_interval)
     if cli.smoke:
-        paper.update(pop=60, generations=300, log_interval=20)
+        paper.update(pop=60, generations=300, log_interval=20, checkpoint_interval=100)
         print("*** SMOKE MODE: pop 60 / 300 gens -- checks the pipeline, NOT a paper result ***\n")
 
     # Two conditions, identical everything except the goal schedule.
@@ -91,6 +98,14 @@ def main():
         args = build_base_args({**paper, **cond})
         for i in range(cli.n_seeds):
             seed = cli.seed + i
+            result_path = os.path.join(cli.out_dir, f"{T.run_name_for(args, seed)}_result.json")
+            if args.resume and os.path.exists(result_path):
+                with open(result_path) as f:
+                    r = json.load(f)
+                print(f"[seed {seed}] already complete (best {r['best_fit']:.3f} | "
+                      f"Q {r['q']:.3f}) -> skip")
+                results[name].append((seed, r["best_fit"], r["q"]))
+                continue
             open_after = args.viz and (i == cli.n_seeds - 1)   # open each condition's final brain
             bf, q = T.train_seed(cfg, X, X_bits, args, seed, open_after)
             results[name].append((seed, bf, q))

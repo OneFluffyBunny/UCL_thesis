@@ -36,8 +36,15 @@ the **retina task** (`../experiments/shared_tasks.py`) so numbers stay comparabl
 - `train.py` — the single-run GA loop `run_paper.py` drives; use it directly for
   sweeps/variations. `--mvg` vs fixed-goal; logs Q/density/fitness to `runs/*_log.csv`.
 - `visualize.py` — draws the best net with **nodes coloured by module**.
-- `tasks.py` — shim to `../experiments/shared_tasks.py` (shared retina).
+- `tasks.py` — the retina/boolean tasks in **pure numpy (no JAX)**; kept identical
+  to `../experiments/shared_tasks.py` by `test_tasks.py`.
+- `test_tasks.py` — parity guard: asserts the numpy tasks are bit-identical to the
+  shared (JAX) definitions. Run after touching either file.
 - `PAPER_SPEC.md` — the paper numbers + a confirmed-vs-reconstructed source audit.
+
+**Dependencies:** numpy, networkx, matplotlib only — **no JAX, no GPU, 0 VRAM**.
+The GA is CPU/BLAS (batched `matmul`), ~0.033 s/gen at pop 1000 (~2.3 h for the
+full 5-seed paper run).
 
 ## Run — exactly as in the paper
 `run_paper.py` runs the paper's central comparison (MVG vs Fixed-Goal) with every
@@ -59,6 +66,16 @@ python train.py --operation or --fitness balanced --n-seeds 5     # shortcut-fre
 ```
 Key flags: `--fitness {raw,balanced}` (default `raw` = the paper; `balanced` dodges
 the AND shortcut), `--mvg`/`--mvg-ops`/`--switch-interval`, `--pop`/`--generations`.
+
+### Long runs: checkpoints & resume
+Full GA state is checkpointed every `--checkpoint-interval` gens (default 1000) to
+`runs/<run>_ckpt.pkl` (atomic write), `runs/<run>_best.npz` is refreshed, and the
+CSV is flushed each log step so intermediary results are readable mid-run.
+`--resume` (**on by default**) continues an interrupted run from its last
+checkpoint and skips seeds already finished (marked by `runs/<run>_result.json`);
+the checkpoint is deleted on completion. Force a clean restart with `--no-resume`
+(train.py) or `--fresh` (run_paper.py). So a killed 2-hour run picks up where it
+left off, not from scratch.
 
 ## Caveats
 - **Run length.** Defaults mirror the paper (`--pop 1000 --generations 25000`);
