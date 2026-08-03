@@ -36,14 +36,16 @@ vary the **optimiser** (exp_2 and exp_3 share the *same* direct-encoding model,
 
 ## External reference reproduction (`kashtan_alon/`)
 Not one of the three experiments — a **faithful reproduction of Kashtan–Alon 2005**
-(the retina MVG→modularity result) using *their* network (layered net 8-8-4-2-1,
-discrete integer weights, mutation GA), deliberately outside our NDP/g-encoding
-framework. It exists to (a) give a trustworthy external baseline for the
-MVG→modularity claim and (b) host the project's Newman-**Q** modularity metric
-(`kashtan_alon/modularity.py`, framework-agnostic → promotable to shared). Shares
-only the retina task (`experiments/shared_tasks.py`). Run it with
-`conda run -n lndp python kashtan_alon/run_paper.py` (the "exactly as in the paper"
-command); see `kashtan_alon/README.md` + `PAPER_SPEC.md`.
+(the retina MVG→modularity result), deliberately outside our NDP/g-encoding
+framework. Rebuilt 2026-08-03 to the *verified* paper spec (PMC1236541): their
+network retina(8)→8→4→2→1, **±1 weights**, hard-**threshold** units, fan-in ≤3/≤2,
+their **real Fig. 5a retina task** (NOT the `shared_tasks.py` stand-in), and their GA
+(**elite 150/600 + crossover Pc=0.5 + mutation Pm=0.5**). Modularity is KA's
+normalized **Q_m** (`kashtan_alon/modularity.py`, framework-agnostic → promotable to
+shared). ⚠️ Runs 1–3 accidentally ran *Clune 2013's* reimplementation and produced a
+null; see `RESULTS.md` + `PAPER_SPEC.md` + memory [[reference_ka_retina_algo]] before
+touching this. Run with `conda run -n lndp python kashtan_alon/run_paper.py` (the
+"exactly as in the paper" command); see `kashtan_alon/README.md`.
 
 ## Where the detail lives (read these; don't restate them here)
 - `experiments/experiment_1/RESULTS.md` — the lab notebook: every run, the

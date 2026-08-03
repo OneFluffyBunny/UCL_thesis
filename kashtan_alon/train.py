@@ -1,7 +1,7 @@
 """Kashtan-Alon retina experiment: does MVG favour a modular brain?
 
-Evolves a layered feedforward net (model.py) with a discrete mutation GA (ga.py)
-on the retina task, under either:
+Evolves a layered feedforward net (model.py) with the Kashtan-Alon GA (ga.py:
+elite strategy + crossover + mutation) on the retina task, under either:
   * --mvg           : Modularly-Varying Goals -- alternate AND <-> OR every
                       --switch-interval generations (shared L/R sub-goals).
   * (default, FG)   : Fixed Goal -- one operation the whole run (the control).
@@ -32,7 +32,7 @@ sys.stdout.reconfigure(line_buffering=True)
 import tasks
 import model as M
 import ga
-from modularity import newman_q, density, n_edges
+from modularity import newman_q, normalized_qm, density, n_edges
 
 
 def _encode(X, encoding):
@@ -43,19 +43,18 @@ def build_parser():
     p = argparse.ArgumentParser(
         description="Kashtan-Alon retina: MVG vs fixed-goal, with Newman-Q modularity.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    # architecture
+    # architecture (KA 2005 retina: 8 pixels -> 8 -> 4 -> 2 -> 1, hard-threshold units)
     p.add_argument("--layers", type=str, default="8,8,4,2,1", help="feedforward layer sizes (comma-sep)")
-    p.add_argument("--lam", type=float, default=20.0, help="tanh steepness (near-sign at 20)")
-    p.add_argument("--input-encoding", choices=["bipolar", "binary"], default="bipolar")
-    # search / GA
-    p.add_argument("--pop", type=int, default=1000, help="population size (Kashtan-Alon used ~1000)")
-    p.add_argument("--generations", type=int, default=25000, help="generations (paper: 25000)")
-    p.add_argument("--init-density", type=float, default=0.5, help="prob each connection is present at init")
-    p.add_argument("--p-add", type=float, default=0.2, help="prob a network adds one connection")
-    p.add_argument("--p-remove", type=float, default=0.2, help="prob a network removes one connection")
-    p.add_argument("--bias-prob", type=float, default=1.0 / 24.0, help="per-node bias mutation prob")
-    p.add_argument("--tournament-k", type=int, default=3, help="tournament size for selection")
-    p.add_argument("--n-elite", type=int, default=1, help="elites carried forward unmutated")
+    p.add_argument("--input-encoding", choices=["bipolar", "binary"], default="binary",
+                   help="retina pixel encoding; KA uses binary {0,1}")
+    # search / GA (KA 2005 neural-net retina: elite strategy + crossover + mutation)
+    p.add_argument("--pop", type=int, default=600, help="population size S (KA neural-net: 600)")
+    p.add_argument("--generations", type=int, default=25000, help="generations")
+    p.add_argument("--init-density", type=float, default=0.5,
+                   help="fraction of each neuron's fan-in cap filled at init (0..1)")
+    p.add_argument("--n-elite", type=int, default=150, help="elite L kept unchanged each gen (KA: 150/600)")
+    p.add_argument("--pc", type=float, default=0.5, help="crossover probability per offspring (KA: 0.5)")
+    p.add_argument("--pm", type=float, default=0.5, help="mutation probability per genome (KA: 0.5)")
     p.add_argument("--fitness", choices=["raw", "balanced"], default="raw",
                    help="raw = Kashtan-Alon fraction-correct (paper default); "
                         "balanced = thesis balanced accuracy (chance 0.5, shortcut-safe)")
@@ -76,6 +75,8 @@ def build_parser():
     p.add_argument("--switch-interval", type=int, default=20, help="generations between goal switches (KA: 20)")
     # analysis / logging
     p.add_argument("--weighted-q", action="store_true", help="use |weight| edge weights in Newman Q")
+    p.add_argument("--qm-nrand", type=int, default=1000,
+                   help="randomizations for the final normalized Q_m (KA used 1000)")
     p.add_argument("--log-interval", type=int, default=10, help="generations between log lines / CSV rows")
     p.add_argument("--out-dir", default="./runs")
     p.add_argument("--viz", dest="viz", action="store_true", default=True,
@@ -197,15 +198,9 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
             stopped_gen = gen
             break
 
-        # --- reproduce: elitism + tournament + mutation ---
-        order = np.argsort(fit)[::-1]
-        elite_w, elite_b = M.gather(weights, biases, order[:args.n_elite])
-        parents = ga.tournament_select(rng, fit, args.pop, args.tournament_k)
-        weights, biases = M.gather(weights, biases, parents)
-        ga.mutate(rng, weights, biases, cfg, args.p_add, args.p_remove, args.bias_prob)
-        for l in range(cfg.n_blocks):
-            weights[l][:args.n_elite] = elite_w[l]
-            biases[l][:args.n_elite] = elite_b[l]
+        # --- reproduce: KA elite strategy + crossover (Pc) + mutation (Pm) ---
+        weights, biases = ga.reproduce(rng, weights, biases, fit, cfg,
+                                       n_elite=args.n_elite, pc=args.pc, pm=args.pm)
 
         # --- periodic checkpoint (full state) + best-so-far snapshot ---
         if args.checkpoint_interval and (gen + 1) % args.checkpoint_interval == 0 \
@@ -217,9 +212,14 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
 
     csv_f.close()
     # Modularity is reported for the FINAL generation's champion (evolved topology).
+    # Headline metric is KA's NORMALIZED Q_m (raw Newman Q is density-confounded and
+    # only kept for the live per-gen trace); q is reported alongside for continuity.
     wm, _ = final_indiv
     q, comm = newman_q(wm, cfg, weighted=args.weighted_q)
-    print(f"[seed {seed}] final-gen fit {final_fit:.3f} (op={final_op}) | Q {q:.3f} | "
+    q_m, qm_parts = normalized_qm(wm, cfg, n_rand=args.qm_nrand, seed=seed)
+    print(f"[seed {seed}] final-gen fit {final_fit:.3f} (op={final_op}) | "
+          f"Q_m {q_m:.3f} (q_real {qm_parts['q_real']:.3f}, q_rand {qm_parts['q_rand']:.3f}, "
+          f"q_max {qm_parts['q_max']:.3f}) | raw Q {q:.3f} | "
           f"density {density(wm, cfg):.1f}% | edges {n_edges(wm)} | modules {len(comm)} "
           f"| peak fit {best_fit:.3f} (op={best_op})")
 
@@ -230,7 +230,9 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
     # `best_fit`/`best_op` = peak performance; `q` is now the FINAL-gen net's modularity.
     with open(result_path, "w") as f:
         json.dump({"run_name": run_name, "mode": mode, "seed": seed,
-                   "q": q, "final_fit": final_fit, "final_op": final_op,
+                   "q_m": q_m, "q_real": qm_parts["q_real"], "q_rand": qm_parts["q_rand"],
+                   "q_max": qm_parts["q_max"], "q": q,
+                   "final_fit": final_fit, "final_op": final_op,
                    "best_fit": best_fit, "best_op": best_op,
                    "density": density(wm, cfg), "edges": n_edges(wm),
                    "modules": len(comm), "gen_reached": stopped_gen}, f, indent=2)
@@ -242,15 +244,16 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
         import visualize
         png = os.path.join(args.out_dir, f"{run_name}_best.png")
         visualize.visualize_net(final_indiv, cfg, png,
-                                title=f"{mode} seed{seed} - final fit {final_fit:.3f} Q {q:.3f}",
+                                title=f"{mode} seed{seed} - final fit {final_fit:.3f} "
+                                      f"Q_m {q_m:.3f} (raw Q {q:.3f})",
                                 weighted_q=args.weighted_q, open_after=open_after)
-    return best_fit, q
+    return best_fit, q_m
 
 
 def main():
     args = build_parser().parse_args()
     layers = tuple(int(x) for x in args.layers.split(","))
-    cfg = M.NetConfig(layers=layers, lam=args.lam)
+    cfg = M.NetConfig(layers=layers)
     assert layers[0] >= tasks.min_inputs(args.task), \
         f"task {args.task!r} needs >= {tasks.min_inputs(args.task)} input pixels"
     os.makedirs(args.out_dir, exist_ok=True)
@@ -265,17 +268,18 @@ def main():
         if args.resume and os.path.exists(result_path):
             with open(result_path) as f:
                 r = json.load(f)
-            print(f"[seed {seed}] already complete (best {r['best_fit']:.3f} | Q {r['q']:.3f}) -> skip")
-            results.append((seed, r["best_fit"], r["q"]))
+            qm = r.get("q_m", r.get("q"))
+            print(f"[seed {seed}] already complete (best {r['best_fit']:.3f} | Q_m {qm:.3f}) -> skip")
+            results.append((seed, r["best_fit"], qm))
             continue
         open_after = args.viz and args.open_img and (i == args.n_seeds - 1)
         results.append((seed, *train_seed(cfg, X, X_bits, args, seed, open_after)))
 
     if args.n_seeds > 1:
         print("\n=== summary ===")
-        for seed, bf, q in results:
-            print(f"  seed {seed}: best fit {bf:.3f} | Q {q:.3f}")
-        print(f"mean Q {np.mean([r[2] for r in results]):.3f}  |  "
+        for seed, bf, qm in results:
+            print(f"  seed {seed}: best fit {bf:.3f} | Q_m {qm:.3f}")
+        print(f"mean Q_m {np.mean([r[2] for r in results]):.3f}  |  "
               f"mean best fit {np.mean([r[1] for r in results]):.3f}")
 
 

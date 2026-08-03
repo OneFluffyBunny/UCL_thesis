@@ -1,15 +1,25 @@
-"""Retina + boolean tasks for the Kashtan-Alon reproduction — pure numpy, no JAX.
+"""Retina + boolean tasks for the Kashtan-Alon reproduction -- pure numpy, no JAX.
 
-Reimplemented in numpy so the GA pulls in ZERO heavy dependencies and never
-touches a GPU. The old version re-exported ``experiments/shared_tasks.py``, which
-imports ``jax.numpy`` just to build a 256x8 constant grid — and on a CUDA box that
-import alone makes JAX preallocate ~75% of VRAM for nothing. The whole compute
-path here is numpy on CPU, so importing JAX was pure downside.
+The **retina task is Kashtan & Alon's actual one** (PNAS 2005, Fig. 5a, verified
+against PMC1236541) -- NOT the project's stand-in `(p0&p1)|(p2&p3)` retina used by
+experiments 1-3. The 8 pixels are a 4-wide x 2-high grid, split into a left 2x2
+block (inputs 0-3) and a right 2x2 block (inputs 4-7):
 
-These definitions are byte-for-byte the same functions as the project's single
-source of truth (``experiments/shared_tasks.py``); ``test_tasks.py`` asserts that
-equality across every input pattern and operation. If you change the retina in
-shared_tasks.py, mirror it here and re-run ``python test_tasks.py``.
+    input index:   0 2 | 4 6        columns ->  L-outer L-inner | R-inner R-outer
+                   1 3 | 5 7        rows: top / bottom
+    (x0,x1) = left  block's LEFT (outer) column;  (x2,x3) = its inner column
+    (x6,x7) = right block's RIGHT (outer) column; (x4,x5) = its inner column
+
+KA's object rules (verbatim): *"A left object is defined by three or more black
+pixels or one or two black pixels in the left column only"*; the right object is
+*"defined in a similar way, with one or two black pixels in the right column
+only"*.  Each rule is TRUE for exactly 8 of the 16 half-patterns (5 with >=3 black,
+3 with 1-2 black confined to the outer column). Goals: G_AND = L AND R,
+G_OR = L OR R, shared L/R sub-features -> modularly varying.
+
+Pure numpy so the GA never imports JAX. NOTE: unlike the other tasks here, the
+retina is deliberately DIFFERENT from `experiments/shared_tasks.py` -- do not
+"re-sync" it; `test_tasks.py` checks the KA definition directly.
 """
 
 from __future__ import annotations
@@ -25,7 +35,7 @@ def all_binary_inputs(n_in: int) -> np.ndarray:
     return np.asarray(grid, dtype=np.float32)
 
 
-# boolean ops on {0,1}-valued float arrays (identical algebra to shared_tasks.py)
+# boolean ops on {0,1}-valued float arrays
 def _and(a, b):
     return a * b
 
@@ -41,14 +51,27 @@ def _xor(a, b):
 OPS = {"and": _and, "or": _or, "xor": _xor}
 
 
+def _object(outer_a, outer_b, inner_a, inner_b):
+    """KA object rule for one 2x2 block. TRUE iff >=3 of the 4 pixels are black, OR
+    1-2 black pixels confined to the block's OUTER column (inner column all zero).
+    Arguments are the two OUTER-column pixels and the two INNER-column pixels
+    (each {0,1}). Returns {0,1} float."""
+    nblack = outer_a + outer_b + inner_a + inner_b
+    ge3 = nblack >= 3
+    outer_only = (inner_a == 0) & (inner_b == 0) & ((outer_a + outer_b) >= 1)
+    return (ge3 | outer_only).astype(np.float32)
+
+
 def _left_feature(x):
-    """Function of the 4 left pixels: (p0 & p1) | (p2 & p3)."""
-    return _or(_and(x[..., 0], x[..., 1]), _and(x[..., 2], x[..., 3]))
+    """KA 'left object' over the left 2x2 block. Outer (left) column = x0,x1;
+    inner column = x2,x3."""
+    return _object(x[..., 0], x[..., 1], x[..., 2], x[..., 3])
 
 
 def _right_feature(x):
-    """Function of the 4 right pixels: (p4 & p5) | (p6 & p7)."""
-    return _or(_and(x[..., 4], x[..., 5]), _and(x[..., 6], x[..., 7]))
+    """KA 'right object' over the right 2x2 block. Outer (right) column = x6,x7;
+    inner column = x4,x5."""
+    return _object(x[..., 6], x[..., 7], x[..., 4], x[..., 5])
 
 
 TASKS = ["copy", "and2", "left", "retina"]

@@ -1,18 +1,27 @@
-"""Kashtan-Alon layered feedforward network (population-vectorised, numpy).
+"""Kashtan-Alon 2005 retina network (population-vectorised, numpy).
 
-The "actual type of network" from the paper: a strictly layered feedforward net
-(a node in layer n connects only to layer n-1), steep-tanh units, and DISCRETE
-integer weights where an absent connection is simply a zero weight -- so topology
-and weight live in one integer matrix per layer and the graph is naturally sparse
-(which is what makes Newman's Q meaningful).
+Faithful to Kashtan & Alon, PNAS 2005 (verified against the paper's own methods,
+PMC1236541) -- NOT Clune 2013. The network is a strictly layered feedforward net
+of **hard-threshold** neurons:
 
-Because the search is a discrete mutation GA over small nets, everything is plain
-numpy, vectorised across the whole population on the first axis:
+  retina(8 pixels) -> 8 -> 4 -> 2 -> 1        (node graph = 8-8-4-2-1)
 
-  weights[l] : (pop, layers[l],   layers[l+1])  int   values in {-2,-1,0,1,2}, 0 = no edge
-  biases[l]  : (pop, layers[l+1])               int   values in {-2,-1,0,1,2}
+  * "Connections from the retina were to the first layer only."  -> layers[0] is
+    the 8 retina pixels (input), layers[1] is the first NEURON layer of 8.
+  * Each connection weight is **-1 or +1** (0 == absent; topology evolves).
+  * Each neuron "activates its outputs if the [weighted] sum exceeds a threshold"
+    -> a hard threshold unit with output in {0,1}. We store the threshold as a
+    bias (bias = -threshold), so a neuron fires iff  (sum + bias) > 0.
+  * **Fan-in caps** (paper): <=3 incoming for neurons in layers 1-3, <=2 for the
+    single output neuron in layer 4. Stored per block in cfg.fan_in.
 
-`l` runs 0..L-2 (one block per adjacent layer pair). Inputs carry no bias.
+Everything is plain numpy, vectorised across the whole population on axis 0:
+
+  weights[l] : (pop, layers[l], layers[l+1])  int8  in {-1,0,+1}   0 == no edge
+  biases[l]  : (pop, layers[l+1])             int8  (= -threshold)
+
+`l` runs 0..n_blocks-1 (one block per adjacent layer pair). The retina carries no
+bias. Weight magnitudes are fixed at 1, so a "weight mutation" is a sign flip.
 """
 
 from __future__ import annotations
@@ -21,16 +30,24 @@ import dataclasses
 
 import numpy as np
 
-WEIGHT_VALUES = (-2, -1, 1, 2)          # allowed connection weights (0 == absent, handled separately)
-BIAS_VALUES = (-2, -1, 0, 1, 2)         # allowed biases/thresholds
-BIAS_LO, BIAS_HI = -2, 2
-WEIGHT_MAG_MAX = 2                       # |weight| clamp
+WEIGHT_VALUES = (-1, 1)          # allowed connection weights (0 == absent, handled separately)
+WEIGHT_MAG_MAX = 1               # |weight| is always 1 in KA
+# Threshold (stored as bias = -threshold). With {0,1} activations, +-1 weights and
+# fan-in <=3, the raw weighted sum lies in [-3, 3], so a threshold outside that band
+# just pins a neuron on/off. Exact allowed range is in KA's SI (not the main text);
+# {-3..3} is a faithful reconstruction covering every non-trivial threshold.
+BIAS_LO, BIAS_HI = -3, 3
+BIAS_VALUES = tuple(range(BIAS_LO, BIAS_HI + 1))
+
+# Per-block fan-in caps for the 8-8-4-2-1 retina net: destination layers 1,2,3 get
+# <=3 incoming, the output neuron (layer 4) gets <=2.  (KA 2005, verified.)
+RETINA_FAN_IN = (3, 3, 3, 2)
 
 
 @dataclasses.dataclass(frozen=True)
 class NetConfig:
-    layers: tuple = (8, 8, 4, 2, 1)     # retina architecture: 8 -> 8 -> 4 -> 2 -> 1
-    lam: float = 20.0                    # tanh steepness (near-sign decision)
+    layers: tuple = (8, 8, 4, 2, 1)      # retina(8) -> 8 -> 4 -> 2 -> 1  (KA 2005)
+    fan_in: tuple = RETINA_FAN_IN        # max incoming edges per destination-layer block
 
     @property
     def n_blocks(self) -> int:
@@ -53,40 +70,61 @@ class NetConfig:
         return int(sum(self.layers[l] * self.layers[l + 1] for l in range(self.n_blocks)))
 
 
+def _fan_in(cfg: NetConfig, l: int) -> int:
+    """Fan-in cap for block l (edges into layer l+1). Defaults to no cap if unset."""
+    if not cfg.fan_in or l >= len(cfg.fan_in):
+        return cfg.layers[l]            # effectively unconstrained
+    return int(cfg.fan_in[l])
+
+
 def init_population(rng: np.random.Generator, cfg: NetConfig, pop: int,
                     init_density: float = 0.5):
-    """Random initial population. Each possible connection is present with prob
-    `init_density` (weight drawn from {-2,-1,1,2}); biases start at 0."""
+    """Random initial population that RESPECTS the per-layer fan-in caps.
+
+    For every destination neuron we pick a random number k (1..cap) of incoming
+    edges from a random subset of its possible sources; each gets a weight drawn
+    from {-1,+1}. Biases (= -threshold) start at 0. `init_density` scales the
+    expected fan-in: k ~ round(density * cap), clamped to [1, cap]."""
     weights, biases = [], []
     for l in range(cfg.n_blocks):
         ni, no = cfg.layers[l], cfg.layers[l + 1]
-        present = rng.random((pop, ni, no)) < init_density
-        vals = np.array(WEIGHT_VALUES)[rng.integers(0, len(WEIGHT_VALUES), (pop, ni, no))]
-        weights.append(np.where(present, vals, 0).astype(np.int8))
+        cap = min(_fan_in(cfg, l), ni)
+        W = np.zeros((pop, ni, no), dtype=np.int8)
+        # target incoming count per destination neuron
+        k = int(round(init_density * cap))
+        k = min(max(k, 1), cap)
+        vals = np.array(WEIGHT_VALUES, dtype=np.int8)
+        for p in range(pop):
+            for j in range(no):
+                src = rng.choice(ni, size=k, replace=False)
+                W[p, src, j] = vals[rng.integers(0, len(vals), size=k)]
+        weights.append(W)
         biases.append(np.zeros((pop, no), dtype=np.int8))
     return weights, biases
 
 
 def forward(weights, biases, X: np.ndarray, cfg: NetConfig) -> np.ndarray:
-    """Population forward pass. X: (B, n_in) bipolar. Returns output (pop, B, n_out).
+    """Population forward pass through hard-threshold neurons.
 
-    Uses a batched matmul (a @ W) rather than np.einsum: matmul dispatches to
-    multithreaded BLAS, whereas einsum runs a single-threaded C kernel -- and this
-    forward pass is ~95% of GA runtime (all pop x 256 patterns, every generation).
-    z[p,b,o] = sum_i a[p,b,i] * W[p,i,o]; a @ W does exactly this per individual p."""
+    X: (B, n_in) with pixel values in {0,1}. Returns activations (pop, B, n_out)
+    in {0,1}. A neuron fires (1) iff its weighted input sum plus bias exceeds 0
+    (bias = -threshold), matching KA's "activates if the sum exceeds a threshold".
+
+    Uses batched matmul (a @ W) -> multithreaded BLAS; this forward pass is ~95%
+    of GA runtime (all pop x 256 patterns every generation)."""
     pop = weights[0].shape[0]
     a = np.broadcast_to(X[None, :, :].astype(np.float32), (pop,) + X.shape)
     for l in range(cfg.n_blocks):
-        z = np.matmul(a, weights[l].astype(np.float32))          # (pop, B, out), batched over pop
+        z = np.matmul(a, weights[l].astype(np.float32))          # (pop, B, out)
         z += biases[l][:, None, :].astype(np.float32)
-        a = np.tanh(cfg.lam * z)
+        a = (z > 0.0).astype(np.float32)                         # hard threshold -> {0,1}
     return a
 
 
 def decisions(weights, biases, X: np.ndarray, cfg: NetConfig) -> np.ndarray:
-    """Predicted class bit (pop, B): output neuron fires (>0) -> 1, else 0."""
-    out = forward(weights, biases, X, cfg)[:, :, 0]     # single output neuron
-    return (out > 0).astype(np.int32)
+    """Predicted class bit (pop, B): the single output neuron's {0,1} activation."""
+    out = forward(weights, biases, X, cfg)[:, :, 0]     # single output neuron, already {0,1}
+    return out.astype(np.int32)
 
 
 def raw_accuracy(pred: np.ndarray, y: np.ndarray) -> np.ndarray:

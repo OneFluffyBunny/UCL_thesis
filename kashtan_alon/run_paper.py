@@ -1,25 +1,28 @@
 """Run the Kashtan-Alon retina experiment EXACTLY as in the paper.
 
-This is the canonical reproduction. It runs the paper's central comparison --
+Faithful to Kashtan & Alon, PNAS 2005 (the NEURAL-NETWORK retina experiment),
+verified against the paper's own methods (PMC1236541). Its central comparison --
 Modularly-Varying Goals (G_AND = L AND R  <->  G_OR = L OR R, switching every 20
-generations) versus a Fixed-Goal control (the retina goal L AND R held constant)
--- with every parameter locked to Kashtan & Alon, PNAS 2005:
+generations) versus a Fixed-Goal control (L AND R held constant) -- with every
+parameter locked to the paper:
 
-  * layered feedforward net 8-8-4-2-1, tanh(lambda*z) with lambda = 20;
-  * integer connection weights {-2,-1,1,2} (0 = absent, topology evolves);
-    integer biases/thresholds {-2,-1,0,1,2};
-  * population 1000, 25000 generations, mutation-only (asexual) GA;
-  * mutation: add connection 20% / remove connection 20% per network,
-    weight +/-1 at prob 2/n per connection, bias +/-1 at prob 1/24 per node;
-  * fitness = RAW fraction of correct answers over all 256 input patterns
-    (the paper's own performance measure -- no class balancing).
+  * task: KA's real retina objects (4x2 pixels, >=3-black / outer-column-only rule,
+    Fig. 5a) -- NOT the project's `(p0&p1)|(p2&p3)` stand-in;
+  * network: retina(8) -> 8 -> 4 -> 2 -> 1, HARD-THRESHOLD neurons, weights in
+    {-1,+1}, fan-in <=3 in layers 1-3 and <=2 at the output;
+  * search: population 600, ELITE strategy (top 150 replicate unchanged),
+    CROSSOVER Pc=0.5 + mutation Pm=0.5;
+  * fitness: RAW fraction correct over all 256 patterns (KA's own measure);
+  * modularity: normalized Q_m = (Q_real-Q_rand)/(Q_max-Q_rand), Q_rand over 1000
+    degree-preserving randomizations.
 
-Newman Q is logged every generation for both conditions; the paper's headline is
-that Q rises and stays high under MVG but stays low under the Fixed Goal.
+Paper result: Q_m stays HIGH under MVG (0.35 +- 0.02) and LOW under the Fixed Goal
+(0.15 +- 0.02). Raw Newman Q is logged per generation only as a cheap live trace;
+the headline is the end-of-run Q_m.
 
-    conda run -n lndp python run_paper.py                # full paper run (slow: 1000 x 25000)
-    conda run -n lndp python run_paper.py --n-seeds 5    # paper used multiple independent runs
-    conda run -n lndp python run_paper.py --smoke        # tiny, just to check the pipeline runs
+    conda run -n lndp python run_paper.py                # full paper run (600 x 25000)
+    conda run -n lndp python run_paper.py --n-seeds 5    # multiple independent runs
+    conda run -n lndp python run_paper.py --smoke        # tiny, just checks the pipeline
 
 Everything not exposed here is fixed at the paper value on purpose -- this script
 is the "as in the paper" preset. For sweeps/variations use train.py directly.
@@ -65,17 +68,17 @@ def main():
                     help="generations between full-state checkpoints (0 = off); enables resume")
     cli = ap.parse_args()
 
-    # Paper-locked parameters (do not expose -- this is the faithful preset).
-    paper = dict(task="retina", layers="8,8,4,2,1", lam=20.0, input_encoding="bipolar",
-                 pop=1000, generations=25000, init_density=0.5,
-                 p_add=0.2, p_remove=0.2, bias_prob=1.0 / 24.0,
-                 tournament_k=3, n_elite=1, fitness="raw",
+    # Paper-locked parameters (do not expose -- this is the faithful KA 2005 preset).
+    paper = dict(task="retina", layers="8,8,4,2,1", input_encoding="binary",
+                 pop=600, generations=25000, init_density=0.5,
+                 n_elite=150, pc=0.5, pm=0.5, fitness="raw",
                  switch_interval=20, mvg_ops="and,or",
-                 weighted_q=False, log_interval=10, target=1.0,
+                 weighted_q=False, qm_nrand=1000, log_interval=10, target=1.0,
                  out_dir=cli.out_dir, viz=cli.viz,
                  resume=not cli.fresh, checkpoint_interval=cli.checkpoint_interval)
     if cli.smoke:
-        paper.update(pop=60, generations=300, log_interval=20, checkpoint_interval=100)
+        paper.update(pop=60, generations=300, n_elite=15, qm_nrand=50,
+                     log_interval=20, checkpoint_interval=100)
         print("*** SMOKE MODE: pop 60 / 300 gens -- checks the pipeline, NOT a paper result ***\n")
 
     # Two conditions, identical everything except the goal schedule.
@@ -84,13 +87,11 @@ def main():
         "FG(L AND R)": dict(mvg=False, operation="and"),   # the fixed retina goal (control)
     }
 
-    # Shared task tensors (built once).
-    import os
     os.makedirs(cli.out_dir, exist_ok=True)
     layers = tuple(int(x) for x in paper["layers"].split(","))
-    cfg = M.NetConfig(layers=layers, lam=paper["lam"])
+    cfg = M.NetConfig(layers=layers)
     X_bits = np.asarray(tasks.all_binary_inputs(layers[0]))
-    X = X_bits * 2.0 - 1.0   # bipolar {-1,+1}
+    X = X_bits                                              # binary {0,1} pixels (KA)
 
     results = {name: [] for name in conditions}
     for name, cond in conditions.items():
@@ -102,21 +103,22 @@ def main():
             if args.resume and os.path.exists(result_path):
                 with open(result_path) as f:
                     r = json.load(f)
+                qm = r.get("q_m", r.get("q"))
                 print(f"[seed {seed}] already complete (best {r['best_fit']:.3f} | "
-                      f"Q {r['q']:.3f}) -> skip")
-                results[name].append((seed, r["best_fit"], r["q"]))
+                      f"Q_m {qm:.3f}) -> skip")
+                results[name].append((seed, r["best_fit"], qm))
                 continue
             open_after = args.viz and (i == cli.n_seeds - 1)   # open each condition's final brain
-            bf, q = T.train_seed(cfg, X, X_bits, args, seed, open_after)
-            results[name].append((seed, bf, q))
+            bf, qm = T.train_seed(cfg, X, X_bits, args, seed, open_after)
+            results[name].append((seed, bf, qm))
 
     print("\n================ PAPER COMPARISON ================")
     for name in conditions:
         qs = [r[2] for r in results[name]]
         fs = [r[1] for r in results[name]]
-        print(f"  {name:12s} | mean Newman Q {np.mean(qs):.3f} | mean best fit {np.mean(fs):.3f} "
-              f"| Q per seed {[f'{q:.3f}' for q in qs]}")
-    print("  Expectation (paper): MVG keeps Q high (~0.4+); the Fixed Goal stays low (~0.15-0.2).")
+        print(f"  {name:12s} | mean Q_m {np.mean(qs):.3f} | mean best fit {np.mean(fs):.3f} "
+              f"| Q_m per seed {[f'{q:.3f}' for q in qs]}")
+    print("  Expectation (paper): MVG Q_m ~0.35; Fixed Goal Q_m ~0.15.")
 
 
 if __name__ == "__main__":

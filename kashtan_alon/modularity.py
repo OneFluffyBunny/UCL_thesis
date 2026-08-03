@@ -53,6 +53,75 @@ def newman_q(weight_mats, cfg: NetConfig, weighted: bool = False):
     return float(q), communities
 
 
+def _q_of_graph(G: nx.Graph) -> float:
+    """Raw Newman Q of the max-modularity greedy partition (0.0 if no edges)."""
+    if G.number_of_edges() == 0:
+        return 0.0
+    comm = list(nx.community.greedy_modularity_communities(G))
+    return float(nx.community.modularity(G, comm))
+
+
+def _degree_preserving_random(G: nx.Graph, seed: int) -> nx.Graph:
+    """A random simple graph with the SAME degree sequence (double-edge-swap)."""
+    H = G.copy()
+    m = H.number_of_edges()
+    if m < 2:
+        return H
+    try:
+        nx.double_edge_swap(H, nswap=10 * m, max_tries=200 * m, seed=seed)
+    except (nx.NetworkXError, nx.NetworkXAlgorithmError):
+        pass   # too few swappable edges; H stays as-is (best effort)
+    return H
+
+
+def normalized_qm(weight_mats, cfg: NetConfig, n_rand: int = 100,
+                  restarts: int = 6, steps: int = 250, seed: int = 0):
+    """Kashtan-Alon's NORMALIZED modularity Q_m (their Eq. 2):
+
+        Q_m = (Q_real - Q_rand) / (Q_max - Q_rand)
+
+    where Q_real is the network's greedy Newman Q, Q_rand the mean greedy Q over
+    degree-preserving randomizations, and Q_max the greedy Q of a modularity-
+    MAXIMIZING rewiring at the same degree sequence (hill-climb over edge swaps).
+    The (subtract Q_rand, divide by Q_max-Q_rand) normalization removes the
+    density/size confound that makes raw Q incomparable across sparsities.
+
+    Returns (Q_m, {q_real, q_rand, q_max}). Computed on the undirected, unweighted
+    connection graph over all neurons -- same graph as newman_q."""
+    G = to_graph(weight_mats, cfg, weighted=False)
+    rng = np.random.default_rng(seed)
+
+    q_real = _q_of_graph(G)
+
+    # Q_rand: average over degree-preserving random graphs.
+    rands = [_q_of_graph(_degree_preserving_random(G, int(rng.integers(1 << 31))))
+             for _ in range(n_rand)]
+    q_rand = float(np.mean(rands)) if rands else 0.0
+
+    # Q_max: hill-climb Q over degree-preserving swaps (several random restarts).
+    q_max = q_real
+    m = G.number_of_edges()
+    if m >= 2:
+        for _ in range(restarts):
+            H = _degree_preserving_random(G, int(rng.integers(1 << 31)))
+            cur = _q_of_graph(H)
+            for _ in range(steps):
+                H2 = H.copy()
+                try:
+                    nx.double_edge_swap(H2, nswap=1, max_tries=100,
+                                        seed=int(rng.integers(1 << 31)))
+                except (nx.NetworkXError, nx.NetworkXAlgorithmError):
+                    continue
+                q2 = _q_of_graph(H2)
+                if q2 >= cur:            # accept non-decreasing swaps (allow plateaus)
+                    H, cur = H2, q2
+            q_max = max(q_max, cur)
+
+    denom = q_max - q_rand
+    q_m = (q_real - q_rand) / denom if abs(denom) > 1e-9 else float("nan")
+    return float(q_m), {"q_real": q_real, "q_rand": q_rand, "q_max": q_max}
+
+
 def density(weight_mats, cfg: NetConfig) -> float:
     """Percentage of possible feedforward connections that are present."""
     n_edges = int(sum(int(np.count_nonzero(W)) for W in weight_mats))
