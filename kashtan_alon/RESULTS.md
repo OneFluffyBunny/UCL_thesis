@@ -11,6 +11,46 @@ search, only the goal schedule differs.
 
 ---
 
+## Run 5 — first KA-faithful run, 5 seeds (2026-08-03) → ✅ **MVG > FG reproduced (directional, significant)**
+
+The real test on the rebuilt (KA-faithful) code: MVG vs Fixed-Goal, pop 600, 25 000
+gens, 5 seeds, scored with normalized **Q_m**. This is the run Runs 1–3 should have
+been (they ran Clune's reimplementation; see Run 4 / [[reference_ka_retina_algo]]).
+
+- **Command:** `conda run -n lndp python run_paper.py --n-seeds 5 --viz --fresh`
+- **Where:** laptop (CPU, pure-numpy, 0 VRAM) · ~0.015–0.024 s/gen · full run ≈ 50 min.
+
+| condition | mean Q_m | per seed | mean best fit |
+|---|---|---|---|
+| **MVG** | **0.245 ± 0.049** | 0.186, 0.316, 0.266, 0.240, 0.217 | 0.975 |
+| **FG (L AND R)** | **0.025 ± 0.139** | −0.143, 0.228, −0.007, −0.036, 0.083 | 0.904 |
+
+- **Separation +0.22, significant:** Welch t ≈ 3.3 (p ≈ 0.02); Mann–Whitney U = 2
+  (p ≈ 0.03). The gap matches KA's own (0.35 − 0.15 = 0.20).
+- **Every MVG seed is positively modular (0.19–0.32); 4/5 FG seeds sit at/below 0.**
+  A genuine MVG>FG modularity difference between equally-performing nets — KA's claim,
+  and a clean flip from the earlier null.
+- **Brains** (`runs/*_best.png`): MVG nets show the left-4 / right-4 retina feeding
+  largely separate hidden modules meeting near the output; FG nets are tangled
+  (cross-wiring at every layer). Visually consistent with the Q_m gap.
+
+**Verdict: ✅ direction reproduced, statistically significant.** NOT a full match:
+1. **Absolute scale shifted down** — MVG 0.25 (KA 0.35), FG 0.03 (KA 0.15); the effect
+   size reproduces but the magnitudes don't. Prime suspects: the SI-reconstructed
+   mutation operators/threshold range (`ga.py`) and our exact pixel→object mapping.
+2. **FG seed 1 (0.228)** is an outlier as modular as MVG → FG's SD is large; the effect
+   is significant but not every FG run is non-modular (n=5).
+3. Even MVG nets keep some cross-wiring (not a textbook-clean split).
+
+### Next steps (proposed)
+1. **Chase KA's SI** for the exact mutation operators + threshold range — the most
+   likely reason the absolute Q_m sits below the paper. Cheapest path to a full match.
+2. **More seeds** (n≥10) to tighten the FG spread and the significance.
+3. Wire **Q_m into per-gen logging** (currently raw Q) to see *when* in evolution the
+   MVG modularity emerges vs the FG.
+
+---
+
 ## Run 4 — code rebuilt to be KA-faithful (2026-08-03) → **pipeline verified; full run pending**
 
 Runs 1–3 turned out to be running **Clune 2013's reimplementation**, not KA 2005 —

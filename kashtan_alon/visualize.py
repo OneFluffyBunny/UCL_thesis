@@ -55,7 +55,8 @@ def _positions(cfg):
     return pos
 
 
-def visualize_net(individual, cfg, save_path, title="", weighted_q=False, open_after=False):
+def visualize_net(individual, cfg, save_path, title="", weighted_q=False,
+                  open_after=False, q_m=None):
     weight_mats, _ = individual
     q, communities = newman_q(weight_mats, cfg, weighted=weighted_q)
 
@@ -107,7 +108,12 @@ def visualize_net(individual, cfg, save_path, title="", weighted_q=False, open_a
     ax.legend(handles=handles, loc="upper left", fontsize=7, framealpha=0.9,
               bbox_to_anchor=(-0.02, 1.0))
 
-    ax.set_title(f"{title}\nNewman Q = {q:.3f}   |   modules = {len(communities)}", fontsize=11)
+    # Headline is KA's normalized Q_m (if provided); the raw Newman Q is the score of
+    # the greedy partition the node COLOURS come from (always positive, density-
+    # confounded -- not the metric we compare MVG vs FG on).
+    head = f"Q_m = {q_m:.3f}   |   " if q_m is not None else ""
+    ax.set_title(f"{title}\n{head}raw Newman Q (colour partition) = {q:.3f}   |   "
+                 f"modules = {len(communities)}", fontsize=11)
     ax.set_xlim(-(max(cfg.layers) / 2.0 + INPUT_SPLIT_GAP / 2 + 1.5), xr + 2.2)
     ax.set_ylim(-1.4, cfg.n_blocks + 0.4)
     ax.axis("off")
