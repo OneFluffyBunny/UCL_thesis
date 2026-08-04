@@ -105,31 +105,118 @@ def draw_net(ax, weight_mats, cfg, result, title):
     ax.axis("off")
 
 
-def main():
-    seeds = range(5)
-    fig, axes = plt.subplots(2, len(list(seeds)), figsize=(4 * 5, 9))
+# ---------------------------------------------------------------------------
+# Retina-lineage view: KA's actual picture (left detector / right detector /
+# integrator), independent of the greedy community algorithm.
+# ---------------------------------------------------------------------------
+LEFT_COL, RIGHT_COL, MIX_COL, DEAD_COL = "#2E86DE", "#E67E22", "#8E44AD", "#CFCFCF"
+
+
+def retina_side(weight_mats, cfg, pure=0.8):
+    """For every node, the fraction of its input lineage that traces back to the
+    LEFT vs RIGHT retina. Retina pixels 0-3 = left, 4-7 = right. A downstream
+    neuron inherits the (edge-count-weighted) average side of its live inputs.
+
+    Returns {node: (left_frac, right_frac)} and a classification
+    {node: 'L'|'R'|'M'|'-'} (left / right / mixed-integrator / dead)."""
+    off = cfg.offsets
+    frac = {}
+    for i in range(cfg.layers[0]):                 # retina layer
+        frac[off[0] + i] = (1.0, 0.0) if i < 4 else (0.0, 1.0)
+    for l, W in enumerate(weight_mats):
+        W = np.asarray(W)
+        for j in range(cfg.layers[l + 1]):
+            srcs = np.nonzero(W[:, j])[0]
+            if len(srcs) == 0:
+                frac[off[l + 1] + j] = (0.0, 0.0)
+                continue
+            lv = np.mean([frac[off[l] + int(i)][0] for i in srcs])
+            rv = np.mean([frac[off[l] + int(i)][1] for i in srcs])
+            tot = lv + rv
+            frac[off[l + 1] + j] = (lv / tot, rv / tot) if tot > 0 else (0.0, 0.0)
+    cls = {}
+    for node, (lv, rv) in frac.items():
+        if lv + rv == 0:
+            cls[node] = "-"
+        elif lv >= pure:
+            cls[node] = "L"
+        elif rv >= pure:
+            cls[node] = "R"
+        else:
+            cls[node] = "M"
+    return frac, cls
+
+
+_SIDE_COL = {"L": LEFT_COL, "R": RIGHT_COL, "M": MIX_COL, "-": DEAD_COL}
+
+
+def draw_net_lineage(ax, weight_mats, cfg, res, title):
+    _, cls = retina_side(weight_mats, cfg)
+    off, pos = cfg.offsets, _positions(cfg)
+    for l, W in enumerate(weight_mats):
+        W = np.asarray(W)
+        for i, j in zip(*np.nonzero(W)):
+            s, d = off[l] + i, off[l + 1] + j
+            x0, y0 = pos[s]; x1, y1 = pos[d]
+            ax.plot([x0, x1], [y0, y1], color=_SIDE_COL[cls[s]], lw=1.2,
+                    alpha=0.5, zorder=1)
+    for l, n in enumerate(cfg.layers):
+        marker = "s" if l == 0 else "o"
+        for i in range(n):
+            node = off[l] + i
+            x, y = pos[node]
+            ax.scatter([x], [y], s=150 if l == 0 else 170, marker=marker, zorder=3,
+                       edgecolors="black", linewidths=0.6, color=_SIDE_COL[cls[node]])
+    # purity of the hidden layers (how many non-output neurons stay single-sided)
+    hidden = [n for n in range(cfg.layers[0], cfg.n_nodes - 1)]
+    pure = sum(cls[n] in ("L", "R") for n in hidden)
+    ax.set_title(f"{title}\nQ_m={res['q_m']:+.3f}  |  single-sided neurons "
+                 f"{pure}/{len(hidden)}", fontsize=9)
+    ax.set_xlim(-4.2, 4.2)
+    ax.set_ylim(-0.7, cfg.n_blocks + 0.4)
+    ax.axis("off")
+
+
+def _sheet(draw_fn, out_name, suptitle, handles):
     rows = [("mvg", "MVG"), ("fg", "FG")]
+    fig, axes = plt.subplots(2, 5, figsize=(4 * 5, 9))
     for r, (tag, label) in enumerate(rows):
         for s in range(5):
-            name = f"retina_{tag}_raw_seed{s}"
-            wm, cfg, res = load_run(name)
-            draw_net(axes[r, s], wm, cfg, res, f"{label} seed{s}")
-
-    fig.suptitle("Evolved retina brains — modules shaded, cross-module edges in RED\n"
-                 "(MVG top: fewer red edges, cleaner split  •  FG bottom: more tangled)",
-                 fontsize=13, y=0.995)
-    handles = [mpatches.Patch(color=CROSS_EDGE, label="between-module edge (bottleneck)"),
-               mpatches.Patch(color="#3498DB", alpha=0.4, label="module (shaded blob)")]
-    fig.legend(handles=handles, loc="lower center", ncol=2, fontsize=10,
+            wm, cfg, res = load_run(f"retina_{tag}_raw_seed{s}")
+            draw_fn(axes[r, s], wm, cfg, res, f"{label} seed{s}")
+    fig.suptitle(suptitle, fontsize=13, y=0.995)
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=10,
                bbox_to_anchor=(0.5, -0.01))
     plt.tight_layout(rect=(0, 0.02, 1, 0.96))
-    out = os.path.join(RUNS, "modules_highlight.png")
+    out = os.path.join(RUNS, out_name)
     plt.savefig(out, dpi=140, bbox_inches="tight")
     plt.close()
     print(f"Saved -> {out}")
 
-    # quick numeric summary of cross-module edge fraction
-    print("\nrun            Q_m     cross/total edges")
+
+def main():
+    rows = [("mvg", "MVG"), ("fg", "FG")]
+
+    # Sheet 1: greedy communities + cross-module edges (the Q_m partition).
+    _sheet(draw_net,
+           "modules_highlight.png",
+           "Evolved retina brains — greedy modules shaded, cross-module edges in RED\n"
+           "(this is the partition Q_m scores; MVG top vs FG bottom)",
+           [mpatches.Patch(color=CROSS_EDGE, label="between-module edge (bottleneck)"),
+            mpatches.Patch(color="#3498DB", alpha=0.4, label="module (shaded blob)")])
+
+    # Sheet 2: KA's actual picture -- left detector / right detector / integrator.
+    _sheet(draw_net_lineage,
+           "modules_lineage.png",
+           "Retina lineage — each neuron coloured by the eye it watches\n"
+           "(KA's left-detector / right-detector / integrator; MVG top vs FG bottom)",
+           [mpatches.Patch(color=LEFT_COL, label="watches LEFT retina"),
+            mpatches.Patch(color=RIGHT_COL, label="watches RIGHT retina"),
+            mpatches.Patch(color=MIX_COL, label="integrator (both sides)"),
+            mpatches.Patch(color=DEAD_COL, label="no live input")])
+
+    # numeric summary: cross-edge fraction (greedy) + single-sided-neuron count.
+    print("\nrun          Q_m     cross/total edges   single-sided hidden neurons")
     for tag, label in rows:
         for s in range(5):
             wm, cfg, res = load_run(f"retina_{tag}_raw_seed{s}")
@@ -141,8 +228,11 @@ def main():
                 for i, j in zip(*np.nonzero(np.asarray(W))):
                     same = nc.get(off[l] + i) == nc.get(off[l + 1] + j)
                     wi += same; bt += (not same)
-            print(f"{label} seed{s}   {res['q_m']:+.3f}   {bt}/{wi+bt}"
-                  f"  ({100*bt/(wi+bt):.0f}% cross)")
+            _, cls = retina_side(wm, cfg)
+            hidden = list(range(cfg.layers[0], cfg.n_nodes - 1))
+            pure = sum(cls[n] in ("L", "R") for n in hidden)
+            print(f"{label} seed{s}  {res['q_m']:+.3f}   {bt}/{wi+bt} "
+                  f"({100*bt/(wi+bt):.0f}% cross)      {pure}/{len(hidden)}")
 
 
 if __name__ == "__main__":
