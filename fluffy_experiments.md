@@ -194,7 +194,7 @@ python train.py --conf experiments_paper/lunarlander/run_experiment.yaml
 - **Key question for next run**: reduce alpha to let the brain grow a few more useful hidden nodes while still preventing explosion. Try alpha=1 or 2.
 - Pop mean improved steadily (−309 → −150) suggesting the population as a whole is learning, but the elitist best gets stuck because it locked in a penalty-gaming solution early.
 
-> **Note on edge regularisation baseline:** Fixed in run 9 — baseline changed from `obs×act=32` to `seed_size²=144`. This only penalises edges added beyond the fully-connected seed, rather than penalising the seed itself.
+> **Note on edge regularisation baseline:** Baseline changed in code from `obs×act=32` to `seed_size²=144` (`train_backend.py`) so only edges added beyond the fully-connected seed are penalised, rather than penalising the seed itself. Not yet validated by a logged run.
 
 ---
 
