@@ -41,6 +41,19 @@ def CMAES(config, fitness, fitness_with_stats=None):
     num_cores = psutil.cpu_count(logical=False) if config["threads"] == -1 else config["threads"]
     print(f"\nUsing {num_cores} cores\n")
 
+    # Baseline: fitness of the untrained x0 DNA (evolution's generation-zero starting point,
+    # before any selection) -- reference point for "how good is the dumbest network".
+    if fitness_with_stats is not None:
+        baseline_fitval, baseline_raw, baseline_nodes = fitness_with_stats(x0)
+        print(f"Baseline (untrained x0 DNA): fitness={baseline_fitval:.4f} (raw={baseline_raw:.1f}) | Nodes: {baseline_nodes}\n")
+        config["baseline_x0_fitness"] = float(baseline_fitval)
+        config["baseline_x0_raw"] = float(baseline_raw)
+        config["baseline_x0_nodes"] = int(baseline_nodes)
+    else:
+        baseline_fitval = fitness(x0)
+        print(f"Baseline (untrained x0 DNA): fitness={baseline_fitval:.4f}\n")
+        config["baseline_x0_fitness"] = float(baseline_fitval)
+
     # Optimisation loop
     pool = Pool(num_cores) if num_cores > 1 else None
     while not es.stop() or gen < config["generations"]:

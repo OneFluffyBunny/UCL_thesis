@@ -75,6 +75,19 @@ def plot_lr(path, lr):
     pyplot.close()
 
 
+def io_self_edge_mask_dims(config):
+    """(obs_dim, action_dim) to pass as generate_initial_graph's io_dims, or None.
+
+    Returns None (no masking) unless the task has I/O-anchor nodes at all
+    (has_io_roles) and config["forbid_io_self_edges"] (default True) is set.
+    """
+    if not config.get("has_io_roles", False):
+        return None
+    if not config.get("forbid_io_self_edges", True):
+        return None
+    return (config.get("observation_dim", 0), config.get("action_dim", 0))
+
+
 def dimensions_env(environment):
     """
     Look up observation and action space dimension
@@ -269,8 +282,8 @@ def animate_graph(
     celluloid_camera.snap()
 
 
-def environment_max_reward(env_name):
-    if env_name == "LunarLander-v2":
+def environment_max_reward(env_name, balanced=False):
+    if env_name in ("LunarLander-v2", "LunarLander-v3"):
         return 200
     elif env_name == "CartPole-v1":
         return 500
@@ -278,6 +291,8 @@ def environment_max_reward(env_name):
         return 20
     elif "gate" in env_name:
         return 4
+    elif "retina" in env_name:
+        return 1.0 if balanced else 256
     else:
         raise NotImplementedError
 

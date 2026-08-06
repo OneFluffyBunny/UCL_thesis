@@ -91,7 +91,7 @@ def MLP(input_dim, output_dim, hidden_layers_dims, activation, last_layer_activa
 
 
 # Generate intial graph random matrix
-def generate_initial_graph(network_size, sparsity, binary_connectivity, undirected, seed):
+def generate_initial_graph(network_size, sparsity, binary_connectivity, undirected, seed, io_dims=None):
     """Generates a random connected initial graph and returns it as a numpy adjacency matrix.
 
     Args:
@@ -100,6 +100,18 @@ def generate_initial_graph(network_size, sparsity, binary_connectivity, undirect
         binary_connectivity (bool): Whether the network has binary weights.
         undirected (bool): Whether the network is undirected.
         seed: Random seed.
+        io_dims (tuple[int, int] | None): if given as (obs_dim, action_dim), zero out
+            every edge between two input nodes (indices < obs_dim) or two output nodes
+            (indices in [obs_dim, obs_dim+action_dim)), including self-loops -- e.g. an
+            input node is clamped to the observation every propagation step during
+            rollout, so an edge feeding into it from another input node (or itself) can
+            never influence the output; masking it out means the (weight-shared) MLP
+            never even gets called on that pair, on this or any later growth cycle
+            (add_new_nodes never touches pre-existing edges, update_weights only
+            recomputes already-nonzero ones), so this has no effect on the DNA/genome
+            -- purely a topology constraint, applied once, before the connectivity
+            check/retry so the returned graph is always connected even without those
+            edges.
 
     Returns:
         W (np.ndarray): The initial adjacency matrix.
@@ -113,6 +125,12 @@ def generate_initial_graph(network_size, sparsity, binary_connectivity, undirect
         else:
             rvs = stats.uniform(loc=-1, scale=2).rvs
             W = sparse.random(network_size, network_size, density=sparsity, data_rvs=rvs, random_state=rng).toarray()
+
+        if io_dims is not None:
+            obs_dim, action_dim = io_dims
+            W[:obs_dim, :obs_dim] = 0
+            W[obs_dim : obs_dim + action_dim, obs_dim : obs_dim + action_dim] = 0
+
         adj = ((np.abs(W) + np.abs(W.T)) > 0).astype(float)
         nb_disjoint_initial_graphs, _ = connected_components(adj, directed=False)
 

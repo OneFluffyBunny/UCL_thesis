@@ -9,7 +9,10 @@ warnings.filterwarnings("ignore")
 torch.set_default_dtype(torch.float64)
 
 from NDP import MLP, generate_initial_graph
-from train_backend import grow_network, snapshot_graph_png
+from train_backend import grow_network, snapshot_graph_png, env_rollout
+from utils import environment_max_reward, io_self_edge_mask_dims
+
+NB_EVAL_SEEDS = 10
 
 
 def setup_config(config, seed=42):
@@ -51,7 +54,7 @@ def setup_config(config, seed=42):
         config["nb_params_mlp_weight_values"] = 0
 
     if config["shared_intial_graph_bool"]:
-        config["shared_intial_graph"] = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed)
+        config["shared_intial_graph"] = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed, io_dims=io_self_edge_mask_dims(config))
 
     return config
 
@@ -62,7 +65,7 @@ if __name__ == "__main__":
     out_png   = sys.argv[3] if len(sys.argv) > 3 else "graph_inspect.png"
 
     with open(conf_path) as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+        config = yaml.load(f, Loader=yaml.Loader)
     config = setup_config(config)
 
     if dna_path is None:
@@ -77,5 +80,16 @@ if __name__ == "__main__":
     n_edges = int(np.count_nonzero(W))
     print(f"Brain: {n_nodes} nodes, {n_edges} edges")
 
+    extra_title = None
+    if "Network" not in config["environment"] and "gate" not in config["environment"]:
+        try:
+            max_reward = environment_max_reward(config["environment"])
+            scores = [env_rollout(W=W, config=config, seed=i) for i in range(NB_EVAL_SEEDS)]
+            avg_score = sum(scores) / len(scores)
+            print(f"Avg score over {NB_EVAL_SEEDS} seeds: {avg_score:.1f} / {max_reward} ({100 * avg_score / max_reward:.1f}%)")
+            extra_title = f"Avg over {NB_EVAL_SEEDS} seeds: {avg_score:.1f} / {max_reward} ({100 * avg_score / max_reward:.1f}%)"
+        except NotImplementedError:
+            pass
+
     config["_path"] = "."
-    snapshot_graph_png(W, network_state, config, out_png)
+    snapshot_graph_png(W, network_state, config, out_png, extra_title=extra_title)

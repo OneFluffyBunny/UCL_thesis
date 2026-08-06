@@ -5,8 +5,8 @@ import numpy as np
 import warnings
 import torch
 
-from train_backend import train_model, grow_network, snapshot_graph_png
-from utils import seed_python_numpy_torch_cuda, visualise_graph
+from train_backend import train_model, grow_network, snapshot_graph_png, env_rollout, retina_fitness
+from utils import seed_python_numpy_torch_cuda, visualise_graph, environment_max_reward
 
 from tests_checks.test_config import all_config_checks
 
@@ -54,10 +54,42 @@ def train(config):
         if config.get("snapshot"):
             png_path = config["_path"] + "/graph_best.png"
             W, network_state = grow_network(solution_best, config)
-            snapshot_graph_png(W, network_state, config, png_path)
+
+            extra_title = f"{len(solution_best)} genes"
+            if "retina" in config["environment"]:
+                balanced = config.get("balanced_fitness", False)
+                max_reward = environment_max_reward(config["environment"], balanced=balanced)
+                score = retina_fitness(W=W, config=config)
+                if balanced:
+                    extra_title += f"\nBalanced accuracy: {score:.4f} ({100 * score:.1f}%)"
+                else:
+                    extra_title += f"\nAccuracy: {score} / {max_reward} ({100 * score / max_reward:.1f}%)"
+            elif "Network" not in config["environment"] and "gate" not in config["environment"]:
+                try:
+                    max_reward = environment_max_reward(config["environment"])
+                    n_eval = config["nb_eval_seeds"]
+                    scores = [env_rollout(W=W, config=config, seed=i) for i in range(n_eval)]
+                    avg_score = sum(scores) / len(scores)
+                    extra_title += f"\nAvg over {n_eval} seeds: {avg_score:.1f} / {max_reward} ({100 * avg_score / max_reward:.1f}%)"
+                except NotImplementedError:
+                    pass
+
+            snapshot_graph_png(W, network_state, config, png_path, extra_title=extra_title)
+
+            # Growth-stages grid (seed -> final brain), same DNA, only if node_based_growth
+            stages_path = None
+            if not config["node_pairs_based_growth"]:
+                from growth_stages import grow_with_stages, render_growth_stages_png
+
+                stages_path = config["_path"] + "/growth_stages.png"
+                stages = grow_with_stages(solution_best, config)
+                render_growth_stages_png(stages, config, stages_path, run_id=config["id"])
+
             if config.get("show"):
                 import os
                 os.startfile(os.path.abspath(png_path))
+                if stages_path is not None:
+                    os.startfile(os.path.abspath(stages_path))
 
         # Visaulise graph development
         if config["visualise_network"]:
@@ -119,6 +151,10 @@ if __name__ == "__main__":
     parser.add_argument("--size-reg-alpha-edges", type=float, default=None, help="Edge regularisation strength (default 1.0)")
     parser.add_argument("--size-reg-warmup", type=int, default=None, help="Apply size regularisation for the first N generations only; switches to raw fitness afterwards")
     parser.add_argument("--target", type=float, default=None, help="Stop evolution as soon as best fitness reaches this value (default: env max reward)")
+    parser.add_argument("--nb-eval-seeds", type=int, default=10, help="Number of seeds to average the best brain's score over for the snapshot title (default 10)")
+    parser.add_argument("--balanced-fitness", action="store_true", default=False, help="Retina task: use balanced accuracy (mean of per-class accuracy, in [0,1]) instead of raw correct-count as the fitness signal (default False)")
+    parser.add_argument("--no-early-stopping", action="store_true", default=False, help="Disable the 'unpromising run' early-stopping check (early_stopping_conditions). Its objective_value threshold is tuned for raw-reward scales (e.g. -3) and will always trigger on a [0,1] balanced-fitness run, silently discarding logs/snapshot -- pass this flag for any --balanced-fitness run")
+    parser.add_argument("--allow-io-self-edges", action="store_true", default=False, help="Allow input-input and output-output edges in the seed graph (forbidden by default -- an input node is clamped to the observation every propagation step during rollout, so an edge into it from another input node, or itself, can never affect anything)")
     args = parser.parse_args()
     with open(args.conf) as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
@@ -160,6 +196,12 @@ if __name__ == "__main__":
         config["save_model"] = True
     config["snapshot"] = args.snapshot or args.show
     config["show"] = args.show
+    config["nb_eval_seeds"] = args.nb_eval_seeds
+    config["balanced_fitness"] = args.balanced_fitness
+    if args.no_early_stopping:
+        config["early_stopping"] = False
+    if args.allow_io_self_edges:
+        config["forbid_io_self_edges"] = False
     if args.size_reg_warmup is not None:
         config["size_reg_warmup"] = args.size_reg_warmup
     if args.target is not None:
@@ -167,7 +209,7 @@ if __name__ == "__main__":
     else:
         from utils import environment_max_reward
         try:
-            config["target"] = environment_max_reward(config["environment"])
+            config["target"] = environment_max_reward(config["environment"], balanced=config["balanced_fitness"])
         except NotImplementedError:
             config["target"] = None
 

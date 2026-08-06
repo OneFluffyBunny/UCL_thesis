@@ -17,7 +17,7 @@ from NDP import (MLP, NumpyMLP, torch_mlp_to_numpy, make_numpy_mlp,
                   propagate_features, query_pairs_of_node_embeddings,
                   predict_new_nodes, update_weights, add_new_nodes)
 from optimizers import CMAES
-from utils import dimensions_env, animate_graph, seed_python_numpy_torch_cuda, environment_max_reward, nx_layout
+from utils import dimensions_env, animate_graph, seed_python_numpy_torch_cuda, environment_max_reward, nx_layout, io_self_edge_mask_dims
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.autograd.set_grad_enabled(False)
@@ -199,7 +199,7 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
             if config["shared_intial_graph_bool"]:
                 W = config["shared_intial_graph"].copy()
             else:
-                W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
+                W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None, io_dims=io_self_edge_mask_dims(config))
 
             # Initialise the network state (role-based seed embeddings for I/O tasks)
             initial_network_state = build_initial_network_state(config, evolved_parameters)
@@ -470,6 +470,8 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                         episode_reward = small_world_ness_fitness(G=W_to_nx(W, config["undirected"]), niter=5, nrand=10, seed=config["seed"], sigma=config["sigma"], omega=config["omega"], render=render)
                     elif "gate" in config["environment"]:
                         episode_reward = bool_gates_fitness(W=W, config=config, render=render, animate_graph_rollout=animate_graph_rollout)
+                    elif "retina" in config["environment"]:
+                        episode_reward = retina_fitness(W=W, config=config, render=render, animate_graph_rollout=animate_graph_rollout)
                     elif config["environment"] == "ScaleFreeNetwork":
                         episode_reward = scalefree_fitness(G=W_to_nx(W, config["undirected"]), ks_test=config["ks_test"], render=render)
                     else:
@@ -493,12 +495,12 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
         n_nodes = W.shape[0]
 
         if config["fewer_edges"]:
-            env_max_reward = environment_max_reward(config["environment"])
+            env_max_reward = environment_max_reward(config["environment"], balanced=config.get("balanced_fitness", False))
             sparsity_penalty = (np.count_nonzero(W) / n_nodes ** 2) * env_max_reward
             mean_reward -= sparsity_penalty
 
         if config["fewer_nodes"]:
-            env_max_reward = environment_max_reward(config["environment"])
+            env_max_reward = environment_max_reward(config["environment"], balanced=config.get("balanced_fitness", False))
             nb_nodes_penalty = 10 * n_nodes * env_max_reward
             mean_reward -= nb_nodes_penalty
 
@@ -507,11 +509,13 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
         apply_reg = reg_warmup is None or config.get("current_gen", 0) < reg_warmup
 
         if apply_reg:
+            reg_max_reward = environment_max_reward(config["environment"], balanced=config.get("balanced_fitness", False))
+
             if size_reg in ("io_ratio", "both"):
                 seed_size = config.get("observation_dim", 0) + config.get("action_dim", 0)
                 if seed_size > 0:
                     alpha = config.get("size_reg_alpha", 1.0)
-                    mean_reward -= alpha * max(0, n_nodes / seed_size - 1)
+                    mean_reward -= alpha * reg_max_reward * max(0, n_nodes / seed_size - 1)
 
             if size_reg in ("io_edges", "both"):
                 seed_size = config.get("observation_dim", 0) + config.get("action_dim", 0)
@@ -522,10 +526,10 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                 if baseline_edges > 0:
                     alpha_edges = config.get("size_reg_alpha_edges", 1.0)
                     n_edges = int(np.count_nonzero(W))
-                    mean_reward -= alpha_edges * max(0, n_edges / baseline_edges - 1)
+                    mean_reward -= alpha_edges * reg_max_reward * max(0, n_edges / baseline_edges - 1)
 
         if config["balanced_weights"]:
-            env_max_reward = environment_max_reward(config["environment"])
+            env_max_reward = environment_max_reward(config["environment"], balanced=config.get("balanced_fitness", False))
             mean_weights = abs(W[np.nonzero(W)].mean())
             unbalance_penalty = mean_weights * env_max_reward
             mean_reward -= unbalance_penalty
@@ -628,6 +632,102 @@ def bool_gates_fitness(W: np.ndarray, config: dict, render=False, animate_graph_
     return fitness
 
 
+def retina_fitness(W: np.ndarray, config: dict, render=False, animate_graph_rollout: bool = False):
+    """Kashtan-Alon-style retina task: 8 bipolar {-1,+1} inputs, 1 output node whose
+    sign (> 0 / < 0) is read as the predicted bit. Target = left_feature AND
+    right_feature (see ka_task.py).
+
+    Deliberately DOES reset network_state to zeros before every pattern (unlike
+    bool_gates_fitness, which lets state carry over between rows) -- the target
+    task (shared_tasks.py / experiment_1 / experiment_2) evaluates every input row
+    independently (e.g. oracle.py's jax.vmap over rows), so carrying hidden state
+    from one truth-table row into the next would make this task behave differently
+    from what it's meant to be compared against.
+
+    By default (config["balanced_fitness"] = False) returns the raw number of the
+    256 patterns correctly classified. The target's positive class is only 19% of
+    patterns, so raw accuracy has a shortcut-friendly local optimum (predicting
+    all-0 already scores ~81%); setting config["balanced_fitness"] = True instead
+    returns balanced accuracy (mean of per-class accuracy) as a float in [0, 1],
+    matching experiment_1's default (see root CLAUDE.md's retina/AND note).
+    """
+    from ka_task import retina_and_dataset, to_bipolar
+
+    X, Y = retina_and_dataset()
+    X = to_bipolar(X)
+
+    if animate_graph_rollout:
+        graph = W_to_nx(W, config["undirected"])
+
+    try:
+        diameter = bfs_diameter(W)
+    except Exception:
+        diameter = int(np.sqrt(W.shape[0]))
+        print(f"WARNING: Graph is not connected due to prunning. Diameter manually set to {diameter}.")
+    policy_connectivity = W
+
+    obs_dim = config["observation_dim"]
+    network_thinking_time = diameter + config["network_thinking_time_extra_rollout"]
+    balanced = config.get("balanced_fitness", False)
+    fitness = 0
+    correct_pos = 0
+    correct_neg = 0
+    for idx, x in enumerate(X):
+        network_state = np.zeros(policy_connectivity.shape[0])
+
+        if animate_graph_rollout:
+            animate_graph(
+                G=graph,
+                network_state=network_state,
+                celluloid_camera=config["celluloid_camera"],
+                layout=config["layout"],
+                arrows=config["arrows"],
+                nodes_role_dims=(obs_dim, config["action_dim"]),
+                font_size=8,
+                print_labels=True,
+                roullout=True,
+                rollout_timestep=idx,
+            )
+
+        network_state[:obs_dim] = x
+        persistent_observation = x if config["persistent_observation_rollout"] else None
+
+        network_state = propagate_features(
+            network_state=network_state,
+            W=policy_connectivity,
+            network_thinking_time=network_thinking_time,
+            recurrent_activation_function=config["recurrent_activation_function"],
+            additive_update=config["additive_update"],
+            persistent_observation=persistent_observation,
+            feature_transformation_model=None,
+            use_torch=config.get("use_torch", False),
+        )
+
+        # Single output node, right after the 8 input nodes; sign decides the bit
+        bool_prediction = 1 if network_state[obs_dim] > 0 else 0
+
+        if bool_prediction == Y[idx]:
+            fitness += 1
+            if Y[idx] == 1:
+                correct_pos += 1
+            else:
+                correct_neg += 1
+
+    if balanced:
+        n_pos = int(np.sum(Y == 1))
+        n_neg = len(Y) - n_pos
+        tpr = correct_pos / n_pos if n_pos > 0 else 0.0
+        tnr = correct_neg / n_neg if n_neg > 0 else 0.0
+        balanced_acc = 0.5 * (tpr + tnr)
+        if render:
+            print(f"{config['environment']} retina fitness (balanced): {balanced_acc:.4f} (raw {fitness} / {len(Y)})")
+        return balanced_acc
+
+    if render:
+        print(f"{config['environment']} retina fitness: {fitness} / {len(Y)}")
+    return fitness
+
+
 def small_world_ness_fitness(G: nx.Graph, niter=5, nrand=10, seed=None, sigma=True, omega=False, render=False):
     """
     High fitness value means the graph has small-worldness.
@@ -708,6 +808,13 @@ def train_model(config):
         config["min_network_size"] = 4
         extra_hidden = 0 if config["extra_nodes"] == -1 else config["extra_nodes"]
         config["initial_network_size"] = config["observation_dim"] + config["action_dim"] + extra_hidden
+    elif "retina" in config["environment"]:
+        # Kashtan-Alon-style retina: 8 input bits, 1 output node (sign decides the bit)
+        config["observation_dim"] = 8
+        config["action_dim"] = 1
+        config["min_network_size"] = config["observation_dim"] + config["action_dim"]
+        extra_hidden = 0 if config["extra_nodes"] == -1 else config["extra_nodes"]
+        config["initial_network_size"] = config["observation_dim"] + config["action_dim"] + extra_hidden
     else:
         # Figure out environment dimennsions and type
         observation_dim, action_dim, pixel_env = dimensions_env(config["environment"])
@@ -777,7 +884,7 @@ def train_model(config):
 
     # Generate initial graph (stored as numpy adjacency matrix)
     if config["shared_intial_graph_bool"]:
-        config["shared_intial_graph"] = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], config["seed"])
+        config["shared_intial_graph"] = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], config["seed"], io_dims=io_self_edge_mask_dims(config))
 
     # Generate initial node embedding
     if not config["coevolve_initial_embeddings"] and config["shared_intial_embedding"] and config["initial_embeddings_random"]:
@@ -802,7 +909,7 @@ def grow_network(evolved_parameters: np.ndarray, config: dict):
     if config["shared_intial_graph_bool"]:
         W = config["shared_intial_graph"].copy()
     else:
-        W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None)
+        W = generate_initial_graph(config["initial_network_size"], config["initial_sparsity"], config["binary_connectivity"], config["undirected"], seed=None, io_dims=io_self_edge_mask_dims(config))
 
     initial_network_state = build_initial_network_state(config, evolved_parameters)
 
@@ -936,7 +1043,7 @@ def grow_network(evolved_parameters: np.ndarray, config: dict):
     return W, network_state
 
 
-def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, save_path: str):
+def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, save_path: str, extra_title: str = None):
     """Save a static PNG of the final grown graph. Nodes are coloured by role; edge width encodes |weight|; edge colour encodes sign (blue=excitatory, red=inhibitory)."""
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
@@ -982,7 +1089,10 @@ def snapshot_graph_png(W: np.ndarray, network_state: np.ndarray, config: dict, s
         width=edge_widths,
         edge_color=edge_colors,
     )
-    ax.set_title(f"{config['environment']} — best DNA  |  {n} nodes, {len(edges)} edges", fontsize=13)
+    title = f"{config['environment']} — best DNA  |  {n} nodes, {len(edges)} edges"
+    if extra_title:
+        title += f"\n{extra_title}"
+    ax.set_title(title, fontsize=13)
     pyplot.box(False)
 
     legend_elements = []
