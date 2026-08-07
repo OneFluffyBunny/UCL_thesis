@@ -33,11 +33,39 @@ def layered_mask(layers) -> np.ndarray:
     return np.abs(layer_of[:, None] - layer_of[None, :]) == 1
 
 
+def _roles_array(n_in: int, n_hidden: int, n_out: int,
+                 order: str = "iho") -> np.ndarray:
+    """Per-node role code (0=in, 1=hidden, 2=out) for a given NODE ORDERING.
+
+    `order` is a permutation of 'i'/'h'/'o' naming the block layout. The two in
+    use in this repo:
+
+      "iho"  [inputs, hidden, outputs] -- experiments/1-3, and what the published
+             conventions assume. The default.
+      "ioh"  [inputs, outputs, hidden] -- NDP, whose I/O-anchor redesign pins the
+             outputs immediately after the inputs so growth can never displace
+             them (see add_to_latex.md, "Input/output differentiation").
+
+    Passing the wrong one does not raise -- it silently labels hidden neurons as
+    outputs and vice versa, and every metric downstream is then answering a
+    different question than you asked. Hence this is an explicit argument.
+    """
+    if sorted(order) != ["h", "i", "o"]:
+        raise ValueError(f"order must be a permutation of 'i','h','o'; got {order!r}")
+    size = {"i": n_in, "h": n_hidden, "o": n_out}
+    code = {"i": 0, "h": 1, "o": 2}
+    return np.concatenate([np.full(size[c], code[c], dtype=int) for c in order])
+
+
 def role_mask(n_in: int, n_hidden: int, n_out: int,
-              in_to_out: bool = False) -> np.ndarray:
-    """Legal-edge mask for [inputs, hidden, outputs] nets: no input-input and no
-    output-output edges (and no input-output unless `in_to_out`)."""
-    r = np.array([0] * n_in + [1] * n_hidden + [2] * n_out)
+              in_to_out: bool = False, order: str = "iho") -> np.ndarray:
+    """Legal-edge mask for role-structured nets: no input-input and no
+    output-output edges (and no input-output unless `in_to_out`).
+
+    `order` -- node layout, "iho" or "ioh"; see `_roles_array`. NDP brains are
+    "ioh" and the default is "iho", so pass it explicitly for NDP.
+    """
+    r = _roles_array(n_in, n_hidden, n_out, order)
     a, b = r[:, None], r[None, :]
     ok = ~(((a == 0) & (b == 0)) | ((a == 2) & (b == 2)))
     if not in_to_out:
@@ -129,10 +157,14 @@ def from_blocks(blocks, offsets=None, constrain: bool = True, **kwargs) -> nx.Gr
     return from_matrix(W, **kwargs)
 
 
-def roles_for(n_in: int, n_hidden: int, n_out: int) -> list:
-    """Node-role labels for the [inputs, hidden, outputs] ordering used by
-    experiments/experiment_1-3 (and by NDP's I/O anchor convention)."""
-    return ["in"] * n_in + ["hidden"] * n_hidden + ["out"] * n_out
+def roles_for(n_in: int, n_hidden: int, n_out: int, order: str = "iho") -> list:
+    """Node-role labels, in node order. "iho" = experiments/1-3, "ioh" = NDP.
+
+    (Was documented as covering NDP too -- it does not: NDP's anchor redesign
+    puts the outputs BEFORE the hidden nodes. Pass order="ioh" there.)
+    """
+    name = {0: "in", 1: "hidden", 2: "out"}
+    return [name[c] for c in _roles_array(n_in, n_hidden, n_out, order)]
 
 
 def describe(G: nx.Graph) -> dict:

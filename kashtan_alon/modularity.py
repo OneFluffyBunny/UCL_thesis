@@ -62,7 +62,18 @@ def _q_of_graph(G: nx.Graph) -> float:
 
 
 def _degree_preserving_random(G: nx.Graph, seed: int) -> nx.Graph:
-    """A random simple graph with the SAME degree sequence (double-edge-swap)."""
+    """A random simple graph with the SAME degree sequence (double-edge-swap).
+
+    PERF (measured 2026-08-06, not yet acted on -- left alone because this file's
+    numbers are logged in RESULTS.md): the root `qmetrics/` port of this metric is
+    ~1.4x faster at identical settings, from batching the RNG draws in the swap
+    loop and undoing a trial swap in place instead of the `H2 = H.copy()` below.
+    Only ~1.4x here because KA nets are tiny (23 nodes / 34 edges) so community
+    detection dominates; the same two fixes were 5.8x on a dense 251-edge NDP
+    brain, where swap acceptance falls to ~6% and the swap loop dominates instead.
+    Also `nswap=10 * m` is ~5x more mixing than needed -- Q_rand is flat from 1m
+    to 10m swaps on both graph sizes. Worth doing only if this is ever pointed at
+    denser networks or many more of them."""
     H = G.copy()
     m = H.number_of_edges()
     if m < 2:

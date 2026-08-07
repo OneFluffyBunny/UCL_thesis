@@ -5,6 +5,22 @@ to work into the final writeup, with enough detail to write them up correctly la
 
 ---
 
+## Biological importance / motivation
+
+Running log of motivating facts for why modularity matters biologically —
+grounds the thesis's premise that it's worth evolving toward. More to add.
+
+- The human brain is modular (structurally and functionally segregated
+  circuits), and there is evidence this modularity is what makes it more
+  **adaptable** (evolvable/evolvable-to-new-tasks).
+- **What we are modelling is the brain at birth — before learning.** The object
+  of study is *innate* circuitry: the structure the genome specifies, prior to
+  any experience-driven refinement. This is why the thesis claims modularity
+  *precedes* learning rather than being produced by it, and why our brains are
+  scored as-grown rather than after a training phase.
+
+---
+
 ## Evolutionary computation methods
 
 Optimisers used to search the DNA/genome across this thesis. So far: **CMA-ES**
@@ -20,6 +36,22 @@ descent instead, as its own optimiser-control axis).
   the search stretch/rotate to follow narrow valleys instead of only searching
   axis-aligned. Elitist variant used here (`CMA_elitist`), so the best-found
   solution persists across generations.
+
+---
+
+## CMA-ES vs gradient descent
+
+*(Placeholder — we'll come back to this later and expand it.)*
+
+- **When the fitness function is differentiable, gradient descent is simply
+  better.** CMA-ES only estimates a search direction from `popsize` fitness
+  samples per generation; GD reads the exact direction off the backward pass at
+  the cost of roughly one evaluation. Paying for a derivative-free optimiser is
+  only justified when the objective genuinely isn't differentiable (or the
+  differentiable surrogate is a poor proxy for it).
+- This is exactly what **experiment_3** isolates: same direct-encoding network
+  as experiment_2, backprop + Optax instead of CMA-ES, with `margin` as the
+  differentiable surrogate for the accuracy CMA-ES maximises.
 
 ---
 
@@ -67,6 +99,19 @@ property of the grown graph rather than an unsigned weight.
 
 <!-- 2. (next change goes here) -->
 
+### 2. Kashtan-Alon retina task support
+
+`--balanced-fitness` (fitness + size-reg + target all scale consistently);
+`forbid_io_self_edges` (default on, masks I-I/O-O edges out of the seed,
+permanent and zero genome cost); MVG (`--mvg`, tracks the final generation's
+champion rather than best-ever, since best-ever isn't comparable across a
+goal switch); `--pruning-threshold` (existed, was never exposed). Also fixed: `io_ratio`/`io_edges` size-reg wasn't scaled by max reward like
+the other size penalties were, so the same `alpha` meant very different
+things depending on task reward scale; and the "unpromising run" early-stop
+threshold was tuned for raw-reward scales and always fired at gen 500 on a
+`[0,1]` balanced-fitness run, silently discarding the run's logs/snapshot —
+`--no-early-stopping` opts out.
+
 ---
 
 ## NDP: general observations
@@ -89,6 +134,24 @@ property of the grown graph rather than an unsigned weight.
   lifetime — a highly simplified stand-in for real developmental
   neurogenesis, which is local, activity-dependent, and continuous rather
   than cycle-synchronous and network-wide.
+- **Growth is density-compounding by construction.** A spawning child
+  inherits its *entire parent's neighbourhood*, not just the parent
+  (`add_new_nodes()`) — hubs get copied onto every child spawned near them,
+  compounding each cycle. With no distance/wiring cost in this project,
+  growth itself is one of the few things that could push toward sparse
+  structure, and by default it pushes the opposite way. Counter-levers exist
+  but are off by default: `--pruning`, lower `initial_sparsity`,
+  `node_pairs_based_growth`.
+- **Shared per-role (not per-node) seed embeddings make some functions
+  unreachable, regardless of search budget.** All input nodes get the same
+  embedding vector (`build_initial_network_state`), so the network can only
+  ever compute permutation-invariant functions of its inputs (blind to
+  *which* inputs are on, only *how many*). No embedding-size/MLP-width/
+  generations tweak fixes this — needs per-input, not per-role, embeddings.
+- **Evolved edge-weight diversity is a cheap diagnostic for a degenerate
+  shortcut.** Every retina/KA solution so far collapses to near-uniform edge
+  magnitude (sign-only differentiation); CartPole's solver doesn't (real
+  spread, no saturation). Worth checking on any new result.
 
 ---
 
@@ -124,6 +187,71 @@ bipolar, sign-of-output, target = `left_feature AND right_feature`.
   deceptive here (task is imbalanced, ~19% positive), so "always predict 0"
   scores ~81% for free with no gradient toward the real solution. (NDP:
   `--balanced-fitness` flag, default off; experiment_1 defaults on.)
+- **Both FG and MVG converge to the same ~84% "popcount" solution and can't
+  improve on it.** Every evolved network we've inspected (regularised,
+  unregularised, FG, MVG) reduces to an unweighted majority vote over the 8
+  raw input bits — ignores which specific bits are on, just counts how many.
+  Gets the popcount-0-3 and popcount-7-8 bands perfect for free (structurally
+  can't be wrong there) and is near coin-flip on the popcount-4-6 band, where
+  the task's actual pairwise AND/OR structure would be required. See
+  `experiments_paper/retina/RESULTS.md` in NDP for the full derivation.
+
+---
+
+## LNDP: general observations
+
+Running log — brief for now, more to add.
+
+- **Fixed node count — only connections change.** Unlike NDP, LNDP never adds or
+  removes neurons; a lifetime consists of synaptogenesis and pruning over a fixed
+  set of nodes. This is the **more biologically realistic** choice: the mammalian
+  brain does comparatively little neurogenesis after development, and shapes
+  itself overwhelmingly by making and eliminating *synapses*.
+- **Like NDP, it is not a compression** — the genome is *larger* than the
+  phenotype it specifies. The rules (graph transformer + node/edge GRUs + prune
+  and synaptogenesis MLPs) cost ~1.9k parameters, while a 24-node brain has only
+  ~322 possible edges. The genome is O(1) in node count and the phenotype is
+  O(N²), so the encoding only becomes a genuine bottleneck **above a crossover
+  node count** — i.e. unless we start with a very large number of nodes.
+- **Even the original paper struggles on simple control tasks, at great compute
+  cost.** Its whole suite is toy control (CartPole, Acrobot, Pendulum, a 5-cell
+  foraging grid; observation dim ≤ 8), and reaching those scores takes 10,000
+  generations × popsize 128 × 3 trials ≈ 4M episodes for problems standard RL
+  solves in minutes. The paper itself concedes performance is below conventional
+  RL architectures and that scaling to higher-dimensional tasks is open.
+- **The architecture is clunky and hard to experiment with.** A graph transformer,
+  two GRU rules, two threshold MLPs and a spontaneous-activity process are all
+  entangled, so most interventions touch several coupled components at once and
+  the effect of any single change is hard to isolate. Poor substrate for the
+  controlled one-variable-at-a-time comparisons this thesis needs.
+- **The retina task and this architecture are mismatched.** LNDP's mechanism is
+  reward-modulated plasticity *during* the lifetime, but the retina target is a
+  static 256-row truth table. So (i) the map is fully known at evolution time —
+  anything the plastic network achieves, a frozen weight matrix could achieve;
+  (ii) the reward is one bit ("was the previous pattern right?") over i.i.d.
+  patterns, carrying no credit assignment; (iii) the graph keeps rewiring *while*
+  accuracy is measured, so the function being scored drifts within the
+  evaluation. Empirically (KA formula, fixed goal AND, balanced sampling, 24
+  nodes, popsize 128, 120 patterns × 3 episodes, chance = 60/120): the population
+  mean never left chance over 20 generations, the champion's honest re-test *fell
+  below* chance (87–89 selected → 47.9–53.3 re-tested), and per-episode spread was
+  ±14–22 points against the ~5.5 expected from pattern sampling alone. Most of the
+  variance is developmental drift, and selection rewards drift luck, not function.
+- **There is also no well-defined object to measure.** Modularity metrics need a
+  static adjacency matrix, and in LNDP the graph never stops changing, so "the"
+  grown network does not exist as a phenotype. It can be forced to exist — grow
+  under spontaneous activity, then freeze plasticity for the whole lifetime — but
+  that reduces LNDP to exactly NDP's protocol (genome → developmental program →
+  static network → score), which we already have and can intervene on far more
+  cheaply. The plasticity is what makes LNDP distinct, and it is precisely what a
+  static modularity probe cannot use.
+- **Verdict: biologically appealing, wrong tool for this thesis.** Its commitments
+  are attractive — a fixed neuron count shaped by synaptogenesis and pruning, a
+  developmental phase driven by spontaneous activity, lifetime plasticity gated by
+  reward. But that same richness is the problem: the mechanics entangle
+  development with learning, the phenotype is a moving target rather than a
+  structure, and the many coupled components make single-variable comparisons
+  impractical. We therefore do **not** pursue the modularity study in LNDP.
 
 ---
 
@@ -131,7 +259,7 @@ bipolar, sign-of-output, target = `left_feature AND right_feature`.
 
 Shared package at repo root: adapters turn any brain format (NDP's `W`,
 exp 1–3's `w`, `kashtan_alon`'s layer blocks) into a graph; metrics see only the
-graph. **Two metrics so far.**
+graph. **Three metrics so far.**
 
 **1. Newman Q** — (edges inside communities) − (expected if rewired at random
 keeping degrees).
@@ -146,6 +274,81 @@ keeping degrees).
 Q_rand), density held fixed across all three terms. 0 = chance, 1 = as modular
 as these degrees permit. **Report this for dense grown brains**, since raw Q
 isn't comparable across sparsities. Q_max is a hill-climb, so it biases Q_m up.
+
+**3. Planted-bipartition modularity** (`planted_q`, EXPERIMENTAL) — Q evaluated at
+a partition the *task* specifies, rather than one we search for. See the section
+below.
+
+### Graph size must be controlled for — it is not a detail
+
+**Raw Q is not comparable between networks of different size/density.** Three
+independent biases, all pushing the same way (sparser/bigger scores higher):
+
+- **Density confound.** Q's null term is `k_i·k_j/2m`; in a dense graph every
+  community already has near-expected internal edges, so Q compresses toward 0
+  however it is wired. Our FG brain is density 0.322, MVG 0.251 — MVG is the
+  *sparser* graph, so its higher raw Q (0.167 vs 0.127) is the expected direction
+  of the artefact and cannot be read as evidence.
+- **Resolution limit** (Fortunato 2007): modules below ~√(2m) edges are invisible
+  — ~22 edges at FG's m=251 but ~40 at MVG's m=793. The two graphs are being
+  asked *different questions* about what counts as a module.
+- **Achievable range differs.** The maximum Q a graph can reach is set by its
+  degree sequence, so raw Q compares points on two different scales.
+
+**Normalising does not automatically fix it.** Two measured traps:
+
+- *Q_m inherits a budget bias.* Q_max is estimated by a search with a fixed
+  iteration budget; a bigger graph exhausts that budget sooner, so its Q_max is
+  more under-estimated and its Q_m inflated. Measured at equal `steps`: the
+  hill-climb's improvement over the real network was 0.035 on FG vs 0.009 on MVG
+  — a 4× gap against a 3.2× edge-count ratio. Budget must scale with edges.
+- *The z-score is not size-fair either.* The null's SD shrinks roughly as 1/√m,
+  so z ≈ excess × √m and the bigger graph scores higher for free (FG m=251 vs MVG
+  m=793 gives MVG a 1.78× head start). **Report z as significance, never as
+  effect size.**
+
+**The clean fix is experimental design, not statistics: compare networks of the
+same size.** Kashtan–Alon's own FG/MVG comparison used an identical architecture
+with only the goal schedule differing. Where sizes cannot be matched, normalise,
+state the residual bias, and report the size alongside every Q.
+
+### Left/right modularity for MVG — the planted-bipartition metric
+
+MVG alternates between two goals over the *same* left/right decomposition, so the
+question is not "what modules exist?" but "**is the network split into a left and
+a right module?**" That is a much easier question, and worth stating why.
+
+- **Terminology.** "Binary modularity" is not a standard term. The partition into
+  two groups is a **bipartition**; scoring a partition you specify rather than
+  discover is a **planted** (or prescribed) partition; and the published metric
+  for "how well do edges respect a given node labelling" is Newman's **discrete
+  (attribute) assortativity** (Newman 2003, *Mixing patterns in networks* —
+  citation to verify). So: *planted-bipartition modularity*, or equivalently
+  *assortativity with respect to the left/right labelling*.
+- **We are not inventing a metric.** Newman Q is *defined* for any partition;
+  community detection is only a search for a good one. Handing Q the task's own
+  partition removes the NP-hard maximisation, the iteration budget and the
+  non-convergence that make Q_m unstable — there is no optimiser left to fail.
+- **Definition.** `r = (Σe_ii − Σa_i²)/(1 − Σa_i²)` = Q-at-the-fixed-partition
+  divided by its analytic ceiling (every edge internal). 1 = perfectly split,
+  0 = chance, <0 = anti-associated. Identity worth quoting: **r = 1 − crosstalk**,
+  where crosstalk = (cross-group edges)/(cross-group edges expected at these
+  degrees). So the formal metric and the one-line prose number are the same object.
+- **The output node is excluded.** A single readout must connect to both halves by
+  construction, so forcing it onto a side charges a fixed cross-edge penalty
+  unrelated to modularity, and it hits small graphs hardest.
+- **Hidden nodes have no a-priori side, so report a bracket.** `optimal` assigns
+  them to maximise Q (the *best case for the modularity hypothesis*); `majority`
+  assigns each to the side it has more edges to (the naive reading). If even
+  `optimal` is at chance, the question is settled.
+- **⚠️ The null must re-fit the assignment on every rewired graph.** `optimal`
+  fits free nodes to the data and so finds structure in noise — a plain ER graph
+  with 8 pinned nodes scores r = +0.25. Scoring nulls at the partition fitted to
+  the *real* graph gives the real graph an advantage the null never gets, and
+  makes everything look significant. Measured cost of getting this wrong: FG's
+  z fell from **+5.66 (p=0.005) to +0.88 (p=0.199)** once the null re-fitted.
+  This is a general lesson for any planted-partition statistic, not a detail of
+  this implementation.
 
 ### Constraints on the null model — correctness, not refinement
 
