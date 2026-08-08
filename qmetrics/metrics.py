@@ -1,14 +1,14 @@
 """The Q calculators. All of them take a graph from `graph.py` and nothing else.
 
-THREE metrics (newman_q, normalized_qm, planted_q) and two supporting tools
+THREE metrics (newman_q, normalized_qm, left_right_q) and two supporting tools
 (threshold_sweep is a sweep over the first; role_segregation is a task-specific
 proxy). Note: Newman Q is the objective function -- Louvain and greedy/CNM are
 just search algorithms for it, so there is no separate "Louvain modularity", and
 every Q here is a lower bound (NP-hard).
 
 The split that matters: the first two DISCOVER a partition and so inherit an
-NP-hard search; planted_q SCORES one you already know and so has no optimiser in
-it to fail. Prefer it whenever the question names its own modules.
+NP-hard search; left_right_q SCORES one you already know and so has no optimiser
+in it to fail. Prefer it whenever the question names its own modules.
 
 Which one to reach for:
 
@@ -18,16 +18,18 @@ Which one to reach for:
                     when it IS structured; Q_m divides that confound out. Its
                     DIRECTION is reliable; its SCALE moves with the Q_max
                     estimator -- see its docstring.
-  planted_q         when the task names the modules ("are the left 4 and the
+  left_right_q      when the task names the modules ("are the left 4 and the
                     right 4 retina inputs in separate halves?"). No search, so no
                     budget and no convergence problem; ~10x cheaper than
-                    normalized_qm.
+                    normalized_qm. The published name for what it computes is a
+                    PLANTED-bipartition score / discrete assortativity; it is
+                    named for the question we ask it, not the other way round.
   threshold_sweep   when the brain is dense but many weights are weak. Answers
                     "is there structure hiding under a tail of near-zero edges,
                     or is it genuinely one blob?" -- which a single Q cannot.
-  role_segregation  the older, weaker form of planted_q's question: reads only
+  role_segregation  the older, weaker form of left_right_q's question: reads only
                     input->hidden weights and assumes a 2-way split at n_in//2.
-                    Kept as a known-answer cross-check; prefer planted_q.
+                    Kept as a known-answer cross-check; prefer left_right_q.
 
 Reference scale (Kashtan-Alon 2005 / Clune 2013): modular nets score Q ~ 0.4+,
 non-modular ~ 0.15-0.2. Those numbers are for sparse nets -- read them next to
@@ -576,7 +578,7 @@ def _assign(G: nx.Graph, pinned: dict, ids: list, mode: str, passes: int) -> dic
     return gid
 
 
-def _planted_null(args):
+def _lr_null(args):
     """One null sample: rewire, then RE-RUN THE ASSIGNMENT on the rewired graph.
 
     Re-running it is the whole point. `assign='optimal'` fits the unpinned nodes
@@ -591,10 +593,15 @@ def _planted_null(args):
     return _q_at(H, _assign(H, pinned, ids, mode, passes))
 
 
-def planted_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optimal",
-              n_rand: int = 200, sweeps: int = 5, swaps: int = 2, seed: int = 0,
-              n_jobs: int = -1, passes: int = 20):
+def left_right_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optimal",
+                 n_rand: int = 200, sweeps: int = 5, swaps: int = 2, seed: int = 0,
+                 n_jobs: int = -1, passes: int = 20):
     """METRIC 3 (EXPERIMENTAL) -- modularity at a partition you SPECIFY.
+
+    Named for the question it was built for (retina: is the brain split LEFT vs
+    RIGHT?), but it is not limited to two groups or to inputs -- `pinned` may name
+    any number of groups over any nodes. In the literature this is a PLANTED (or
+    prescribed) partition score; `r` below is Newman's discrete assortativity.
 
     ⚠️ EXPERIMENTAL: added 2026-08-07, not yet used for any logged result and not
     yet calibrated against a published number. The pieces are individually
@@ -607,7 +614,7 @@ def planted_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optimal",
     there. That removes the NP-hard maximisation, the step budget and the
     non-convergence that make `normalized_qm` unstable. Typical call:
 
-        planted_q(G, {i: i // 4 for i in range(8)}, exclude=[8])   # 8 in, 1 out
+        left_right_q(G, {i: i // 4 for i in range(8)}, exclude=[8])  # 8 in, 1 out
 
     pinned  -- node -> group id for the nodes whose side is known (the inputs).
     exclude -- nodes dropped entirely. Pass the OUTPUT: a readout must connect to
@@ -636,6 +643,8 @@ def planted_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optimal",
                   the `allowed` mask; this one is achievable, hence tighter.
        score      (q - q_rand) / (q_max - q_rand), the returned value.
        z, p       q against the null DISTRIBUTION, not just its mean.
+       groups     node -> group id, the exact partition scored (excluded nodes
+                  absent). Feed it to `plot.plot_left_right` to see it.
 
     + no community detection anywhere, so no optimiser to fail and no budget to
       under-spend; fast; the null and the ceiling use the same fixed partition,
@@ -650,7 +659,7 @@ def planted_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optimal",
     if U.number_of_edges() == 0:
         return float("nan"), {"q": 0.0, "r": float("nan"), "crosstalk": float("nan"),
                               "q_rand": 0.0, "q_max": 0.0, "z": float("nan"),
-                              "p": float("nan"), "n_free": 0}
+                              "p": float("nan"), "n_free": 0, "groups": {}}
 
     ids = sorted({pinned[v] for v in U if v in pinned}) or [0]
     n_free = sum(1 for v in U if v not in pinned)
@@ -671,7 +680,7 @@ def planted_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optimal",
 
     rng = np.random.default_rng(seed)
     seeds = [int(rng.integers(1 << 31)) for _ in range(n_rand)]
-    rands = np.array(_pmap(_planted_null,
+    rands = np.array(_pmap(_lr_null,
                            [(U, pinned, ids, assign, passes, s, swaps)
                             for s in seeds], n_jobs))
     q_rand = float(rands.mean()) if len(rands) else 0.0
@@ -687,7 +696,8 @@ def planted_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optimal",
     return float(score), {"q": q, "r": float(r), "crosstalk": float(crosstalk),
                           "q_rand": q_rand, "q_max": float(q_max), "sd": sd,
                           "z": float(z), "p": p, "n_free": n_free,
-                          "sizes": [len(c) for c in _parts_of(gid)]}
+                          "sizes": [len(c) for c in _parts_of(gid)],
+                          "groups": dict(gid)}
 
 
 def threshold_sweep(W, thresholds=None, *, quantiles=None, method: str = "greedy",

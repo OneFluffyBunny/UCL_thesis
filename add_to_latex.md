@@ -255,6 +255,68 @@ Running log — brief for now, more to add.
 
 ---
 
+## Experiment 1 — architecture particulars
+
+The treatment arm: a compressed DNA→brain encoding, evolved by CMA-ES.
+
+**Biological framing.** We model the brain **at birth, not during continual
+learning**. The brain is grown once from the genome and then frozen while it
+solves the task — no within-life plasticity — so what is scored is its *innate*
+ability, the circuitry the genome specifies before any experience. Adaptation
+happens across generations, not within a lifetime.
+
+**Neurons.** Fixed count, three roles: `n_in = 8` inputs, `n_hidden = 20`
+hidden, `n_out = 1` output (defaults; N = 29). Only connections evolve — no
+neurogenesis, no pruning, no physical space/coordinates.
+
+**Connectivity.** Directed graph, allowed edges are **input→hidden**,
+**hidden→hidden**, **hidden→output** only; no self-loops, no input→input,
+no direct input→output. At the defaults that is 160 + 380 + 20 = **560 allowed
+edges**. Inference is a synchronous recurrent pass `a ← tanh(a @ w + b)` for a
+fixed 8 iterations with the inputs re-clamped each step; the decision is
+`output > 0`.
+
+**The genome does not store weights.** It stores (a) `K` evolved hidden
+cell-type identity vectors plus one shared input identity and one shared output
+identity, (b) per-type *abundance* logits setting how many hidden neurons are of
+each type, (c) a per-type bias, and (d) one shared connection rule `g`, a small
+MLP. Every weight is then `w_ij = g(feat_i, feat_j)`, where each neuron's
+feature is `[type identity | positional code | role one-hot]` (dims 4 + 4 + 3 =
+11). `g` is asymmetric in its two arguments (hence a *directed* graph),
+`tanh`-bounded to [−1, 1], and deterministic given the genome — no
+developmental noise decides function.
+
+**Genome size: O(K), independent of the neuron count.** At the defaults
+(K = 4, `g` = 22→16→1): 385 parameters in `g` + 34 in the type/abundance/bias
+genes = **419 genes specifying 560 weights**. The point is the *scaling*, not
+this ratio: raising `n_hidden` to 100 takes the phenotype to 10,800 edges while
+the genome stays at 419. Extra neurons add no new wiring to specify.
+
+**Why: the positional code is given to input/output neurons only.** Hidden
+neurons are type-only, so any two hidden neurons of the same type have identical
+features, hence identical incoming weights, outgoing weights and bias — they are
+exact clones with identical activation at every timestep. Consequences worth
+stating explicitly:
+- Only `U = n_in + K + n_out` distinct feature signatures exist (13 at the
+  defaults), so the whole brain is built from `U² = 169` distinct weight values,
+  gathered into the full matrix.
+- **A brain with `K` types is functionally a `K`-neuron recurrent network with
+  gain-scaled edges**, whatever `n_hidden` is. `n_hidden` enters only as a
+  multiplier: a downstream neuron receives `m_t · a_t · w_tj` from type `t`.
+- So **`K` is the lever for distinct functional roles; `n_hidden` is a lever for
+  gain, not diversity.** Abundance is softplus-*normalised*, so evolution
+  controls the ratios between types, while `n_hidden` is a fixed uniform scale
+  set by the experimenter.
+
+**Abundance uses softplus, not softmax**, deliberately: the near-linear response
+means small mutations move counts by ±1 and a starved type can recover, avoiding
+an exponential extinction trap. `abundance = 0` is an equal split.
+
+**Search.** CMA-ES over the flat genome (popsize 64, σ_init 0.1, elitist).
+Balanced accuracy (chance = 0.5), bipolar inputs {−1, +1}.
+
+---
+
 ## Modularity metrics (`qmetrics/`)
 
 Shared package at repo root: adapters turn any brain format (NDP's `W`,
@@ -275,9 +337,10 @@ Q_rand), density held fixed across all three terms. 0 = chance, 1 = as modular
 as these degrees permit. **Report this for dense grown brains**, since raw Q
 isn't comparable across sparsities. Q_max is a hill-climb, so it biases Q_m up.
 
-**3. Planted-bipartition modularity** (`planted_q`, EXPERIMENTAL) — Q evaluated at
-a partition the *task* specifies, rather than one we search for. See the section
-below.
+**3. Planted-bipartition modularity** (`left_right_q`, EXPERIMENTAL) — Q evaluated
+at a partition the *task* specifies, rather than one we search for. The code is
+named for the question (left vs right); the concept's published name is the one
+above. See the section below.
 
 ### Graph size must be controlled for — it is not a detail
 

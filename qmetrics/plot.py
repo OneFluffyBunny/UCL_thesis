@@ -16,7 +16,7 @@ import networkx as nx
 import numpy as np
 
 from .graph import describe, from_matrix
-from .metrics import newman_q
+from .metrics import _unweighted, left_right_q, newman_q
 
 
 def open_file(path: str) -> None:
@@ -33,15 +33,21 @@ def open_file(path: str) -> None:
 
 def plot_communities(G, path: str, *, title: str = "", n_in: int = 0, n_out: int = 0,
                      method: str = "greedy", restarts: int = 1, seed: int = 0,
-                     show: bool = True, dpi: int = 135, allowed=None):
+                     show: bool = True, dpi: int = 135, allowed=None,
+                     communities=None, q=None, kind: str = "communities",
+                     labels=None, note: str = ""):
     """Draw `G`'s communities and write a PNG to `path`. -> (Q, communities).
 
     `G` may be a graph or a weight matrix. `n_in`/`n_out` mark the I/O anchors:
     NDP's node order is [inputs, outputs, hidden], so inputs are 0..n_in-1 and
     outputs immediately follow. `show` opens the file when done.
 
-    The partition drawn is exactly the one `newman_q` scores -- and therefore the
-    one `normalized_qm` scores too, since it reuses q_real's partition.
+    By default the partition drawn is exactly the one `newman_q` scores -- and
+    therefore the one `normalized_qm` scores too, since it reuses q_real's
+    partition. Pass `communities` (list of node sets) to draw a partition you
+    already have instead, e.g. the one `left_right_q` returns in `groups`; then
+    NO detection is run and Q is evaluated at that partition. `kind`/`labels`/
+    `note` only change wording on the figure.
     """
     import matplotlib
     if not show:
@@ -57,7 +63,14 @@ def plot_communities(G, path: str, *, title: str = "", n_in: int = 0, n_out: int
     if m == 0:
         raise ValueError("nothing to draw: the graph has no edges")
 
-    q, comms = newman_q(G, method=method, seed=seed, restarts=restarts)
+    if communities is None:
+        q, comms = newman_q(G, method=method, seed=seed, restarts=restarts)
+        how = f"{method}; same partition Q_m uses"
+    else:
+        comms = [set(c) for c in communities if c]
+        if q is None:
+            q = float(nx.community.modularity(G, comms))
+        how = "at the given partition, no search"
     comms = sorted(comms, key=lambda c: min(c))        # stable, input-ordered
     memb = {v: i for i, c in enumerate(comms) for v in c}
     cmap = plt.get_cmap("tab10" if len(comms) <= 10 else "tab20")
@@ -97,8 +110,8 @@ def plot_communities(G, path: str, *, title: str = "", n_in: int = 0, n_out: int
                                edgecolors="black", linewidths=1.4)
         handles.insert(1, Line2D([], [], marker="*", ls="", mfc="0.6", mec="k",
                                  ms=17, label="output"))
-    ax1.set_title(f"{len(comms)} communities, coloured  "
-                  "(within-community edges bold, between-community grey)", fontsize=11)
+    ax1.set_title(f"{len(comms)} {kind}, coloured  "
+                  f"(within-{kind[:-1]} edges bold, between grey)", fontsize=11)
     ax1.axis("off")
     ax1.legend(handles=handles, loc="upper left", fontsize=9, framealpha=0.9)
 
@@ -116,18 +129,20 @@ def plot_communities(G, path: str, *, title: str = "", n_in: int = 0, n_out: int
         ax2.axhline(x - 0.5, color="k", lw=0.9)
         ax2.axvline(x - 0.5, color="k", lw=0.9)
     for i in range(len(comms)):
-        ax2.text(-0.028 * n, (b[i] + b[i + 1] - 1) / 2, f"c{i}", va="center",
+        name = labels[i] if labels and i < len(labels) else f"c{i}"
+        ax2.text(-0.028 * n, (b[i] + b[i + 1] - 1) / 2, name, va="center",
                  ha="right", fontsize=9, color=cmap(i % cmap.N), fontweight="bold")
-    ax2.set_title("adjacency sorted by community — coloured = within, grey = between\n"
-                  f"{within}/{m} edges ({100*within/m:.0f}%) fall inside a community",
+    ax2.set_title(f"adjacency sorted by {kind[:-1]} — coloured = within, grey = between\n"
+                  f"{within}/{m} edges ({100*within/m:.0f}%) fall inside a {kind[:-1]}",
                   fontsize=11)
     ax2.set_xticks([]); ax2.set_yticks([])
 
     d = describe(G)
     head = f"{title}   |   " if title else ""
+    tail = f"\n{note}" if note else ""
     fig.suptitle(f"{head}{d['n_nodes']} nodes, {d['n_edges']} edges, "
-                 f"density {d['density']:.3f}   |   Newman Q = {q:.4f} ({method}; "
-                 "same partition Q_m uses)", fontsize=13, y=0.98)
+                 f"density {d['density']:.3f}   |   Newman Q = {q:.4f} ({how})"
+                 f"{tail}", fontsize=13, y=0.98)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     fig.savefig(path, dpi=dpi)
@@ -135,3 +150,40 @@ def plot_communities(G, path: str, *, title: str = "", n_in: int = 0, n_out: int
     if show:
         open_file(path)
     return q, comms
+
+
+def plot_left_right(G, path: str, pinned: dict, *, exclude=(), n_in: int = 0,
+                    title: str = "", names=("left", "right"), show: bool = True,
+                    dpi: int = 135, allowed=None, **kw):
+    """Draw the split `left_right_q` scores. -> (score, extras) -- its own return.
+
+    Scores first, then draws the EXACT partition that was scored (`extras.groups`),
+    so picture and number can never disagree. `exclude`d nodes -- pass the output --
+    are absent from the drawing because they are absent from the computation.
+
+        plot_left_right(G, "lr.png", {i: i // 4 for i in range(8)},
+                        exclude=[8], n_in=8)
+
+    `**kw` goes to `left_right_q` (assign, n_rand, seed, n_jobs, ...).
+    """
+    if not isinstance(G, nx.Graph):
+        G = from_matrix(G, allowed=allowed)
+    score, e = left_right_q(G, pinned, exclude=exclude, **kw)
+    gid = e["groups"]
+    if not gid:
+        raise ValueError("nothing to draw: no edges after `exclude`")
+
+    U = _unweighted(G)
+    U.remove_nodes_from(list(exclude))
+    ids = sorted(set(gid.values()))
+    comms = [{v for v, g in gid.items() if g == i} for i in ids]
+    lab = [names[i] if i < len(names) else f"g{i}" for i in range(len(ids))]
+    pin = sorted(v for v in gid if v in pinned)
+    note = (f"{kw.get('assign', 'optimal')}: r = {e['r']:+.3f}   "
+            f"crosstalk = {e['crosstalk']:.3f}   z = {e['z']:+.2f}, p = {e['p']:.3f}"
+            f"   |   {len(pin)} pinned, {e['n_free']} free"
+            + (f"   |   {len(exclude)} node(s) excluded" if len(exclude) else ""))
+    plot_communities(U, path, title=title, n_in=n_in, n_out=0, show=show, dpi=dpi,
+                     communities=comms, q=e["q"], kind="modules", labels=lab,
+                     note=note)
+    return score, e
