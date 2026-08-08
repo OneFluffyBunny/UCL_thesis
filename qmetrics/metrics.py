@@ -1,22 +1,33 @@
 """The Q calculators. All of them take a graph from `graph.py` and nothing else.
 
-Two real metrics (newman_q, normalized_qm); threshold_sweep is a sweep over the
-first, role_segregation is a task-specific proxy. Note: Newman Q is the objective
-function -- Louvain and greedy/CNM are just search algorithms for it, so there is
-no separate "Louvain modularity", and every Q here is a lower bound (NP-hard).
+THREE metrics (newman_q, normalized_qm, planted_q) and two supporting tools
+(threshold_sweep is a sweep over the first; role_segregation is a task-specific
+proxy). Note: Newman Q is the objective function -- Louvain and greedy/CNM are
+just search algorithms for it, so there is no separate "Louvain modularity", and
+every Q here is a lower bound (NP-hard).
+
+The split that matters: the first two DISCOVER a partition and so inherit an
+NP-hard search; planted_q SCORES one you already know and so has no optimiser in
+it to fail. Prefer it whenever the question names its own modules.
 
 Which one to reach for:
 
   newman_q          the default. "How modular is this graph?" One number.
   normalized_qm     when comparing brains of DIFFERENT density/size. Raw Q is
                     confounded by density, so a dense grown brain scores low even
-                    when it IS structured; Q_m divides that confound out.
+                    when it IS structured; Q_m divides that confound out. Its
+                    DIRECTION is reliable; its SCALE moves with the Q_max
+                    estimator -- see its docstring.
+  planted_q         when the task names the modules ("are the left 4 and the
+                    right 4 retina inputs in separate halves?"). No search, so no
+                    budget and no convergence problem; ~10x cheaper than
+                    normalized_qm.
   threshold_sweep   when the brain is dense but many weights are weak. Answers
                     "is there structure hiding under a tail of near-zero edges,
                     or is it genuinely one blob?" -- which a single Q cannot.
-  role_segregation  when you already know what the modules SHOULD be (e.g. the
-                    retina's left/right input halves). A known-answer check to
-                    validate the generic metrics against.
+  role_segregation  the older, weaker form of planted_q's question: reads only
+                    input->hidden weights and assumes a 2-way split at n_in//2.
+                    Kept as a known-answer cross-check; prefer planted_q.
 
 Reference scale (Kashtan-Alon 2005 / Clune 2013): modular nets score Q ~ 0.4+,
 non-modular ~ 0.15-0.2. Those numbers are for sparse nets -- read them next to
@@ -28,6 +39,7 @@ from __future__ import annotations
 import ast
 import functools
 import os
+import time
 
 import networkx as nx
 import numpy as np
@@ -342,22 +354,39 @@ def _spawn_is_safe() -> bool:
                for node in tree.body)
 
 
-def _pmap(fn, args, n_jobs):
-    """Parallel map over independent tasks, serial whenever that isn't safe.
+_POOL_OVERHEAD_S = 1.5   # measured: 22 spawn workers re-importing numpy/networkx
 
-    Every task here is a whole community-detection run (tens of ms), so process
-    startup and graph pickling are noise against it.
+
+def _pmap(fn, args, n_jobs):
+    """Parallel map over independent tasks, serial when that would not pay.
+
+    Starting the pool costs a flat ~1.5s (Windows `spawn`: every worker re-imports
+    numpy + networkx + this package). Sending the graph is NOT the expensive part
+    -- measured 1.44s for 200 empty tasks vs 1.55s for 200 each carrying a
+    251-edge graph and its mask -- so the only question is whether there is
+    enough work to amortise the startup.
+
+    So: run the first task (whose result we need anyway), extrapolate, and only
+    spawn if the estimate clears the overhead with room to spare. Measured on the
+    four real workloads, this picks correctly every time -- the two that gain
+    1.8-3.7x go parallel, and the 2.0s one that was a wash (1.01x) stays serial
+    instead of paying 1.5s for nothing.
     """
     args = list(args)
     if n_jobs == 1 or len(args) < 2 or not _spawn_is_safe():
         return [fn(a) for a in args]
+    t0 = time.perf_counter()
+    first = fn(args[0])
+    if (time.perf_counter() - t0) * len(args) < 2 * _POOL_OVERHEAD_S:
+        return [first] + [fn(a) for a in args[1:]]
     try:
         from concurrent.futures import ProcessPoolExecutor
-        workers = min(len(args), n_jobs if n_jobs > 0 else (os.cpu_count() or 1))
+        rest = args[1:]
+        workers = min(len(rest), n_jobs if n_jobs > 0 else (os.cpu_count() or 1))
         with ProcessPoolExecutor(max_workers=workers) as ex:
-            return list(ex.map(fn, args, chunksize=1))
+            return [first] + list(ex.map(fn, rest, chunksize=1))
     except Exception:
-        return [fn(a) for a in args]
+        return [first] + [fn(a) for a in args[1:]]
 
 
 def normalized_qm(G: nx.Graph, n_rand: int = 200, method: str = "greedy",
@@ -365,7 +394,7 @@ def normalized_qm(G: nx.Graph, n_rand: int = 200, method: str = "greedy",
                   ks=(2, 3, 4, 6, 8, 12), sweeps: int = 5, reps: int = 2,
                   iters: int = 3, q_max: str = "plant",
                   restarts: int = 6, steps: int = 250):
-    """Kashtan-Alon's normalized modularity Q_m (their Eq. 2):
+    """METRIC 2 -- Kashtan-Alon's normalized modularity Q_m (their Eq. 2):
 
         Q_m = (Q_real - Q_rand) / (Q_max - Q_rand)
 
@@ -565,7 +594,7 @@ def _planted_null(args):
 def planted_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optimal",
               n_rand: int = 200, sweeps: int = 5, swaps: int = 2, seed: int = 0,
               n_jobs: int = -1, passes: int = 20):
-    """METRIC 4 (EXPERIMENTAL) -- modularity at a partition you SPECIFY.
+    """METRIC 3 (EXPERIMENTAL) -- modularity at a partition you SPECIFY.
 
     ⚠️ EXPERIMENTAL: added 2026-08-07, not yet used for any logged result and not
     yet calibrated against a published number. The pieces are individually
