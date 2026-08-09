@@ -394,9 +394,18 @@ a right module?**" That is a much easier question, and worth stating why.
   non-convergence that make Q_m unstable — there is no optimiser left to fail.
 - **Definition.** `r = (Σe_ii − Σa_i²)/(1 − Σa_i²)` = Q-at-the-fixed-partition
   divided by its analytic ceiling (every edge internal). 1 = perfectly split,
-  0 = chance, <0 = anti-associated. Identity worth quoting: **r = 1 − crosstalk**,
-  where crosstalk = (cross-group edges)/(cross-group edges expected at these
-  degrees). So the formal metric and the one-line prose number are the same object.
+  0 = chance, <0 = anti-associated.
+- **Crosstalk** = (fraction of edges crossing between groups) / (fraction expected
+  to cross at these degrees, i.e. `1 − Σa_i²`). 1 = chance, 0 = disconnected
+  halves, >1 = anti-modular. **Identity: r = 1 − crosstalk** — the formal metric
+  and the prose number are one object ("23% fewer left–right crossings than these
+  degrees predict" = r +0.23).
+- **p** = fraction of the degree-preserving, mask-respecting nulls reaching
+  `Q ≥ Q_real`, with the +1/+1 correction, so its floor is `1/(n_rand+1)`
+  (0.005 at n_rand=200 — MVG sits exactly there, i.e. 0/200 nulls matched it).
+  p answers *distinguishable from chance*, never *how modular*. Both p and z
+  favour the larger graph (null SD shrinks ~1/√m), so **compare magnitudes with
+  r and read p only within one network.**
 - **The output node is excluded.** A single readout must connect to both halves by
   construction, so forcing it onto a side charges a fixed cross-edge penalty
   unrelated to modularity, and it hits small graphs hardest.

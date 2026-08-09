@@ -27,8 +27,10 @@ have no meaning for a direct encoding.
   (`[inputs, hidden, outputs]`, edges IH|HH|HO, no self-loops), synchronous
   recurrent inference — dynamics identical to experiment 1.
 - `config.py` — CLI → `BrainConfig` + `RunConfig`. Trimmed mirror of experiment
-  1's config (no encoding knobs; drops exp 1's dead `--eval-reps`/`--test-reps`/
-  `--n-examples`/`--no-elitism`). Shared defaults are kept **identical** so the
+  1's config (no encoding knobs). Exp 1 used to carry dead
+  `--eval-reps`/`--test-reps`/`--n-examples`/`--no-elitism` flags that its
+  `train.py` never read; those were deleted from exp 1 rather than mirrored
+  here. Shared defaults are kept **identical** so the
   two experiments are comparable out of the box (e.g. `--n-hidden 20`).
 - `tasks.py` — thin shim that re-exports `../shared_tasks.py` (the single shared
   task definitions, imported identically by every experiment).

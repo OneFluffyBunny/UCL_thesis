@@ -93,7 +93,15 @@ def _make_optimizer(run_cfg):
 
 
 def train_seed(brain_cfg, run_cfg, seed):
-    """Run one seed of gradient descent; return (best_accuracy, best_genome, run_name)."""
+    """One seed of GD; return (best_acc, best_genome, final_acc, final_genome, run_name).
+
+    Two champions, same rationale as experiments 1-2: ``best_*`` is the highest
+    accuracy at ANY step (under --mvg that peak belongs to whichever AND/OR
+    phase happened to suit it, so it is not comparable across arms), while
+    ``final_*`` is the parameters at the LAST step -- the endpoint of an equal
+    number of steps in both arms, and the one to measure for any FG-vs-MVG
+    structural comparison.
+    """
     key = jr.PRNGKey(seed)
 
     X = tasks.all_binary_inputs(brain_cfg.n_in)
@@ -131,13 +139,21 @@ def train_seed(brain_cfg, run_cfg, seed):
         ops = run_cfg.mvg_ops
         return ops[(step_i // run_cfg.switch_interval) % len(ops)]
 
-    run_name = f"{run_cfg.task}_seed{seed}"
+    # Stamp the ARM into the run name: an FG and an MVG run of the same task
+    # would otherwise write the same DNA/PNG filenames and clobber each other.
+    if tasks.uses_operation(run_cfg.task):
+        arm = "mvg-" + "-".join(run_cfg.mvg_ops) if run_cfg.mvg else f"fg-{run_cfg.operation}"
+        run_name = f"{run_cfg.task}_{arm}_seed{seed}"
+    else:
+        run_name = f"{run_cfg.task}_seed{seed}"
+
     print(f"[seed {seed}] task={run_cfg.task} op0={goal_op(0)} mvg={run_cfg.mvg} "
           f"balanced={run_cfg.balanced} loss={run_cfg.loss} opt={run_cfg.optimizer} "
           f"lr={run_cfg.lr} n_in={brain_cfg.n_in} n_hidden={brain_cfg.n_hidden} "
           f"edges={genome.n_edges} steps={run_cfg.steps}")
 
-    best_params, best = None, -1.0
+    best_params, best = None, -1.0      # best-EVER (spans goal switches under --mvg)
+    final_params, final = None, -1.0    # last step actually run
     cur_op, y = None, None
     interval_start = time.time()
     for s in range(run_cfg.steps):
@@ -151,6 +167,10 @@ def train_seed(brain_cfg, run_cfg, seed):
         acc_f = float(acc)
         if acc_f > best:
             best, best_params = acc_f, prev_params      # keep the params that achieved it
+        # ...and always keep the CURRENT step's params, so whatever step the
+        # loop exits on we still have the endpoint genome. `prev_params` (not
+        # `params`) because that is what `acc_f` was measured at.
+        final, final_params = acc_f, prev_params
 
         if s % run_cfg.log_interval == 0 or s == run_cfg.steps - 1:
             density = brain_stats(eqx.combine(prev_params, static),
@@ -158,7 +178,7 @@ def train_seed(brain_cfg, run_cfg, seed):
             gens_in = run_cfg.log_interval if s > 0 else 1
             secs_per_step = (time.time() - interval_start) / gens_in
             interval_start = time.time()
-            op_str = f" | op: {cur_op}" if run_cfg.task == "retina" else ""
+            op_str = f" | op: {cur_op}" if tasks.uses_operation(run_cfg.task) else ""
             print(f"  Step {s:4d} | Loss: {float(loss):.4f} | Acc: {acc_f:.3f} | Best: {best:.3f}"
                   f" | Density: {density:.1f}%{op_str} | {secs_per_step:.3f}s/step")
 
@@ -170,46 +190,66 @@ def train_seed(brain_cfg, run_cfg, seed):
                             title=f"{run_cfg.task} seed{seed} step{s} - acc {acc_f:.3f}",
                             open_after=run_cfg.open_image)
 
-        # early stop on target (only meaningful with a fixed goal)
-        if (not run_cfg.mvg) and best >= run_cfg.target:
+        # Early stop on target (only meaningful with a fixed goal, and OFF under
+        # --mvg). Pass --no-early-stop to disable it for a fixed goal too: it
+        # otherwise makes an FG arm exit the moment it solves the task while the
+        # MVG arm always runs the full budget -- unequal steps AND unequal
+        # opportunity for post-solution drift, which is exactly the structural
+        # difference an FG-vs-MVG modularity comparison is trying to measure.
+        if run_cfg.early_stop and (not run_cfg.mvg) and best >= run_cfg.target:
             print(f"  early stop: best {best:.3f} >= target {run_cfg.target:.3f} at step {s}")
             break
 
     best_genome = eqx.combine(best_params, static)
-    return best, best_genome, run_name
+    final_genome = eqx.combine(final_params, static)
+    return best, best_genome, final, final_genome, run_name
 
 
 def main():
     brain_cfg, run_cfg, _ = parse_args()
     need = tasks.min_inputs(run_cfg.task)
     assert brain_cfg.n_in >= need, f"task {run_cfg.task!r} needs n_in >= {need}"
+    if run_cfg.mvg and not tasks.uses_operation(run_cfg.task):
+        raise SystemExit(f"--mvg is meaningless for task {run_cfg.task!r}: its target does not "
+                         f"depend on --operation, so the goal would never actually change. "
+                         f"Use one of {sorted(t for t in tasks.TASKS if tasks.uses_operation(t))}.")
     os.makedirs(run_cfg.out_dir, exist_ok=True)
+
+    # Under --mvg the best-EVER champion peaked on whichever goal happened to be
+    # active at the time, so the final-step champion is the comparable one.
+    headline = "final" if run_cfg.mvg else "best"
 
     results = []
     for i in range(run_cfg.n_seeds):
         seed = run_cfg.seed + i
-        best, best_genome, run_name = train_seed(brain_cfg, run_cfg, seed)
+        best, best_genome, final, final_genome, run_name = train_seed(brain_cfg, run_cfg, seed)
 
-        dna_path = os.path.join(run_cfg.out_dir, f"{run_name}_best_dna.eqx")
-        eqx.tree_serialise_leaves(dna_path, best_genome)
-        st = brain_stats(best_genome, brain_cfg, run_cfg.prune_threshold)
-        print(f"[seed {seed}] best accuracy {best:.3f} | edges {st['n_edges']}/{st['max_edges']}"
-              f" | density {st['density']:.1f}% | exc(+) {st['n_exc']} inh(-) {st['n_inh']}")
-        print(f"[seed {seed}] best DNA saved -> {dna_path}")
+        pngs = {}
+        for tag, acc, genome in (("best", best, best_genome), ("final", final, final_genome)):
+            dna_path = os.path.join(run_cfg.out_dir, f"{run_name}_{tag}_dna.eqx")
+            eqx.tree_serialise_leaves(dna_path, genome)
+            st = brain_stats(genome, brain_cfg, run_cfg.prune_threshold)
+            print(f"[seed {seed}] {tag:5s} accuracy {acc:.3f} | edges {st['n_edges']}/{st['max_edges']}"
+                  f" | density {st['density']:.1f}% | exc(+) {st['n_exc']} inh(-) {st['n_inh']}")
+            print(f"[seed {seed}] {tag:5s} DNA saved -> {dna_path}")
 
-        png_path = os.path.join(run_cfg.out_dir, f"{run_name}_best_brain.png")
-        # auto-open only for a single seed (avoid spamming windows on multi-seed runs)
-        visualize_brain(best_genome, brain_cfg, run_cfg.prune_threshold, png_path,
-                        title=f"Best (GD) - {run_cfg.task} seed{seed} - accuracy {best:.3f}",
-                        open_after=run_cfg.open_image and run_cfg.n_seeds == 1)
-        results.append((seed, best, png_path))
+            pngs[tag] = os.path.join(run_cfg.out_dir, f"{run_name}_{tag}_brain.png")
+            # auto-open only the headline arm, and only for a single seed
+            visualize_brain(genome, brain_cfg, run_cfg.prune_threshold, pngs[tag],
+                            title=f"{tag.capitalize()} (GD) - {run_name} - accuracy {acc:.3f}",
+                            open_after=(run_cfg.open_image and run_cfg.n_seeds == 1
+                                        and tag == headline))
+        results.append((seed, best, final, pngs[headline]))
 
     if run_cfg.n_seeds > 1:
         print("\n=== summary ===")
-        for seed, best, _ in results:
-            print(f"  seed {seed}: best accuracy {best:.3f}")
-        best_seed, best_acc, best_png = max(results, key=lambda r: r[1])
-        print(f"best seed: {best_seed} ({best_acc:.3f})  |  mean {np.mean([r[1] for r in results]):.3f}")
+        for seed, best, final, _ in results:
+            print(f"  seed {seed}: best {best:.3f} | final {final:.3f}")
+        # rank + average on the headline metric for this arm (see `headline` above)
+        col = 2 if headline == "final" else 1
+        best_seed, b, f, best_png = max(results, key=lambda r: r[col])
+        print(f"best seed by {headline}: {best_seed} (best {b:.3f} | final {f:.3f})"
+              f"  |  mean {headline} {np.mean([r[col] for r in results]):.3f}")
         if run_cfg.open_image:
             from visualize import _auto_open
             _auto_open(best_png)

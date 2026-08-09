@@ -19,6 +19,7 @@ import dataclasses
 import jax
 import jax.numpy as jnp
 
+import tasks
 from model import BrainConfig
 
 
@@ -51,6 +52,7 @@ class RunConfig:
     seed: int
     n_seeds: int
     target: float           # stop a seed early once best accuracy reaches this
+    early_stop: bool        # honour `target` at all (already forced off under mvg)
     # task
     task: str
     operation: str
@@ -99,12 +101,23 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--seed", type=int, default=0, help="PRNG seed for init (first seed)")
     opt.add_argument("--n-seeds", type=int, default=1, help="run this many consecutive seeds")
     opt.add_argument("--target", type=float, default=1.0, help="stop a seed early once best accuracy reaches this")
+    opt.add_argument("--no-early-stop", action="store_true",
+                     help="never stop early, even if --target is reached (it is already ignored "
+                          "under --mvg). USE THIS FOR ANY FG-vs-MVG COMPARISON: otherwise the FG "
+                          "arm exits as soon as it solves the task while the MVG arm runs the "
+                          "full budget, so the two arms differ in steps AND in how much "
+                          "post-solution drift they were exposed to -- the very structural "
+                          "difference the comparison is measuring")
 
     # --- task --- identical to experiment 2 -----------------------------------
     task = p.add_argument_group("task")
     task.add_argument("--task", default="retina",
-                      choices=["copy", "and2", "left", "retina"],
-                      help="task: copy (1 bit) | and2 (2 bits) | left (4 bits) | retina (full Kashtan-Alon)")
+                      choices=tasks.TASKS,   # single source of truth: ../shared_tasks.py
+                      help="task: copy (1 bit) | and2 (2 bits) | left (4 bits) | "
+                           "retina (8 bits, stand-in object rule) | "
+                           "retina_ka2005 (8 bits, the ORIGINAL Kashtan-Alon 2005 object "
+                           "rule -- equal (L,R) cells, so raw accuracy caps every "
+                           "one-module solution at 0.75; prefer this for modularity claims)")
     task.add_argument("--operation", choices=["and", "or", "xor"], default="xor", help="combining operation OP(L,R)")
     task.add_argument("--input-encoding", choices=["bipolar", "binary"], default="bipolar",
                       help="bipolar: bits -> {-1,+1}; binary: bits -> {0,1}")
@@ -148,6 +161,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         seed=args.seed,
         n_seeds=args.n_seeds,
         target=args.target,
+        early_stop=not args.no_early_stop,
         task=args.task,
         operation=args.operation,
         input_encoding=args.input_encoding,

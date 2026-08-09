@@ -81,7 +81,19 @@ def _make_eval(genome_template_static, reshaper, brain_cfg, X_enc, balanced, fit
 
 
 def train_seed(brain_cfg, run_cfg, seed):
-    """Run one seed; return (best_accuracy, best_genome, run_name)."""
+    """Run one seed; return (best_acc, best_genome, final_acc, final_genome, run_name).
+
+    TWO champions are returned on purpose, and which one you should measure
+    depends on the arm:
+
+    * ``best_*``  -- highest accuracy seen at ANY generation. Fine under a fixed
+      goal. Under ``--mvg`` it is the peak across a CHANGING target, i.e.
+      whichever member happened to top out during whichever AND/OR phase, so it
+      is not comparable to a fixed-goal champion.
+    * ``final_*`` -- best member of the LAST generation. This is the one to use
+      for any FG-vs-MVG structural/modularity comparison: it is the endpoint of
+      the same number of generations of the same pressure in both arms.
+    """
     key = jr.PRNGKey(seed)
 
     X = tasks.all_binary_inputs(brain_cfg.n_in)
@@ -108,13 +120,21 @@ def train_seed(brain_cfg, run_cfg, seed):
         ops = run_cfg.mvg_ops
         return ops[(gen // run_cfg.switch_interval) % len(ops)]
 
-    run_name = f"{run_cfg.task}_seed{seed}"
+    # Stamp the ARM into the run name. Without this an FG and an MVG run of the
+    # same task write the same DNA/PNG filenames and silently clobber each other.
+    if tasks.uses_operation(run_cfg.task):
+        arm = "mvg-" + "-".join(run_cfg.mvg_ops) if run_cfg.mvg else f"fg-{run_cfg.operation}"
+        run_name = f"{run_cfg.task}_{arm}_seed{seed}"
+    else:
+        run_name = f"{run_cfg.task}_seed{seed}"
+
     print(f"[seed {seed}] task={run_cfg.task} op0={goal_op(0)} mvg={run_cfg.mvg} "
           f"balanced={run_cfg.balanced} fitness={run_cfg.fitness} n_in={brain_cfg.n_in} "
           f"n_hidden={brain_cfg.n_hidden} K={brain_cfg.n_types} dims={reshaper.total_params} "
           f"pop={run_cfg.popsize}")
 
-    best_flat, best = None, -1.0
+    best_flat, best = None, -1.0        # best-EVER (spans goal switches under --mvg)
+    final_flat, final = None, -1.0      # best of the last generation actually run
     cur_op, y = None, None
     interval_start = time.time()
     for gen in range(run_cfg.generations):
@@ -133,6 +153,9 @@ def train_seed(brain_cfg, run_cfg, seed):
         gen_best_flat = x[best_idx]
         if gen_best > best:
             best, best_flat = gen_best, jnp.asarray(gen_best_flat)
+        # ...and always keep the CURRENT generation's champion, so whatever
+        # generation the loop exits on we still have the endpoint genome.
+        final, final_flat = gen_best, jnp.asarray(gen_best_flat)
 
         if gen % run_cfg.log_interval == 0 or gen == run_cfg.generations - 1:
             genome = eqx.combine(reshaper.reshape_single(gen_best_flat), static)
@@ -144,7 +167,7 @@ def train_seed(brain_cfg, run_cfg, seed):
             gens_in = run_cfg.log_interval if gen > 0 else 1
             secs_per_gen = (time.time() - interval_start) / gens_in
             interval_start = time.time()
-            op_str = f" | op: {cur_op}" if run_cfg.task == "retina" else ""
+            op_str = f" | op: {cur_op}" if tasks.uses_operation(run_cfg.task) else ""
             # show the selection surrogate too when it isn't just accuracy
             sel_str = f" | Sel: {float(sel.max()):.3f}" if run_cfg.fitness != "accuracy" else ""
             print(f"  Gen {gen:4d} | Best: {gen_best:.3f}{sel_str} | Pop mean: {float(acc.mean()):.3f}"
@@ -158,47 +181,66 @@ def train_seed(brain_cfg, run_cfg, seed):
                             title=f"{run_cfg.task} seed{seed} gen{gen} - acc {gen_best:.3f}",
                             open_after=run_cfg.open_image)
 
-        # early stop on target (only meaningful with a fixed goal)
-        if (not run_cfg.mvg) and best >= run_cfg.target:
+        # Early stop on target (only meaningful with a fixed goal, and OFF under
+        # --mvg). Pass --no-early-stop to disable it for a fixed goal too: it
+        # otherwise makes an FG arm exit the moment it solves the task while the
+        # MVG arm always runs the full budget -- unequal generations AND unequal
+        # opportunity for post-solution drift, which is exactly the structural
+        # difference an FG-vs-MVG modularity comparison is trying to measure.
+        if run_cfg.early_stop and (not run_cfg.mvg) and best >= run_cfg.target:
             print(f"  early stop: best {best:.3f} >= target {run_cfg.target:.3f} at gen {gen}")
             break
 
     best_genome = eqx.combine(reshaper.reshape_single(best_flat), static)
-    return best, best_genome, run_name
+    final_genome = eqx.combine(reshaper.reshape_single(final_flat), static)
+    return best, best_genome, final, final_genome, run_name
 
 
 def main():
     brain_cfg, run_cfg, _ = parse_args()
     need = tasks.min_inputs(run_cfg.task)
     assert brain_cfg.n_in >= need, f"task {run_cfg.task!r} needs n_in >= {need}"
+    if run_cfg.mvg and not tasks.uses_operation(run_cfg.task):
+        raise SystemExit(f"--mvg is meaningless for task {run_cfg.task!r}: its target does not "
+                         f"depend on --operation, so the goal would never actually change. "
+                         f"Use one of {sorted(t for t in tasks.TASKS if tasks.uses_operation(t))}.")
     os.makedirs(run_cfg.out_dir, exist_ok=True)
+
+    # Under --mvg the best-EVER champion peaked on whichever goal happened to be
+    # active at the time, so the final-generation champion is the comparable one.
+    headline = "final" if run_cfg.mvg else "best"
 
     results = []
     for i in range(run_cfg.n_seeds):
         seed = run_cfg.seed + i
-        best, best_genome, run_name = train_seed(brain_cfg, run_cfg, seed)
+        best, best_genome, final, final_genome, run_name = train_seed(brain_cfg, run_cfg, seed)
 
-        dna_path = os.path.join(run_cfg.out_dir, f"{run_name}_best_dna.eqx")
-        eqx.tree_serialise_leaves(dna_path, best_genome)
-        st = brain_stats(best_genome, brain_cfg, run_cfg.prune_threshold)
-        print(f"[seed {seed}] best accuracy {best:.3f} | edges {st['n_edges']}/{st['max_edges']}"
-              f" | density {st['density']:.1f}% | exc(+) {st['n_exc']} inh(-) {st['n_inh']}"
-              f" | hidden type counts {st['type_counts']}")
-        print(f"[seed {seed}] best DNA saved -> {dna_path}")
+        pngs = {}
+        for tag, acc, genome in (("best", best, best_genome), ("final", final, final_genome)):
+            dna_path = os.path.join(run_cfg.out_dir, f"{run_name}_{tag}_dna.eqx")
+            eqx.tree_serialise_leaves(dna_path, genome)
+            st = brain_stats(genome, brain_cfg, run_cfg.prune_threshold)
+            print(f"[seed {seed}] {tag:5s} accuracy {acc:.3f} | edges {st['n_edges']}/{st['max_edges']}"
+                  f" | density {st['density']:.1f}% | exc(+) {st['n_exc']} inh(-) {st['n_inh']}"
+                  f" | hidden type counts {st['type_counts']}")
+            print(f"[seed {seed}] {tag:5s} DNA saved -> {dna_path}")
 
-        png_path = os.path.join(run_cfg.out_dir, f"{run_name}_best_brain.png")
-        # auto-open only for a single seed (avoid spamming windows on multi-seed runs)
-        visualize_brain(best_genome, brain_cfg, run_cfg.prune_threshold, png_path,
-                        title=f"Best DNA - {run_cfg.task} seed{seed} - accuracy {best:.3f}",
-                        open_after=run_cfg.open_image and run_cfg.n_seeds == 1)
-        results.append((seed, best, png_path))
+            pngs[tag] = os.path.join(run_cfg.out_dir, f"{run_name}_{tag}_brain.png")
+            # auto-open only the headline arm, and only for a single seed
+            visualize_brain(genome, brain_cfg, run_cfg.prune_threshold, pngs[tag],
+                            title=f"{tag.capitalize()} DNA - {run_name} - accuracy {acc:.3f}",
+                            open_after=(run_cfg.open_image and run_cfg.n_seeds == 1
+                                        and tag == headline))
+        results.append((seed, best, final, pngs[headline]))
 
     if run_cfg.n_seeds > 1:
         print("\n=== summary ===")
-        for seed, best, _ in results:
-            print(f"  seed {seed}: best accuracy {best:.3f}")
-        best_seed, best_acc, best_png = max(results, key=lambda r: r[1])
-        print(f"best seed: {best_seed} ({best_acc:.3f})")
+        for seed, best, final, _ in results:
+            print(f"  seed {seed}: best {best:.3f} | final {final:.3f}")
+        # rank on the headline metric for this arm (see `headline` above)
+        key = (lambda r: r[2]) if headline == "final" else (lambda r: r[1])
+        best_seed, b, f, best_png = max(results, key=key)
+        print(f"best seed by {headline}: {best_seed} (best {b:.3f} | final {f:.3f})")
         if run_cfg.open_image:
             from visualize import _auto_open
             _auto_open(best_png)

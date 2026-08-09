@@ -13,3 +13,4 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from shared_tasks import *  # noqa: F401,F403  (public API: all_binary_inputs, targets, min_inputs, TASKS, OPS)
 from shared_tasks import _and, _or, _xor, _left_feature, _right_feature  # noqa: F401
+from shared_tasks import _ka_object, _ka_left_feature, _ka_right_feature  # noqa: F401
