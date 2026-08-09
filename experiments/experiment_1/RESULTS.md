@@ -23,6 +23,26 @@ may be an artifact of the metric/task, not of the model or the search:
    confounded.)
 3. **Gen-0 best-of-population.** If a random population already sits at the
    plateau, no learning is being measured — the plateau is a free shelf.
+4. **Monotone-representability.** Ask whether a *monotone* boolean function can
+   already solve the task. If it can, the task never forces an inhibitory weight,
+   and a network can score perfectly while using only half the sign space. The
+   exact ceiling is computable — minimum flips to make the target monotone is a
+   min-cut on the boolean lattice (isotonic regression on a partial order):
+
+   | task / op | best constant | **monotone ceiling** | flips needed |
+   |---|---|---|---|
+   | `retina_ka2005` / and | 0.750 | 0.891 | 28/256 |
+   | `retina_ka2005` / or | 0.750 | 0.875 | 32/256 |
+   | `retina_ka2005` / xor | 0.500 | 0.691 | 79/256 |
+   | `retina` (stand-in) / and | 0.809 | **1.000** | **0/256** |
+   | `retina` (stand-in) / or | 0.684 | **1.000** | **0/256** |
+
+   **The stand-in `retina` task under AND and OR is exactly monotone** — a second,
+   independent shortcut on top of the 0.848 one-side freebie. Another reason to
+   prefer `retina_ka2005`. (Method validated on `majority` → 1.000 and `x0 XOR x1`
+   → 0.750.) ⚠️ Do NOT read the ceiling as an explanation of observed plateaus:
+   the 0.750 plateau sits well *below* 0.891, so monotonicity is not what binds
+   there — see the sign audit below.
 
 Rule of thumb: a task is only a good modularity probe if reaching high accuracy
 *requires* the modular structure you're trying to study. Prefer tasks with no
@@ -308,6 +328,116 @@ never demanded it.
 alone predicts the label), which genuinely forces both modules and makes any
 break past chance-of-one-side a real modularity signal.
 
+## Synaptic gate (`--w-threshold`) — an absolute gate does NOT control density ⭐
+
+Until 2026-08 nothing in exp 1 could produce a zero weight: `g` is a continuous
+MLP, the only zeros came from the fixed role mask, and the logged "density" was
+an analysis-time count of `|w| > --prune-threshold` that never touched the
+forward pass. `--w-threshold` added a real gate — `|g(feat_i,feat_j)| < t` → 0,
+applied to the U×U signature block, with the network **evaluated** on the gated
+matrix, so sparsity became part of the phenotype.
+
+**It does not work.** First FG-vs-MVG pair on `retina_ka2005` (seed 0 both arms,
+K=6, n_hidden=24, pop 64, 2000 gens, raw accuracy, `--no-early-stop`,
+`--w-threshold 0.2`, ~4 min/arm):
+
+| | FG (`and`) | MVG (`and,or`, interval 20) |
+|---|---|---|
+| best / final accuracy | 0.875 / 0.875 | 0.883 / 0.848 |
+| density, gen 0 → final | 0.0% → **77.1%** | 0.0% → **100.0%** |
+| ungated \|w\| median | 0.530 | **1.000** (saturated) |
+| ungated \|w\| min | 0.007 | **0.511** |
+| final σ | 0.042 (converged) | 0.268 (still exploring) |
+| % positive weights | 78.6% | 34.4% |
+
+At init this seed's max `|w|` is 0.234, so both arms start at ~0% density — then
+evolution inflates `g`'s output scale 4–10× and walks straight through the gate.
+
+**The threshold just forces evolution to move to stronger connections; it does
+nothing about the density explosion.** The gate is a *one-time hurdle*: nothing
+in the fitness penalises density, larger weights mean stronger signal, so
+crossing is paid for once and the gate never binds again. Raising `t` buys delay,
+not sparsity. Applying every threshold to the evolved final brains:
+
+| t | FG density | MVG density |
+|---|---|---|
+| 0.2 | 77.1% | 100.0% |
+| 0.6 | 38.5% | 82.8% |
+| 0.9 | 22.3% | 77.3% |
+| 0.99 | 9.6% | 77.3% |
+| 0.999 | 6.2% | 77.3% |
+| 1.0 | 0.0% | 60.9% |
+
+MVG is **flat from 0.6 to 0.999** because 77.3% of its synapses have `|w| > 0.999`
+— tanh-saturated, 60.9% at exactly 1.0 in float. The distribution is bimodal
+(saturated, or well under 0.5), so no threshold has anything left to cut. There
+is no useful window: below ~0.9 the gate is outrun, at ≥1.0 the brain is
+permanently empty (tanh never reaches 1), and in between it is flat.
+
+⚠️ **The gate is confounded with the arm.** MVG defeats it *harder* than FG (100%
+vs 77%): FG converges (σ 0.042) and stops inflating, while MVG's moving goal keeps
+pushing weights to saturation. So an absolute gate systematically yields denser
+MVG brains — and since unweighted `Q` falls with density, this biases any Q
+comparison **against** MVG, i.e. in the exact direction that manufactures a false
+null. Both brains here are 77–100% dense, so `Q ≈ 0` by construction and **this
+pair cannot answer the modularity question at all.**
+
+**Next:** a *budgeted* (top-k) gate — keep the k largest-|w| signature pairs.
+Density becomes a controlled constant, identical across arms by construction,
+which removes it as a confound instead of merely resisting inflation. A relative
+gate (`frac × max|w|`) is scale-free but useless here: with MVG's median at 1.000
+it would still keep nearly everything.
+
+### Why the brain starts as "one global weight"
+
+`g`'s output at init is dominated by a *global offset*, not by the pair. For a
+hidden→hidden pair (the bulk of synapses) the input to `g` is
+`[type_i(4) | 0,0,0,0 | 0,1,0 ‖ type_j(4) | 0,0,0,0 | 0,1,0]` — hidden neurons get
+no positional code (`model.py`, zeros) and share a role one-hot, so **only 8 of 22
+input dims vary between pairs**, and those are the type embeddings initialised at
+`0.1 * jr.normal`. Meanwhile the role one-hot contributes a full 1.0 in two slots
+and both Linear layers carry Equinox-default biases. Measured over 12 seeds
+(|mean| of `w` vs sd across pairs):
+
+| variant | \|mean\| | sd | offset/spread |
+|---|---|---|---|
+| as-is | 0.124 | 0.055 | **2.3×** |
+| `g` output bias → 0 | 0.085 | 0.056 | 1.5× |
+| type vectors ×10 (0.1 → 1.0) | 0.165 | 0.113 | 1.5× |
+| both | 0.118 | 0.115 | 1.0× |
+
+Neither cause dominates — the `0.1` init scale matters at least as much as the
+output bias. Consequence: the brain starts maximally *regular* (every synapse
+near-identical), early search moves the offset rather than differentiating types,
+and an absolute gate thresholds **the offset**, behaving as a global on/off switch
+for the whole brain rather than as a pruning rule.
+
+### Sign audit: accuracy-fitness runs get stuck single-sign
+
+41 saved evolved brains: 20 single-sign, 21 mixed — and the split tracks the
+fitness, not the task.
+
+| run group | fitness | % positive per seed |
+|---|---|---|
+| `retina_acc5` | accuracy | 0, 100, 100, 0, 0 |
+| `retina_K6_acc` | accuracy | 100, 93.6, 100 |
+| `retina_K6_margin` | margin | 100, 50.2, 41.2 |
+| `retina_margin5` | margin | 47.4, 100, 0, 43.3, 0 |
+| `curric_k8_xor` | curriculum | all mixed (23–67) |
+
+Every `--fitness accuracy` retina seed is single-sign or near it, with small
+weights (max |w| ~0.05–0.45); margin/curriculum runs mix signs and reach ~0.99.
+Same mechanism as everywhere else here: raw accuracy is piecewise-constant, CMA-ES
+gets little signal, and the genome stays near its initialisation — where the
+offset dominates. (⚠️ genome shape doesn't depend on `n_in`/`n_hidden`, so those
+older files reload under assumed dims; the exact percentages would shift, the
+single-sign-vs-mixed split would not.)
+
+Note this did **not** bind in the gated run above: both arms ended mixed-sign
+(FG 78.6%, MVG 34.4% positive). And per the monotone ceilings in the caution
+section, all-positive weights cap `retina_ka2005/and` at 0.891 — above the 0.750
+plateau — so single-sign weights do not explain that plateau.
+
 ## Open threads
 
 - **Re-run curriculum on `retina/xor`** (no one-side shortcut) — the honest
@@ -325,4 +455,16 @@ break past chance-of-one-side a real modularity signal.
   cut before a general community-detection metric.
 - **Test the evolvability hypothesis directly:** modularly-varying goal (`--mvg`,
   AND↔OR switching) — does a switching pressure carve reachable modular solutions
-  that a static goal cannot? This is the actual thesis question.
+  that a static goal cannot? This is the actual thesis question. *(First pair run
+  2026-08-09 on `retina_ka2005`; uninformative because both arms ended 77–100%
+  dense — see the synaptic-gate section. Needs a density-controlled gate first.)*
+- **Budgeted (top-k) gate** — the fix for the density confound above; makes
+  density a controlled constant and equal across arms.
+- **Decide whether `g`'s init should be re-centred** (zero the output bias and/or
+  raise the `0.1` identity scale) so the brain doesn't start as one global weight.
+  Both are one-liners and could be flags rather than default changes.
+- **Log the `curric_k8_xor` null** — run exists on disk, conclusions never written
+  up here.
+- **Wire `qmetrics` into exp 1** — still not connected; `Q` is not computed at any
+  point in the training loop. Cheap raw `Q` per log interval + normalised `Q_m`
+  once at the end (the kashtan_alon split).
