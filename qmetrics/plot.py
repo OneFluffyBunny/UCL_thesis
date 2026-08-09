@@ -18,6 +18,8 @@ import numpy as np
 from .graph import describe, from_matrix
 from .metrics import _unweighted, left_right_q, newman_q
 
+CROSS = "#9467bd"     # every between-community edge, in both panels
+
 
 def open_file(path: str) -> None:
     """Open `path` in the OS default viewer. Never raises -- it's a convenience."""
@@ -81,13 +83,32 @@ def plot_communities(G, path: str, *, title: str = "", n_in: int = 0, n_out: int
 
     # --- panel 1: node-link. Within-community edges bold and coloured, the rest
     # faint grey, so the eye can weigh one against the other.
-    pos = nx.spring_layout(G, seed=1, k=1.6 / np.sqrt(n), iterations=400)
+    # inputs pinned in index order clockwise from the top, so 0..n_in-1 read round
+    # the circle and each module's inputs form one contiguous arc.
+    ang = np.pi / 2 - 2 * np.pi * np.arange(n_in) / max(n_in, 1)
+    fixed = {v: (float(np.cos(a)), float(np.sin(a)))
+             for v, a in zip(range(n_in), ang) if v in G}
+    # Seed the free nodes on an outer ring inside their own community's arc.
+    # Left to spring's random init they collapse into one central blob, which is
+    # what the dense hidden-hidden wiring wants but tells you nothing.
+    init = dict(fixed)
+    for i, c in enumerate(comms):
+        arc = [np.arctan2(fixed[v][1], fixed[v][0]) for v in sorted(c) if v in fixed]
+        base = (np.arctan2(np.mean(np.sin(arc)), np.mean(np.cos(arc))) if arc
+                else np.pi / 2 - 2 * np.pi * i / len(comms))
+        free_c = [v for v in sorted(c) if v not in fixed]
+        for j, v in enumerate(free_c):
+            a = base + (j - (len(free_c) - 1) / 2) * 1.7 / max(len(free_c), 1)
+            rad = 2.4 + 0.5 * (j % 3)
+            init[v] = (float(rad * np.cos(a)), float(rad * np.sin(a)))
+    pos = nx.spring_layout(G, pos=init or None, fixed=list(fixed) or None,
+                           seed=1, k=3.4 / np.sqrt(n), iterations=400)
     same = [(u, v) for u, v in G.edges() if memb[u] == memb[v]]
     diff = [(u, v) for u, v in G.edges() if memb[u] != memb[v]]
-    nx.draw_networkx_edges(G, pos, edgelist=diff, ax=ax1, edge_color="0.75",
-                           width=0.35, alpha=0.45)
+    nx.draw_networkx_edges(G, pos, edgelist=diff, ax=ax1, edge_color=CROSS,
+                           width=0.5, alpha=0.55)
     if same:
-        nx.draw_networkx_edges(G, pos, edgelist=same, ax=ax1, width=1.1, alpha=0.85,
+        nx.draw_networkx_edges(G, pos, edgelist=same, ax=ax1, width=1.2, alpha=0.9,
                                edge_color=[col[u] for u, _ in same])
     io = list(range(n_in + n_out))
     rest = [v for v in G if v not in io]
@@ -110,17 +131,20 @@ def plot_communities(G, path: str, *, title: str = "", n_in: int = 0, n_out: int
                                edgecolors="black", linewidths=1.4)
         handles.insert(1, Line2D([], [], marker="*", ls="", mfc="0.6", mec="k",
                                  ms=17, label="output"))
-    ax1.set_title(f"{len(comms)} {kind}, coloured  "
-                  f"(within-{kind[:-1]} edges bold, between grey)", fontsize=11)
+    ax1.set_title(f"{len(comms)} {kind}: within-{kind[:-1]} edges take that "
+                  f"{kind[:-1]}'s colour, between-{kind[:-1]} edges purple",
+                  fontsize=11)
     ax1.axis("off")
     ax1.legend(handles=handles, loc="upper left", fontsize=9, framealpha=0.9)
 
     # --- panel 2: adjacency, rows/cols reordered so each community is contiguous.
     order = [v for c in comms for v in sorted(c)]
     idx = {v: i for i, v in enumerate(order)}
+    import matplotlib.colors as mcolors
+    xc = mcolors.to_rgb(CROSS)
     rgb = np.ones((n, n, 3))
     for u, v in G.edges():
-        c = cmap(memb[u] % cmap.N)[:3] if memb[u] == memb[v] else (0.72, 0.72, 0.72)
+        c = cmap(memb[u] % cmap.N)[:3] if memb[u] == memb[v] else xc
         rgb[idx[u], idx[v]] = c
         rgb[idx[v], idx[u]] = c
     ax2.imshow(rgb, interpolation="nearest")
@@ -132,7 +156,7 @@ def plot_communities(G, path: str, *, title: str = "", n_in: int = 0, n_out: int
         name = labels[i] if labels and i < len(labels) else f"c{i}"
         ax2.text(-0.028 * n, (b[i] + b[i + 1] - 1) / 2, name, va="center",
                  ha="right", fontsize=9, color=cmap(i % cmap.N), fontweight="bold")
-    ax2.set_title(f"adjacency sorted by {kind[:-1]} — coloured = within, grey = between\n"
+    ax2.set_title(f"adjacency sorted by {kind[:-1]} — coloured = within, purple = between\n"
                   f"{within}/{m} edges ({100*within/m:.0f}%) fall inside a {kind[:-1]}",
                   fontsize=11)
     ax2.set_xticks([]); ax2.set_yticks([])

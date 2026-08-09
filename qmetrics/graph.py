@@ -176,6 +176,20 @@ def describe(G: nx.Graph) -> dict:
     n = G.number_of_nodes()
     m = G.number_of_edges()
     max_edges = n * (n - 1) if G.is_directed() else n * (n - 1) // 2
+
+    # Denominator = edges the ARCHITECTURE permits, not all node pairs. Counting
+    # input-input pairs a role_mask forbids understates density: they can never be
+    # filled, so they are not "unused capacity". Restricted to the nodes actually
+    # present, so removing the output (left_right_q) shrinks it correctly.
+    allowed = G.graph.get("allowed")
+    if allowed is not None:
+        nodes = list(G)
+        A = np.asarray(allowed, dtype=bool)
+        if nodes and max(nodes) < A.shape[0]:
+            sub = A[np.ix_(nodes, nodes)]
+            max_edges = int(sub.sum()) if G.is_directed() else int(np.triu(sub, 1).sum())
+
     return dict(n_nodes=n, n_edges=m, directed=G.is_directed(),
                 density=(m / max_edges if max_edges else 0.0),
+                n_possible=max_edges,
                 n_isolated=int(sum(1 for _, d in G.degree() if d == 0)))

@@ -1,112 +1,93 @@
-# Kashtan–Alon retina — paper specification (what we are reproducing)
+# Kashtan–Alon 2005 — paper specification (source of truth)
 
-Faithful notes on the *actual* Kashtan–Alon experiment, kept separate from our
-implementation so the source of truth is auditable. This folder deliberately
-uses the **paper's own network type** (a layered feedforward net with discrete
-weights, evolved by a mutation GA) instead of the thesis's NDP/g-encoding
-framework — the point is a clean external reference for "does MVG favour a
-modular brain?".
+The specification of the **neural-network / retina experiment** (Fig. 5) of
+Kashtan & Alon, *Spontaneous evolution of modularity and network motifs*, PNAS
+102(39):13773–13778, doi:10.1073/pnas.0503610102. Full text fetched from
+**PMC1236541** on **2026-08-04**.
 
-## Sources
-- **Kashtan & Alon (2005)**, *Spontaneous evolution of modularity and network
-  motifs*, PNAS 102(39):13773–13778. doi:10.1073/pnas.0503610102 — the MVG result.
-  **PRIMARY SOURCE, verified 2026-08-03 by fetching the full methods from
-  PMC1236541.** Every value in the "KA 2005 (verified)" columns below is quoted from
-  that text. This is the ONLY paper we are replicating.
-- **Clune, Mouret & Lipson (2013)**, *The evolutionary origins of modularity*,
-  Proc. R. Soc. B 280:20122863. PMC3574393 / arXiv:1207.2743 — a *later, different*
-  reimplementation. Its headline driver is connection-cost, not MVG. **We do NOT
-  follow it.** Our current code accidentally inherited its numbers (8-8-4-2-1, tanh,
-  ±2/±1 weights, mutation-only) — that is the bug to fix, listed as "wrong" below.
+This file is the paper, not our code. Every row is tagged:
 
-## The task — retina / left–right object recognition (KA 2005, Fig. 5a — verified)
-- **Retina = 4 pixels wide × 2 pixels high = 8 pixels**, each 0/1. Split into a
-  **left 2×2 block** (4 pixels) and a **right 2×2 block** (4 pixels).
-- **Left object** present iff the four left pixels **≥3 are black**, OR exactly
-  **1–2 black pixels lying entirely in the left column** of that block. **Right
-  object**: the symmetric rule with "**right column** only". (Verbatim: *"A left
-  object is defined by three or more black pixels or one or two black pixels in the
-  left column only"*; right *"defined in a similar way, with one or two black pixels
-  in the right column only"*.) Both are exact Boolean functions of 4 inputs,
-  enumerable over all 256 patterns.
-- **Two goals:** `G1 = L AND R` and `G2 = L OR R` — shared L/R sub-features, only
-  the top combiner changes (this is what makes them modularly varying).
-- ⚠️ **Our code does NOT use this task yet.** It uses the stand-in
-  `L=(p0∧p1)∨(p2∧p3)`, `R=(p4∧p5)∨(p6∧p7)` (shared with experiments 1–3). For exact
-  KA replication the task must be swapped to the definition above. The pixel→input
-  mapping (which of the 8 inputs are "left" vs "right") is shown only in Fig. 5a;
-  we take left = the 4 left-block pixels, right = the 4 right-block pixels.
+- ✅ **QUOTED** — verbatim in the main text; the quote is given.
+- 🔷 **NOT STATED** — absent from the main text (lives in the SI, or unstated);
+  any value we use is a *reconstruction*, not the paper.
+- ⚠️ **AMBIGUOUS** — mentioned but underspecified; our reading is one choice.
 
-## The experiment
-- **MVG:** alternate `G_AND ↔ G_OR`, switching **every ~20 generations**
-  (Kashtan–Alon 2005). Shared sub-goals ⇒ modularity is expected to emerge.
-- **Fixed-Goal (control):** hold one goal for the whole run ⇒ expected non-modular.
+> ⚠️ This is the RETINA / NEURAL-NETWORK experiment. Kashtan–Alon's *other*
+> experiment (electronic NAND circuits, the XOR-of-pairs logic task) has its own,
+> DIFFERENT numbers (S=1000, L=300, Pm=0.7, Q_m 0.54 vs 0.12). **Never import a
+> circuit number into the neural-net spec.** Where the paper gives a value only for
+> the circuit experiment, it is marked as such below.
 
-> 🛑 **MAJOR CORRECTION (2026-08-03), VERIFIED against the primary source, then the
-> code was rebuilt to match.** The "network"/"search" values previously here described
-> **Clune 2013's reimplementation, NOT Kashtan–Alon 2005** (verified via PMC1236541).
-> The code (`model.py`, `ga.py`, `tasks.py`, `train.py`, `run_paper.py`) was rewritten
-> on 2026-08-03 to the values below. NB: an intermediate edit of this file wrongly
-> claimed KA's architecture was "8-4-2-1" — that was a misread; the retina's 8 pixels
-> are a **separate input layer** (*"connections from the retina were to the first layer
-> only"*), so the node graph is **8-8-4-2-1**, which the code already had.
+---
 
-## The network (KA 2005 retina — verified, now implemented)
-| | **KA 2005 (verified)** | status in code |
+## 1. Network architecture
+
+| item | status | paper |
 |---|---|---|
-| Node graph | **retina(8) → 8 → 4 → 2 → 1** (8 pixels feed the first neuron layer) | ✅ matches |
-| Weights | **−1 or +1** (0 = absent) | ✅ `WEIGHT_VALUES=(-1,1)` |
-| Units | hard **threshold**: fire iff weighted sum + bias(=−θ) > 0, output {0,1} | ✅ |
-| **Fan-in limit** | **≤3 incoming** for neuron layers 1–3, **≤2** for the output (layer 4) | ✅ `fan_in=(3,3,3,2)` |
-| Inputs | pixel values **{0,1}** | ✅ `--input-encoding binary` |
-| Size penalty | 0.01 fitness per neuron above a base count (SI; ambiguous base) | ⚠️ not implemented (fan-in already caps size) |
+| Layers of neurons | ✅ QUOTED | *"The neurons were set in four layers with eight, four, two, and one neuron per layer."* |
+| Feed-forward, adjacent layers only | ✅ QUOTED | *"Connections were only between neighboring layers in a feed-forward manner."* |
+| Retina feeds first layer only | ✅ QUOTED | *"Connections from the retina were to the first layer only."* → node graph = **retina(8) → 8 → 4 → 2 → 1** (8 pixels are a separate input layer). |
+| Weights ±1 | ✅ QUOTED | *"Each connection had weight –1 or 1."* |
+| **Parallel connections sum** | ✅ QUOTED | *"If two of the inputs were from the same neuron then the effective weight of the connection was the sum of the weights of the two connections."* → **multiple edges between the same neuron pair are allowed; effective weight can exceed ±1.** |
+| Fan-in limits | ✅ QUOTED | *"Each neuron was given a maximal number of incoming connections as follows: three inputs for a neuron in the first, second, and third layer and two inputs for a neuron in the fourth layer."* → **(3,3,3,2)**. Counts *connections*, which (per the row above) may repeat a source. |
+| Neuron activation rule / threshold / output values | 🔷 NOT STATED | The main text does **not** give the activation function, threshold, or output range. (Threshold units with {0,1} output is a standard reconstruction, but it is *not* quoted.) |
+| Genome | ✅ QUOTED (count) | 15 neurons ⇒ 15 genes (one per neuron, encoding that neuron's incoming connections). |
 
-## The search (KA 2005 retina GA — verified, now implemented)
-- **Population S = 600.** Reproduction uses **CROSSOVER, Pc = 0.5** (per-destination-
-  neuron column inheritance, `ga.reproduce`) — the mechanism that recombines modular
-  building blocks (left-/right-object detectors); the mutation-only port lacked it.
-- **Mutation Pm = 0.5 per genome** — one random edit: add/remove edge (respecting the
-  fan-in cap), flip a weight's sign, or nudge a threshold. ⚠️ The exact operator set
-  and threshold range are in KA's **SI** (not the main text); this is a documented
-  faithful reconstruction, refinable against the SI.
-- **Selection:** elite strategy — top **L = 150 of 600** replicate unchanged; the other
-  450 are offspring of the elite.
-- **Goal switch** every **E = 20** gens. Reported: MVG solves in ~2,800 gens, fixed-goal
-  ~21,000. (KA's *circuit* task uses S=1000, L=300, Pm=0.7, NAND gates — a DIFFERENT
-  system; do not mix its numbers into the neural-net retina.)
+## 2. The task (retina, Fig. 5a)
 
-## Fitness (the paper's own performance measure)
-- **Raw fraction of correct answers** over **all 256 input patterns** — Kashtan–Alon
-  use plain accuracy, **no class balancing**. This is our **default** (`--fitness raw`).
-- Caveat (CLAUDE.md): under raw accuracy the imbalanced `G_AND` goal has a
-  constant-output **shortcut** (always-false ≈ 0.81). `--fitness balanced` (the
-  thesis's chance-0.5 measure) is available to sidestep it, but is **not** the
-  paper's setting.
+| item | status | paper |
+|---|---|---|
+| Retina size | ✅ QUOTED | 4 wide × 2 high = 8 pixels, left 2×2 block + right 2×2 block. |
+| Left object | ✅ QUOTED | *"A left object is defined by three or more black pixels or one or two black pixels in the left column only."* |
+| Right object | ✅ QUOTED | *"A right object is defined in a similar way, with one or two black pixels in the right column only."* |
+| Two goals | ✅ QUOTED | *"L AND R, and L OR R"* (L = left object present, R = right object present). |
+| Pixel → input-index mapping | 🔷 NOT STATED | Only shown as the Fig. 5a picture; we choose left = the 4 left-block pixels, right = the 4 right-block pixels. |
 
-## Confirmed vs. reconstructed (source audit — VERIFIED 2026-08-03 from PMC1236541)
-- **Quoted directly from KA 2005, retina:** task = **4×2 retina, L/R objects per
-  Fig. 5a** (see task section); goals **L AND R ↔ L OR R** switching every **20**
-  gens; node graph **8-8-4-2-1** (8 retina pixels → 8→4→2→1 neurons); weights **±1**;
-  threshold units; **fan-in ≤3/3/3/2**; pop **600**; **crossover Pc=0.5** + mutation
-  Pm=0.5; elite **150/600**; fitness = fraction correct; modularity = normalized
-  **Q_m** (Q_rand over **1000** randomizations) with MVG **0.35±0.02** vs FG **0.15±0.02**.
-- **From CLUNE 2013 (a *different* reimplementation), do NOT attribute to KA:** the
-  8-8-4-2-1 arch, tanh(λ=20), weights {−2,−1,1,2}, add/remove-20%/2n/1-24 mutation,
-  and the connection-cost driver. Our code currently follows these — the bug.
-- **Only thing NOT numerically published (given as Fig. 5a picture):** the exact
-  pixel→input index mapping. The object *rules* ARE given (quoted above); we take
-  left = the 4 left-block pixels, right = the 4 right-block pixels.
+## 3. The MVG experiment
 
-## Modularity measurement (KA 2005 Eqs. 1–2 — verified)
-- **Normalized Q_m** = (Q_real − Q_rand) / (Q_max − Q_rand), where Q_real is Newman's
-  Q of the best partition, **Q_rand = mean Q over 1000 degree-preserving randomized
-  networks**, Q_max = max Q at the same degree sequence. Reported: MVG **0.35±0.02**
-  vs FG **0.15±0.02** (NN); circuits MVG 0.54 vs FG 0.12.
-- Implemented in `modularity.normalized_qm` (currently n_rand=100 — bump to 1000 to
-  match). Raw Newman Q alone is density-confounded and must NOT be used for the
-  MVG-vs-FG comparison (see RESULTS.md Run 2 retraction).
+| item | status | paper |
+|---|---|---|
+| MVG vs Fixed-Goal | ✅ QUOTED | MVG alternates the two goals (shared L/R sub-goals, only the top AND/OR combiner changes); Fixed-Goal holds one goal. |
+| Goal-switch epoch E | ⚠️ AMBIGUOUS | *"The goal was switched every E = 20 generations"* is stated for the **circuit** experiment; the fetch found it **NOT explicitly restated for the neural network**. We use E=20 for the retina as a reconstruction. |
 
-## What "success" looks like here
-Q rises and stays high under **MVG** but stays low under **Fixed-Goal**, with MVG
-also reaching the task faster — reproducing Kashtan–Alon's central claim that
-*changing tasks with shared sub-goals spontaneously favour a modular brain*.
+## 4. The genetic algorithm (retina/NN)
+
+| item | status | paper |
+|---|---|---|
+| Population S | ✅ QUOTED | **S = 600.** |
+| Crossover probability | ✅ QUOTED | **P_c = 0.5**; *"a crossover was performed between two randomly chosen network genomes with a probability P_c."* |
+| Mutation probability | ✅ QUOTED | **P_m = 0.5 per genome.** |
+| Elite strategy present | ✅ QUOTED | An elite strategy is used. |
+| **Elite count L** | 🔷 NOT STATED | The elite *count* for the NN is **not given** in the main text. Our L=150 is a reconstruction (the circuit experiment uses L=300 of S=1000). |
+| Crossover parent pool | ⚠️ AMBIGUOUS | *"two randomly chosen network genomes"* — not stated whether drawn from the whole population or only the elite. Our code draws from the elite. |
+| Crossover operator (how genomes mix) | 🔷 NOT STATED | Mechanism not in the main text (SI). Our per-destination-neuron column inheritance is a reconstruction. |
+| Mutation operators (the set) | 🔷 NOT STATED | *"Mutations and crossovers were used as evolutionary operators"* — the operator set (add/remove edge, flip weight, change threshold) is **not** in the main text (SI). Reconstruction. |
+| Generations to solution | ✅ QUOTED | MVG: *"within 2,800 (+9,500, –600) generations"*; Fixed-Goal: *"after 21,000 (+29,000, –3,600) generations."* |
+
+## 5. Fitness
+
+| item | status | paper |
+|---|---|---|
+| Measure | ✅ QUOTED | *"The fitness of a network was defined by the fraction of correct recognitions in this environment."* (raw fraction correct, no class balancing). |
+| **Evaluation set** | ✅ QUOTED | *"The environment contained 100 different randomly chosen retina patterns."* → **fitness is over a 100-pattern sample, NOT all 256 patterns.** |
+| Resampling frequency of the 100 patterns | ⚠️ AMBIGUOUS | Not stated whether the 100 patterns are fixed or redrawn each generation. |
+
+## 6. Modularity measurement
+
+| item | status | paper |
+|---|---|---|
+| Q (Newman) | ✅ QUOTED | *"the fraction of the edges in the network that connect between nodes in a module minus the expected value of the same quantity in a network with the same assignment of nodes into modules but random connections between the nodes."* Partition chosen by the **Newman–Girvan** algorithm (maximizes Q; module count not fixed). |
+| Undirected graph for Q | ✅ QUOTED | *"we first converted the network into a nondirected graph by ignoring edge directionality and calculated its Q_real."* |
+| Q_m formula | ✅ QUOTED | Q_m = (Q_real − Q_rand)/(Q_max − Q_rand); *"Q_max is defined as the maximal possible Q value of a network with the same degree sequence as the real network."* |
+| Q_rand — control 1 | ✅ QUOTED | *"For the first control, we used randomized networks that preserve the degree sequence of the real network."* → **degree sequence only.** (No mention of layered structure *for Q_m*.) |
+| Q_rand — control 2 | ✅ QUOTED | *"For the second control, we computed the Q of networks coded by random genomes that mapped to networks with the same number of nodes as in the real network, using the same genome definition and genotype–phenotype mapping as in the experiment."* → this control **does** respect the layered/fan-in structure (it goes through the real encoding). The two controls *"yielded similar results."* |
+| Number of randomizations | ✅ QUOTED | *"We used 1,000 random networks for computing Q_rand."* |
+| **Q_max method** | ✅ QUOTED | *"To estimate Q_max we repeated the evolution simulations, with exactly the same settings … where instead of evolving the networks toward the original information processing goal, we define the goal as maximizing the modularity measure Q. Q_max was defined as the average Q over 100 simulations of the best evolved network."* → **Q_max is obtained by RE-EVOLVING toward Q (100 sims), NOT by an edge-swap hill-climb.** |
+| "Layered structure preserved" | ✅ QUOTED (different analysis) | This phrase appears only for **motif detection**, not Q_m: *"The randomized networks preserved the single-node characteristics of the real network, such as the incoming and outgoing degree sequence (and the layered structure in the case of neural networks…)."* Do **not** attribute it to the Q_m null. |
+
+## 7. Results (neural network)
+
+| condition | status | Q_m |
+|---|---|---|
+| Modularly varying goals | ✅ QUOTED | **Q_m = 0.35 ± 0.02** |
+| Fixed goal | ✅ QUOTED | **Q_m = 0.15 ± 0.02** |
