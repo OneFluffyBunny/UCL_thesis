@@ -64,8 +64,9 @@ def brain_stats(genome, cfg, threshold: float) -> dict:
     n_exc = int((signed > 0).sum())
     n_inh = int((signed < 0).sum())
     counts = np.bincount(hid_ids, minlength=cfg.n_types).tolist()
-    return dict(w=w, hid_ids=hid_ids, n_edges=n_edges, max_edges=max_edges,
-                density=density, n_exc=n_exc, n_inh=n_inh, type_counts=counts)
+    return dict(w=w, hid_ids=hid_ids, present=present, n_edges=n_edges,
+                max_edges=max_edges, density=density, n_exc=n_exc, n_inh=n_inh,
+                type_counts=counts)
 
 
 def _auto_open(path):
@@ -94,11 +95,15 @@ def visualize_brain(genome, cfg, threshold, save_path, title="", open_after=Fals
     n_in, n_hid, n_out = cfg.n_in, cfg.n_hidden, cfg.n_out
     n = cfg.n_total
 
+    # Draw exactly the edges brain_stats counted -- when the gate is on that is
+    # "non-zero", not "|w| > --prune-threshold". Deciding it here independently
+    # would let the picture disagree with the edge count in its own title.
+    present = st["present"]
     G = nx.DiGraph()
     G.add_nodes_from(range(n))
     for i in range(n):
         for j in range(n):
-            if abs(w[i, j]) > threshold:
+            if present[i, j]:
                 G.add_edge(i, j)
 
     signed = [w[i, j] for i, j in G.edges()]
