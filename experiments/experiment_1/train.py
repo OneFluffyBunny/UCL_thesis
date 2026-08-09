@@ -18,6 +18,8 @@ import sys
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
+import dataclasses
+import json
 import os
 import time
 
@@ -131,7 +133,7 @@ def train_seed(brain_cfg, run_cfg, seed):
     print(f"[seed {seed}] task={run_cfg.task} op0={goal_op(0)} mvg={run_cfg.mvg} "
           f"balanced={run_cfg.balanced} fitness={run_cfg.fitness} n_in={brain_cfg.n_in} "
           f"n_hidden={brain_cfg.n_hidden} K={brain_cfg.n_types} dims={reshaper.total_params} "
-          f"pop={run_cfg.popsize}")
+          f"pop={run_cfg.popsize} w_threshold={brain_cfg.w_threshold}")
 
     best_flat, best = None, -1.0        # best-EVER (spans goal switches under --mvg)
     final_flat, final = None, -1.0      # best of the last generation actually run
@@ -214,6 +216,21 @@ def main():
     for i in range(run_cfg.n_seeds):
         seed = run_cfg.seed + i
         best, best_genome, final, final_genome, run_name = train_seed(brain_cfg, run_cfg, seed)
+
+        # Sidecar config. The gate (--w-threshold) is part of the PHENOTYPE but
+        # not of the genome, so a .eqx reloaded without it grows a different
+        # brain than the one that was evaluated. Record what it takes to regrow
+        # this brain exactly.
+        cfg_path = os.path.join(run_cfg.out_dir, f"{run_name}_config.json")
+        with open(cfg_path, "w") as fh:
+            json.dump({"brain": {f.name: getattr(brain_cfg, f.name)
+                                 for f in dataclasses.fields(brain_cfg)
+                                 if f.name != "activation"},
+                       "activation": getattr(brain_cfg.activation, "__name__", "custom"),
+                       "seed": seed,
+                       "run": {f.name: getattr(run_cfg, f.name)
+                               for f in dataclasses.fields(run_cfg)}},
+                      fh, indent=2, default=str)
 
         pngs = {}
         for tag, acc, genome in (("best", best, best_genome), ("final", final, final_genome)):

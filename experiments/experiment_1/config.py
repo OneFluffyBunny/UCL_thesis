@@ -84,6 +84,15 @@ def build_parser() -> argparse.ArgumentParser:
     arch.add_argument("--rnn-iters", type=int, default=8, help="synchronous recurrent passes at inference")
     arch.add_argument("--no-bias", action="store_true", help="disable the per-type neuron bias")
     arch.add_argument("--activation", choices=sorted(ACTIVATIONS), default="tanh", help="sigma activation")
+    arch.add_argument("--w-threshold", type=float, default=0.0,
+                      help="SYNAPTIC GATE: |g(feat_i,feat_j)| below this is forced to exactly 0 "
+                           "and the brain is EVALUATED on the gated matrix, so sparsity is part "
+                           "of the phenotype rather than a drawing convention (0 = off, the "
+                           "historical behaviour). Not to be confused with --prune-threshold, "
+                           "which only affects counting/plotting. Weights are tanh-bounded to "
+                           "[-1,1] but the evolved scale varies ~10x between seeds, so a value "
+                           "that sparsifies one run can silence another entirely -- watch the "
+                           "logged density, and see RESULTS.md for measured |w| distributions")
 
     # --- evolution / search ---------------------------------------------------
     evo = p.add_argument_group("evolution")
@@ -151,6 +160,7 @@ def build_brain_config(args: argparse.Namespace) -> BrainConfig:
         rnn_iters=args.rnn_iters,
         use_bias=not args.no_bias,
         activation=ACTIVATIONS[args.activation],
+        w_threshold=args.w_threshold,
     )
 
 

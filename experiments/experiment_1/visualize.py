@@ -42,10 +42,17 @@ def _hidden_color(t: int):
 
 
 def brain_stats(genome, cfg, threshold: float) -> dict:
-    """Edge/type statistics of the brain grown from `genome` (edges = |w| > thr)."""
+    """Edge/type statistics of the brain grown from `genome` (edges = |w| > thr).
+
+    When the synaptic gate is on (``cfg.w_threshold > 0``) the gate is already
+    the ground truth about which synapses exist -- it zeroed them in the brain
+    that was actually evaluated -- so `threshold` is ignored and an edge is
+    simply a non-zero weight. Otherwise a gate of 0.02 with the default
+    --prune-threshold of 0.05 would report a sparser brain than the one that ran.
+    """
     w = np.asarray(genome.build_weights(cfg)[0])
     hid_ids = np.asarray(genome.hidden_type_ids(cfg))
-    present = np.abs(w) > threshold
+    present = w != 0.0 if cfg.w_threshold > 0.0 else np.abs(w) > threshold
 
     n_edges = int(present.sum())
     max_edges = (cfg.n_in * cfg.n_hidden

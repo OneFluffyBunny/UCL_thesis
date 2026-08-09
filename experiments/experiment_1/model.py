@@ -54,6 +54,11 @@ class BrainConfig:
     rnn_iters: int = 8              # synchronous recurrent passes at inference
     use_bias: bool = True           # per-type bias on each neuron
     activation: Callable = jnp.tanh  # sigma; default tanh, swap later if needed
+    # Synaptic gate: |g(feat_i, feat_j)| < w_threshold -> hard 0, so the brain
+    # that is EVALUATED is the sparse one (see Genome.build_weights). 0.0 = off,
+    # which is the historical behaviour. Distinct from --prune-threshold, which
+    # only decides what gets *counted/drawn* and never touches the forward pass.
+    w_threshold: float = 0.0
 
     @property
     def n_total(self) -> int:
@@ -212,6 +217,17 @@ class Genome(eqx.Module):
         `g` is evaluated once per distinct signature pair (U x U), then the full
         N x N matrix is produced by gathering -- same result as evaluating g on
         every neuron pair, but only U^2 (<= N^2) calls to g.
+
+        If ``cfg.w_threshold > 0`` a hard synaptic gate is applied to g's output:
+        any |w| below it becomes exactly 0, and the network really runs on the
+        gated matrix. Applied to the U x U block BEFORE the gather, which is
+        both cheaper and the honest description of the mechanism -- the gate
+        acts on the RULE's output, so a gated pair silences every clone pair
+        that shares that signature at once (~N^2/U^2 synapses per decision).
+
+        Note the gate is a step function, so the fitness landscape is piecewise
+        constant in the crossing region -- fine for CMA-ES, but it would need a
+        straight-through estimator to survive gradients.
         """
         uf, neuron_to_row, hid_ids = self.unique_structure(cfg)
         U = uf.shape[0]
@@ -219,6 +235,8 @@ class Genome(eqx.Module):
         fj = jnp.broadcast_to(uf[None, :, :], (U, U, cfg.feat_dim))
         pair = jnp.concatenate([fi, fj], axis=-1)            # (U, U, 2*feat)
         w_u = jax.vmap(jax.vmap(self.g))(pair)[..., 0]       # (U, U)
+        if cfg.w_threshold > 0.0:
+            w_u = jnp.where(jnp.abs(w_u) < cfg.w_threshold, 0.0, w_u)
         w = w_u[neuron_to_row][:, neuron_to_row]             # (N, N) gather, no g calls
         w = w * _role_mask(cfg)
         return w, hid_ids
