@@ -315,6 +315,57 @@ an exponential extinction trap. `abundance = 0` is an equal split.
 **Search.** CMA-ES over the flat genome (popsize 64, σ_init 0.1, elitist).
 Balanced accuracy (chance = 0.5), bipolar inputs {−1, +1}.
 
+### Assessment: what the cell-type encoding buys, and what it costs
+
+**In its favour: cell types are a defensible abstraction.** Distinct neuron
+types are a standard organising principle in neuroscience, and the division of
+labour the encoding assumes — a genome specifying a *taxonomy of types plus
+wiring rules*, rather than individual synapses — is closer to how a real genome
+could plausibly specify a brain than a direct encoding is. A direct encoding
+needs one heritable number per synapse, which no genome has room for. So the
+compression here is not merely a parameter-count trick; it is the biologically
+motivated part of the design. ⚠️ *Citations still needed* (cortical cell-type
+taxonomies; genomic-bottleneck arguments) — do not write this paragraph up
+without them.
+
+**Cost 1 — the grown networks are dense, and structurally so.** This is the
+main practical problem with the encoding as built. `w_ij = g(feat_i, feat_j)`
+with `g` a smooth MLP, so an *absent* edge requires `g` to output exactly zero —
+a measure-zero event. The brain is therefore fully connected (within the role
+mask) at initialisation and stays that way: nothing in the fitness prefers fewer
+edges, and larger |w| helps, so density only ever rises. Measured on
+`retina_ka2005`, `n_hidden = 24` (492 role-allowed undirected edges):
+
+| arm | density | Newman Q (unweighted) | Newman Q (weighted) |
+|---|---:|---:|---:|
+| FG, synaptic gate t = 0.2 | 72.2% | 0.053 | 0.033 |
+| MVG, synaptic gate t = 0.2 | **100.0%** | **0.000** | **0.000** |
+
+For scale, Kashtan–Alon and Clune report Q ≈ 0.35 for networks they call
+modular. MVG converged to *literally* the complete role-allowed graph, and 77%
+of its synapses sat at |w| > 0.999 — the `tanh` bound on `g`'s output turns into
+a saturation attractor. Two consequences that matter for the writeup:
+- **Q is not measurable on these brains, and this is not a metric artefact.**
+  Newman Q is crushed by density by construction, and weighting made it *worse*
+  (0.033 vs 0.053 for FG), because a saturated weight matrix is closer to the
+  degree-product null than the topology is.
+- **It is not unique to experiment 1.** The direct-encoding controls come out at
+  ~92–94% (exp 2, CMA-ES) and ~87.5–90.9% (exp 3, gradient descent). Density is
+  a property of "every allowed edge is free and nothing penalises it", not of the
+  bottleneck. Any modularity comparison across the three arms needs a sparsity
+  mechanism first.
+
+**Cost 2 — expressiveness is capped by `K`, not by the neuron count.** Stated in
+full above: same-type hidden neurons are exact clones, so a `K`-type brain is
+functionally a `K`-neuron recurrent network with gain-scaled edges. Raising
+`n_hidden` buys gain, not diversity. This interacts with the density problem:
+because clones are indistinguishable, sparsity here can only ever be
+**block-level** — switching off a type→type block silences every clone pair at
+once. Fine-grained pruning is not representable. That is not purely a
+limitation, since a block is what a module *is* in this model, but it does mean
+the topology's real dimensionality is the `U × U` signature grid (90 legal pairs
+at the defaults), not the 768 directed edges it expands to.
+
 ---
 
 ## Modularity metrics (`qmetrics/`)
