@@ -110,6 +110,10 @@ def run_name_for(brain_cfg, run_cfg, seed) -> str:
         name = run_cfg.task
     if brain_cfg.w_threshold > 0:
         name += f"_w{brain_cfg.w_threshold:g}"
+    if brain_cfg.synaptic_budget > 0:
+        name += f"_b{brain_cfg.synaptic_budget:g}"
+        if brain_cfg.shrink > 0:
+            name += f"s{brain_cfg.shrink:g}"
     return f"{name}_seed{seed}"
 
 

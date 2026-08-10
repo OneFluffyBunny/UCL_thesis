@@ -92,7 +92,25 @@ def build_parser() -> argparse.ArgumentParser:
                            "which only affects counting/plotting. Weights are tanh-bounded to "
                            "[-1,1] but the evolved scale varies ~10x between seeds, so a value "
                            "that sparsifies one run can silence another entirely -- watch the "
-                           "logged density, and see RESULTS.md for measured |w| distributions")
+                           "logged density, and see RESULTS.md for measured |w| distributions. "
+                           "MEASURED TO FAIL as a density control: prefer --synaptic-budget")
+    arch.add_argument("--synaptic-budget", type=float, default=0.0,
+                      help="SYNAPTIC BUDGET: give every neuron this fixed total incoming "
+                           "|weight| to share out among its synapses (0 = off). Density stops "
+                           "being free -- an extra connection dilutes the ones already there -- "
+                           "so specialising becomes the cheap way to get a strong signal. Also "
+                           "drops the tanh bound on g (redundant once renormalised, and a "
+                           "saturation attractor) and bounds each neuron's pre-activation by "
+                           "this value, so ~1-2 keeps tanh in its useful range. On its own it "
+                           "makes weights small but not zero -- pair it with --shrink for "
+                           "structural sparsity. Mutually exclusive with --w-threshold")
+    arch.add_argument("--shrink", type=float, default=0.0,
+                      help="with --synaptic-budget: zero any synapse weaker than this FRACTION "
+                           "of its target neuron's mean incoming |g|, before the budget is "
+                           "shared out. In [0, 1). Relative on purpose -- an absolute cutoff is "
+                           "what --w-threshold already tried, and evolution escaped it by "
+                           "inflating g; nothing can inflate its way above its own mean. Higher "
+                           "= sparser, but watch for premature collapse onto a single input")
 
     # --- evolution / search ---------------------------------------------------
     evo = p.add_argument_group("evolution")
@@ -161,6 +179,8 @@ def build_brain_config(args: argparse.Namespace) -> BrainConfig:
         use_bias=not args.no_bias,
         activation=ACTIVATIONS[args.activation],
         w_threshold=args.w_threshold,
+        synaptic_budget=args.synaptic_budget,
+        shrink=args.shrink,
     )
 
 
@@ -191,7 +211,21 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
 
 
 def parse_args(argv=None):
-    args = build_parser().parse_args(argv)
+    p = build_parser()
+    args = p.parse_args(argv)
+    if args.synaptic_budget > 0.0 and args.w_threshold > 0.0:
+        p.error("--synaptic-budget and --w-threshold are alternative sparsity "
+                "mechanisms; set only one. The budget subsumes the gate: --shrink "
+                "zeroes weak synapses relative to each neuron's own scale, which is "
+                "the part the absolute gate got wrong")
+    if not 0.0 <= args.shrink < 1.0:
+        p.error("--shrink must be in [0, 1): it is a FRACTION of each target "
+                "neuron's mean incoming |g|, not an absolute weight")
+    if args.shrink > 0.0 and args.synaptic_budget <= 0.0:
+        p.error("--shrink has no meaning without --synaptic-budget > 0 "
+                "(there is no budget to share out)")
+    if args.synaptic_budget < 0.0:
+        p.error("--synaptic-budget must be >= 0 (0 = off)")
     return build_brain_config(args), build_run_config(args), args
 
 

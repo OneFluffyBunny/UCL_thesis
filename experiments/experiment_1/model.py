@@ -58,7 +58,21 @@ class BrainConfig:
     # that is EVALUATED is the sparse one (see Genome.build_weights). 0.0 = off,
     # which is the historical behaviour. Distinct from --prune-threshold, which
     # only decides what gets *counted/drawn* and never touches the forward pass.
+    # MEASURED TO FAIL as a density control (RESULTS.md): an absolute cutoff is a
+    # one-time toll, so evolution pays it once and then inflates freely.
     w_threshold: float = 0.0
+    # Synaptic BUDGET: each neuron gets a fixed total incoming |weight| of
+    # `synaptic_budget`, shared out among its incoming synapses. Density stops
+    # being free -- an extra connection dilutes the ones already there -- so
+    # specialising becomes the cheap way to get a strong signal. 0.0 = off.
+    # Mutually exclusive with w_threshold (config.py enforces).
+    synaptic_budget: float = 0.0
+    # Relative shrinkage, a FRACTION in [0, 1) of each target neuron's mean
+    # incoming |g|: anything weaker than that is set to exactly 0 *before* the
+    # budget is shared out. Relative on purpose -- an absolute threshold is what
+    # w_threshold already tried, and evolution escaped it by inflating g. You
+    # cannot inflate your way above your own mean. Needs synaptic_budget > 0.
+    shrink: float = 0.0
 
     @property
     def n_total(self) -> int:
@@ -100,6 +114,33 @@ def _role_mask(cfg: BrainConfig) -> jax.Array:
     return mask
 
 
+def _signature_mask(cfg: BrainConfig) -> jax.Array:
+    """Boolean (U, U) mask of allowed SIGNATURE pairs, U = n_in + K + n_out.
+
+    The signature-level twin of `_role_mask`, needed because the synaptic budget
+    has to be shared out *before* the U x U block is gathered into N x N.
+
+    Note the hidden diagonal (type t -> type t) is ALLOWED here: distinct clones
+    of one type do connect to each other. Only a neuron's edge to *itself* is
+    forbidden, and that is a multiplicity question (one fewer source neuron), not
+    a mask question -- see `Genome._source_multiplicity`.
+    """
+    U = cfg.n_in + cfg.n_types + cfg.n_out
+    idx = jnp.arange(U)
+    is_in = idx < cfg.n_in
+    is_hid = (idx >= cfg.n_in) & (idx < cfg.n_in + cfg.n_types)
+    is_out = idx >= cfg.n_in + cfg.n_types
+    ih = is_in[:, None] & is_hid[None, :]
+    hh = is_hid[:, None] & is_hid[None, :]
+    ho = is_hid[:, None] & is_out[None, :]
+    return ih | hh | ho
+
+
+def _identity(x):
+    """`g`'s output activation when the synaptic budget is on -- see Genome.init."""
+    return x
+
+
 # ---------------------------------------------------------------------------
 # The genome (DNA) -- this is the *only* thing evolution mutates.
 # ---------------------------------------------------------------------------
@@ -126,7 +167,17 @@ class Genome(eqx.Module):
                 out_size=1,
                 width_size=cfg.g_width,
                 depth=cfg.g_depth,
-                final_activation=jnp.tanh,   # bound edge weights to [-1, 1]
+                # Default: tanh, bounding edge weights to [-1, 1].
+                # Under the synaptic budget the output is renormalised per target
+                # neuron, so the bound is redundant -- and worse, it is an
+                # attractor: evolution can drive every pre-activation into
+                # saturation (measured: 77% of synapses at |w| > 0.999), which
+                # makes all weights equal and destroys the very contrast the
+                # budget selects on. Dropping it also makes the whole map
+                # scale-invariant, so inflating g buys exactly nothing.
+                # NOTE this makes `g`'s shape depend on cfg: a genome saved with
+                # one setting must be reloaded with the same one.
+                final_activation=_identity if cfg.synaptic_budget > 0.0 else jnp.tanh,
                 key=k5,
             ),
         )
@@ -209,6 +260,61 @@ class Genome(eqx.Module):
         out_b = jnp.full((cfg.n_out,), self.type_bias[cfg.n_types + 1])
         return jnp.concatenate([in_b, hid_b, out_b])
 
+    # -- synaptic budget ------------------------------------------------------
+
+    def _source_multiplicity(self, cfg: BrainConfig, hid_ids: jax.Array) -> jax.Array:
+        """(U, U) float: how many real source NEURONS a signature pair stands for.
+
+        Entry [u, v] = the number of neurons with signature `u` that feed ONE
+        neuron with signature `v`. That is just u's clone count -- except on the
+        hidden diagonal, where a neuron does not feed itself, so it is count - 1.
+
+        This is the piece that is easy to get wrong: `g` is evaluated per
+        *signature*, but a budget is spent on *synapses*, and one hidden
+        signature stands for however many clones `abundance` currently gives it.
+        Normalise the raw U x U rows and a 12-clone type would get the same total
+        as a 1-clone type -- and the error would drift as abundance evolves.
+        """
+        counts = jnp.bincount(hid_ids, length=cfg.n_types).astype(jnp.float32)
+        mult = jnp.concatenate([jnp.ones((cfg.n_in,)), counts, jnp.ones((cfg.n_out,))])
+        U = cfg.n_in + cfg.n_types + cfg.n_out
+        idx = jnp.arange(U)
+        is_hid = (idx >= cfg.n_in) & (idx < cfg.n_in + cfg.n_types)
+        self_pair = (idx[:, None] == idx[None, :]) & is_hid[:, None] & is_hid[None, :]
+        m = jnp.where(self_pair, mult[:, None] - 1.0,
+                      jnp.broadcast_to(mult[:, None], (U, U)))
+        return m * _signature_mask(cfg)
+
+    def _apply_budget(self, w_u: jax.Array, cfg: BrainConfig,
+                      hid_ids: jax.Array) -> jax.Array:
+        """Share a fixed incoming |weight| budget out over each neuron's synapses.
+
+        Normalises over the TARGET (column v = "everything feeding a neuron of
+        signature v"), so the guarantee is  sum_i |w_iv| = synaptic_budget  for
+        every non-input neuron i->v, counting clones. Two reasons for in-budget
+        rather than out-budget: it is homeostatic synaptic scaling, the
+        better-attested biology, and it bounds each neuron's pre-activation by
+        `synaptic_budget`, which keeps the recurrent pass in tanh's useful range.
+        It also asks the question the task cares about -- a fixed in-budget forces
+        each hidden neuron to choose WHICH INPUTS TO LISTEN TO.
+
+        Shrinkage happens BEFORE the share-out (after it, the budget would no
+        longer be exact) and is relative to the target's own mean, so the whole
+        map is invariant to rescaling `g`.
+        """
+        eps = 1e-8
+        m = self._source_multiplicity(cfg, hid_ids)              # (U, U)
+
+        if cfg.shrink > 0.0:
+            n_src = jnp.sum(m, axis=0)                            # (U,) fan-in
+            mean_in = jnp.sum(m * jnp.abs(w_u), axis=0) / (n_src + eps)
+            w_u = jnp.sign(w_u) * jnp.maximum(
+                jnp.abs(w_u) - cfg.shrink * mean_in[None, :], 0.0)
+
+        total = jnp.sum(m * jnp.abs(w_u), axis=0)                 # (U,) per target
+        scale = jnp.where(total > eps, cfg.synaptic_budget / (total + eps), 0.0)
+        return w_u * scale[None, :] * _signature_mask(cfg)
+
     # -- grow the static brain -----------------------------------------------
 
     def build_weights(self, cfg: BrainConfig):
@@ -217,6 +323,16 @@ class Genome(eqx.Module):
         `g` is evaluated once per distinct signature pair (U x U), then the full
         N x N matrix is produced by gathering -- same result as evaluating g on
         every neuron pair, but only U^2 (<= N^2) calls to g.
+
+        Exactly one sparsity mechanism may be active (config.py enforces):
+
+        ``cfg.synaptic_budget > 0`` -- SYNAPTIC BUDGET. Each neuron is given a
+        fixed total incoming |weight| to share out among its synapses, so an
+        extra connection dilutes the ones already there and density stops being
+        free. With ``cfg.shrink > 0``, synapses far weaker than that neuron's own
+        mean are first set to exactly 0, which is where structural sparsity comes
+        from. See `_apply_budget`. Unlike the gate this cannot be escaped by
+        inflating `g`: the map is scale-invariant by construction.
 
         If ``cfg.w_threshold > 0`` a hard synaptic gate is applied to g's output:
         any |w| below it becomes exactly 0, and the network really runs on the
@@ -235,7 +351,9 @@ class Genome(eqx.Module):
         fj = jnp.broadcast_to(uf[None, :, :], (U, U, cfg.feat_dim))
         pair = jnp.concatenate([fi, fj], axis=-1)            # (U, U, 2*feat)
         w_u = jax.vmap(jax.vmap(self.g))(pair)[..., 0]       # (U, U)
-        if cfg.w_threshold > 0.0:
+        if cfg.synaptic_budget > 0.0:
+            w_u = self._apply_budget(w_u, cfg, hid_ids)
+        elif cfg.w_threshold > 0.0:
             w_u = jnp.where(jnp.abs(w_u) < cfg.w_threshold, 0.0, w_u)
         w = w_u[neuron_to_row][:, neuron_to_row]             # (N, N) gather, no g calls
         w = w * _role_mask(cfg)
