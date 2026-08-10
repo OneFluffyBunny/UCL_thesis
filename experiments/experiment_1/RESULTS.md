@@ -388,6 +388,138 @@ which removes it as a confound instead of merely resisting inflation. A relative
 gate (`frac × max|w|`) is scale-free but useless here: with MVG's median at 1.000
 it would still keep nearly everything.
 
+## Synaptic budget (`--synaptic-budget` / `--shrink`) — a density control that WORKS ⭐
+
+*(implemented 2026-08-10, commit `b1140df`; supersedes the "budgeted top-k gate"
+plan above, which was never built — an in-budget normalisation turned out to be
+the better shape.)*
+
+Each neuron gets a fixed total *incoming* |weight| `S`, shared out over its
+synapses, so `sum_i |w_iv| = S` for every non-input neuron `v`. Density stops
+being free: an extra connection dilutes the ones already there. `--shrink τ`
+zeroes any synapse below `τ ×` its target's **own** mean incoming `|g|`, applied
+*before* the share-out. The two are a pincer — shrink alone is escapable by
+flattening (make everything equal, nothing falls below the mean), and flat under
+a fixed budget means no signal at all, so the only way out is contrast.
+
+**Why relative, not absolute.** The gate above failed because evolution inflated
+`g` 4–10× and walked through it. Nothing can inflate above its own mean:
+multiplying `g`'s output layer by 100 leaves the budgeted brain **bit-identical**
+(max |diff| 3e-8), while the same 10× inflation takes a *gated* brain from
+**36 → 744 edges**. Verified in the 40-check suite, along with the budget
+invariant under skewed clone counts (the multiplicity trap: `g` is per-*signature*
+but a budget is spent on *synapses*, and the hidden diagonal carries `count − 1`).
+
+⚠️ Under a budget, `g` loses its `tanh` output activation (redundant after
+renormalisation, and a saturation attractor). **A genome saved with a budget must
+be reloaded with the same setting** — `g`'s shape depends on it.
+
+⚠️ `brain_stats` counts exact zeros under budget/gate instead of applying
+`--prune-threshold`: at fan-in 30 a budget of 1 puts every weight near 0.03, so
+the default 0.05 reported **80 edges for a brain that actually has 768**.
+
+### Two FG runs (`retina_ka2005`/and, K=6, n_hidden=24, pop 64, 2000 gens, accuracy fitness, `--no-early-stop`, 3 seeds; 2–5 min/seed)
+
+`runs/budget_fg` (S=2, τ=0.8) and `runs/budget_fg_b4s0.9` (S=4, τ=0.9):
+
+| | S=2, τ=0.8 | S=4, τ=0.9 |
+|---|---|---|
+| final accuracy | 0.812, 0.812, 0.815 | 0.812, 0.820, **0.885** |
+| density gen 0 | 87.5 / 75.7 / 90.1% | 85.4 / 94.9 / 79.3% |
+| density final | 55.1 / 44.9 / 28.1% | 39.1 / 41.4 / 37.6% |
+| density min | 25.8 / 21.4 / 28.1% | 20.1 / 20.1 / 29.6% |
+| sign split (final) | +423/−0, +44/−301, +216/−0 | +234/−66, **+0/−318**, +89/−200 |
+| median \|w\| | 0.055 / 0.049 / 0.156 | 0.260 / 0.119 / 0.305 |
+| budget invariant | exact (2.000–2.000) | exact (4.000–4.000) |
+
+**Density falls instead of exploding.** The gate went 0% → 77–100%; the budget
+goes 76–95% → 28–55% in every seed. The invariant holds *exactly* after 2000
+generations of CMA-ES, which is the real test — evolution cannot drift off it.
+
+**The weight distribution is finally graded**, which the gate never achieved.
+S=4 seed 0: p5 0.025, p25 0.129, p50 0.260, p75 0.520, p95 0.792. Compare the
+gated MVG arm, where 77% of synapses sat at |w| > 0.999 and no threshold had
+anything left to cut.
+
+**Sign collapse is budget-dependent (new).** At S=2 all three seeds are
+single-sign (2 all-excitatory, 1 all-inhibitory); at S=4 two of three are mixed.
+Hypothesis: with a fixed total |incoming|, opposite-sign synapses cancel at the
+target, so mixed signs spend budget to produce less net drive — i.e. the budget
+*penalises the sign diversity that non-monotone functions need*. Consistent with
+the accuracy: the only seed to break the 0.812 plateau (0.885, above the gate
+run's 0.875 and well clear of the 0.750 one-module cap) is a mixed-sign seed.
+Not established — n=3, and S=4 seed 0 is mixed but still stuck at 0.812, so sign
+diversity looks necessary rather than sufficient. Distinct from the accuracy-vs-
+margin sign audit below, which is about *fitness*, not the budget.
+
+### ⚠️ Newman `Q` found "modularity" that is NOT the retina's
+
+S=4 seed 2 scores `Q_weighted = 0.20` (highest exp 1 has produced) and
+`role_segregation` reports 8/24 neurons lateralized, mean |s| = 0.361. Both are
+misleading. Scoring the **planted** left/right split — the question the task
+actually asks — gives `r = +0.085`, crosstalk 0.915, **p = 0.87**: chance.
+
+Per-type left/right drive `s = (L−R)/(L+R)` explains it:
+
+| type 0 (n=3) | type 1 (n=2) | type 2 (n=5) | type 3 (n=2) | type 4 (n=5) | type 5 (n=7) |
+|---|---|---|---|---|---|
+| +0.79 | −0.07 | **+0.99** | +0.21 | +0.05 | +0.07 |
+
+There is a genuine **left-specialised cell type** (type 2's five clones read the
+left half almost exclusively) and *nothing on the right*. One module plus a
+general pool — which inflates mean |s| while the planted split sits at chance.
+Detected communities cut across the halves as always (community 0 holds inputs
+{0,2,3,6}, community 1 holds {1,7}).
+
+➡️ **Use `left_right_q` at the planted split as the PRIMARY metric for retina
+claims; report `newman_q` as secondary only.** An unlabelled `Q` will let us
+announce modularity along the wrong axis.
+*(Also: `left_right_q`'s `assign='majority'` score is unusable on these brains —
+denominator `q_max − q_rand` = 0.0075 produced a meaningless −1.17. Quote `r` and
+`p`. See the loose `abs(denom) > 1e-9` guard at `qmetrics/metrics.py:695`.)*
+
+### Was 2000 generations enough? Marginally — and NOT for MVG
+
+| run | seed | last improvement | gens flat after | σ end |
+|---|---|---|---|---|
+| S=2 | 0 / 1 / 2 | 125 / 75 / 975 | 1874 / 1924 / 1024 | 0.051 / 0.078 / 0.068 |
+| S=4 | 0 / 1 / 2 | 225 / **1375** / **1150** | 1774 / 624 / 849 | 0.069 / 0.058 / 0.048 |
+
+Three of six seeds made their last gain after gen 975, including **both** seeds
+that beat the plateau. σ falls only 0.097 → 0.048–0.078 (a 2× reduction), so
+CMA-ES is still exploring at the end; density still oscillates ±3–9 points over
+the final 500 generations.
+
+### ⭐ We are 13× under Kashtan-Alon's evaluation budget
+
+From `kashtan_alon/PAPER_SPEC.md` (verified quotes): population **S = 600**
+(line 57); MVG solves in **2,800 generations** (+9,500/−600) and FG in **21,000**
+(+29,000/−3,600) (line 65).
+
+| | KA gens | × pop 600 = evals | our equivalent at pop 64 |
+|---|---|---|---|
+| MVG solved | 2,800 | 1.68M | **26,000 gens** |
+| FG solved | 21,000 | 12.6M | 197,000 gens |
+
+Our runs so far: 2,000 × 64 = **128k evals** — 13× under KA's *median* MVG budget.
+**This reframes the 0.812 plateau as probably reachability, not representability**
+(cf. the two-walls section): a run 13× under the reference budget stalling is what
+under-budgeting looks like.
+
+**The goal-switch epoch `E` has the same problem.** KA's E=20 at pop 600 is 12,000
+evals per goal; ours at pop 64 is **1,280** — 9× less search per goal. Matching
+their effort needs **E ≈ 190**. Note `PAPER_SPEC.md:51` flags E=20 as ⚠️ AMBIGUOUS:
+it is quoted for KA's *circuit* experiment and was **not** found restated for the
+neural network, so our E=20 on the retina was always a reconstruction, not a
+quoted value — and exp 1 is not a KA reproduction anyway (g-encoding, CMA-ES, 431
+continuous params vs their ±1 direct genome).
+
+➡️ **Do not pick `E` by which value maximises modularity** — that selects the
+parameter to produce the result being tested. Set it from an independent
+criterion: the time the population takes to re-adapt after a switch. Diagnostic
+run for this: `runs/mvg_diag_E200` (E=200, 3000 gens, 2 seeds, log-interval 2 →
+15 switches with full post-switch recovery curves).
+
 ### Why the brain starts as "one global weight"
 
 `g`'s output at init is dominated by a *global offset*, not by the pair. For a
@@ -458,8 +590,17 @@ plateau — so single-sign weights do not explain that plateau.
   that a static goal cannot? This is the actual thesis question. *(First pair run
   2026-08-09 on `retina_ka2005`; uninformative because both arms ended 77–100%
   dense — see the synaptic-gate section. Needs a density-controlled gate first.)*
-- **Budgeted (top-k) gate** — the fix for the density confound above; makes
-  density a controlled constant and equal across arms.
+  **Density is now controlled** (synaptic budget, 2026-08-10) — the blocker is
+  cleared. Remaining prerequisites: pick `E` from the recovery-time diagnostic,
+  and budget ~20–26k generations/seed (see the KA evaluation-budget arithmetic).
+- ~~**Budgeted (top-k) gate**~~ — DONE differently: an in-budget normalisation
+  (`--synaptic-budget`), not top-k. See the synaptic-budget section.
+- **`train.py` has NO checkpoint/resume** (only `config.py` / `visualize_ckpt.py`
+  mention checkpoints). Required before the ~4-hour FG/MVG pair at KA-matched
+  budget — a crash currently loses the whole seed.
+- **Logging gap:** the per-seed header line prints `w_threshold=` but not
+  `synaptic_budget`/`shrink`. The run *directory* name carries them (`_b4s0.9`)
+  and `config.json` is written, but the log line alone is ambiguous.
 - **Decide whether `g`'s init should be re-centred** (zero the output bias and/or
   raise the `0.1` identity scale) so the brain doesn't start as one global weight.
   Both are one-liners and could be flags rather than default changes.
