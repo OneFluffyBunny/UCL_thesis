@@ -520,6 +520,40 @@ criterion: the time the population takes to re-adapt after a switch. Diagnostic
 run for this: `runs/mvg_diag_E200` (E=200, 3000 gens, 2 seeds, log-interval 2 →
 15 switches with full post-switch recovery curves).
 
+### E measured directly: re-adaptation costs ~10 generations, so **E=20 is right**
+
+`runs/mvg_diag_E200`, 28 post-switch epochs (epoch 0 excluded as a cold start).
+`t_recover` = generations from the switch until best accuracy comes within 0.005
+of the maximum reached in that epoch.
+
+| | value |
+|---|---|
+| accuracy drop at switch | mean +0.032, median +0.040, max +0.060 |
+| `t_recover` | **median 10**, mean 27, p75 16, p90 73, max 176 |
+| recovered within 20 / 50 / 100 gens | 75% / 89% / 89% |
+
+❌ **The evaluation-matching argument above (E ≈ 190) is WRONG and should not be
+used.** Matching KA's *evaluations per epoch* assumes re-adaptation cost scales
+with population size; measured directly it does not. Re-adaptation here costs
+~10 generations, so E=20 is ~2× the observed recovery time — enough to adapt,
+short enough that the population never settles. E=200 is 20× recovery, which
+turns each epoch into a mini-FG run: ~190 dead generations sitting at plateau,
+which is exactly where FG-like specialisation happens. **Keep E=20.** It now has
+two independent justifications: KA's reconstruction, and our own dynamics.
+
+⚠️ `t_recover`'s long tail is **not** slow re-adaptation — it is genuine
+innovation. Every epoch with `t_recover` > 100 (seed 1 epochs 8, 11, 14: 132,
+160, 176) is one where `A_max` *exceeded* the previous plateau (0.818, 0.820,
+0.828). The metric conflates "get back to where we were" with "find something
+new"; only the former should inform E.
+
+Two other things this run establishes:
+- **The budget holds under MVG.** Density stayed 28–56% across all 30 epochs, so
+  the FG/MVG density confound that killed the gated pair is gone.
+- **MVG was still improving at 3000 generations** (seed 1 hit 0.828 in its final
+  epoch, above every FG seed except the 0.885 outlier), and σ *rose* to ~0.094.
+  Independent support for the long-budget recommendation.
+
 ### Why the brain starts as "one global weight"
 
 `g`'s output at init is dominated by a *global offset*, not by the pair. For a
