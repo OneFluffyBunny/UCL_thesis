@@ -225,15 +225,24 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
         # generation the loop exits on we still have the endpoint genome.
         final, final_flat = gen_best, jnp.asarray(gen_best_flat)
 
-        # gen 0 is always logged (0 % anything == 0), so every run has a baseline
-        # row before selection has done anything.
-        if gen % run_cfg.log_interval == 0 or gen == run_cfg.generations - 1:
+        # Under --mvg, log at the END of each goal epoch instead of on
+        # --log-interval: every row is then the same thing -- a snapshot of a goal
+        # the population has had the full interval to adapt to -- and rows line up
+        # with the switches. (On --log-interval they do not: 25 against a
+        # switch-interval of 20 samples each epoch at a drifting offset.)
+        # --log-interval still applies whenever the goal is fixed.
+        epoch_len = max(1, run_cfg.switch_interval)
+        due = ((gen + 1) % epoch_len == 0 if run_cfg.mvg
+               else gen % run_cfg.log_interval == 0)
+        # gen 0 and the last generation are always logged, so every run has a
+        # baseline row before selection has done anything, and an endpoint row.
+        if due or gen == 0 or gen == run_cfg.generations - 1:
             genome = eqx.combine(reshaper.reshape_single(gen_best_flat), static)
             st = brain_stats(genome, brain_cfg, run_cfg.prune_threshold)
             density, n_edges = st["density"], st["n_edges"]
             sigma = float(getattr(state, "sigma", float("nan")))
             sigma_str = "" if sigma != sigma else f" | σ: {sigma:.4f}"
-            gens_in = run_cfg.log_interval if gen > 0 else 1
+            gens_in = (epoch_len if run_cfg.mvg else run_cfg.log_interval) if gen > 0 else 1
             secs_per_gen = (time.time() - interval_start) / gens_in
             interval_start = time.time()
             mean_acc = float(acc.mean())
