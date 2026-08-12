@@ -366,6 +366,52 @@ limitation, since a block is what a module *is* in this model, but it does mean
 the topology's real dimensionality is the `U × U` signature grid (90 legal pairs
 at the defaults), not the 768 directed edges it expands to.
 
+### Verdict: neither solved the task nor became modular — we moved on
+
+**Density (Cost 1) turned out to be fixable.** A **synaptic budget** — fixed total
+incoming `Σ|w| = S` per neuron, plus a relative shrink `τ` zeroing any synapse
+below `τ ×` its target's own mean incoming magnitude — takes brains from 76–95%
+density at generation 0 to 28–55% at the end. (Neither half works alone; an
+*absolute* weight gate failed outright, since evolution just inflated `g`'s output
+4–10× and walked through it.) So the null below is not a density artefact.
+
+**With density controlled, FG vs MVG is flat.** `retina_ka2005`, `S = 4`, `τ = 0.9`,
+E = 20, popsize 64, 2,000 generations, 3 seeds each:
+
+| arm | balanced accuracy | density | planted L/R `r` |
+|---|---:|---:|---:|
+| FG (goal = AND) | 0.839 ± 0.033 | 39.4% | +0.136 ± 0.062 |
+| MVG (AND↔OR) | 0.806 ± 0.005 | 37.7% | +0.115 ± 0.021 |
+
+**A half-retina ablation says there is no module to find.** Scoring each brain's
+output against the left/right object bits: only 1 of 6 (FG seed 2) builds a
+half-detector (L 0.891, R 0.609; clamping left → 0.500, clamping right → 0.833 —
+cleanly one-sided). The other five score *below* the 0.833 a single-half detector
+gets, read both halves equally (`vs L` ≈ `vs R` ≈ 0.72), and lose the same to
+either ablation — a smeared function of all 8 pixels, not two modules, not one.
+All three MVG seeds are exactly symmetric (`vs L` = `vs R` = 0.719) where FG let
+seed 2 lateralise: a real MVG effect, but symmetry is necessary for the modular
+solution and nowhere near sufficient.
+
+**A task property worth recording.** On `retina_ka2005` each half-object is true
+for 8 of 16 half-patterns, so a perfect single-half detector scores **0.8333
+under AND and 0.8333 under OR — gap exactly 0.0000**, while a two-sided AND-solver
+swings 1.000 ↔ 0.667. The one-module solution is the optimal compromise across
+both goals at zero re-adaptation cost, so MVG's mechanism only engages once a
+network already computes both halves. This is KA's task, not our encoding.
+
+⚠️ **Caveat.** 2,000 × 64 = 128k evaluations vs Kashtan–Alon's median 1.68M —
+**13× under budget**. This is not evidence against the MVG→modularity hypothesis;
+it is evidence that *this encoding at this budget* produces no half-detector for
+any modularity metric to measure. Consistent with Cost 2: a `K`-type brain is
+functionally a `K`-neuron recurrent net, and the left/right decomposition may be
+out of reach at that width.
+
+**Verdict.** Best accuracy 0.885 of 1.000, five of six seeds below the one-module
+ceiling, and the FG/MVG contrast the encoding was built to test came out flat. We
+stop the modularity study in this architecture and move to a different one.
+*(⚠️ Name the successor here once settled, and what it changes relative to this.)*
+
 ---
 
 ## Modularity metrics (`qmetrics/`)
@@ -492,6 +538,32 @@ could never produce, so Q_rand/Q_max describe the wrong ensemble.
 - Only *pairwise* constraints reduce to a mask. *Degree caps* (KA fan-in) need
   per-node counters, **not yet implemented**: rewiring preserves total degree
   but can shift a node's in/out split, so caps don't come free with the mask.
+
+---
+
+## General observations (across all experiments)
+
+Running log — synthesis across NDP/experiment_1/2/3/kashtan_alon, not tied to
+any one of them. More to add as we go.
+
+- **We need a DNA→brain framework that can build sparse brains — sparsity is
+  a precondition for measuring modularity at all**, not just a nice-to-have.
+  Dense graphs compress Newman Q toward 0 regardless of wiring (see
+  `qmetrics` density-confound note above), so a framework that only produces
+  dense brains gives us nothing to measure modularity *on*.
+- **Recurring problem: at the small network sizes we work with, our
+  compressed encodings end up more complex than direct encoding, not less.**
+  The genome overhead of a shared rule (`g` in experiment_1, the growth/weight
+  MLPs in NDP) is roughly fixed regardless of network size, so at tens of
+  neurons that fixed cost isn't yet amortised — direct encoding (one number
+  per edge) is smaller and simpler at this scale.
+- **Ironic inversion: the compression argument only pays off at the scale we
+  are deliberately avoiding.** A brain with millions of neurons is exactly
+  where an O(K) or O(1)-in-node-count genome would be a genuine win over an
+  O(N²) direct encoding — but a network that large makes the shared-rule
+  genome itself unwieldy and computationally expensive to search (bigger
+  rule networks, more expensive forward passes per genome evaluation), which
+  is why this thesis stays at small N by design (parsimony-first constraint).
 
 ### Supporting tools (not metrics)
 
