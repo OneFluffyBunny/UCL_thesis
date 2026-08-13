@@ -191,8 +191,21 @@ is a declared decision, not a recovered value.
 
 ## 10. Deliberate deviations
 
-None. Where the paper specifies, we follow it exactly. §9 covers only what it
-does not specify.
+**Genotype size and mutation rate, for runs on this task.** Table II's 100 nodes /
+3% is `[verbatim]` and remains the CLI default, so nothing deviates unless it is
+typed explicitly. But it was tuned on parity, adders and multipliers, never on the
+retina, and it solves this task in only 4 of 6 seeds within 25 000 generations.
+The measured configuration (`RESULTS.md`, 2026-08-13) is:
+
+    --nodes 800 --mutation-rate 0.01        # 6/6 solved, median 8 404 generations
+
+Justification is empirical, not a preference: a sweep over nodes ∈ {50 … 1600} ×
+rate ∈ {0.01, 0.02, 0.03} found 800 the plateau — 400 and 800 solve 6/6 where 100
+and 200 do not, and 1600 regresses to 4/6 at ~6× the wall clock. Every run must
+record which configuration it used.
+
+Nothing else deviates. Where the paper specifies, we follow it exactly; §9 covers
+what it does not specify.
 
 ## 11. Open cross-check (not a gap)
 
