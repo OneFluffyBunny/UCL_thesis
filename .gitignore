@@ -6,6 +6,9 @@ __pycache__/
 # Experiment outputs (regenerable; conclusions live in RESULTS.md)
 runs/
 
+# Locally-downloaded papers (copyrighted; keep out of a repo with a public remote)
+papers/
+
 # Separate / abandoned repos and local settings — not part of this repo
 LNDP/
 NDP/
