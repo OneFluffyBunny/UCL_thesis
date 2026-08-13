@@ -12,8 +12,24 @@ The loop is PAPER_SPEC.md section 3, verbatim:
 
 Step 4b is the neutral-drift tie-break and is not optional -- it is the mechanism
 CGP's efficiency rests on, letting the genotype wander across a fitness plateau
-(here, the broad 192/256 plateau of the retina) while staying phenotypically
-equal.
+(here, the broad 192/256 plateau of the retina) while staying phenotypically equal.
+
+OUTPUT LAYOUT follows kashtan_alon/train.py so the two are navigable the same way:
+
+    runs/<name>/<run>_seed<k>_log.csv       one row per log point
+    runs/<name>/<run>_seed<k>_ckpt.pkl      full state; deleted on completion
+    runs/<name>/<run>_seed<k>_result.json   written when the seed finishes
+    runs/<name>/<run>_seed<k>_best.npz      best genotype (--save-best)
+    runs/<name>/frames/seed<k>_gen<g>.png   circuit diagram per log row
+
+Resume is on by default: a finished seed is skipped, an interrupted one restarts
+from its checkpoint with the RNG state restored, so a resumed run is identical to
+an uninterrupted one.
+
+NOT logged: density. A CGP genotype has a fixed edge count (`n_nodes * arity`) so
+density is a constant, and it was a flawed readout in experiment 1 anyway. The
+structural columns here are the input-cone decomposition instead -- see
+`cgp.Phenotype`.
 
 Run:  conda run -n lndp python train.py --task retina_ka2005 --operation and
 """
@@ -22,7 +38,9 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import pathlib
+import pickle
 import sys
 import time
 from dataclasses import asdict
@@ -32,7 +50,11 @@ import numpy as np
 import cgp
 import gates as gates_mod
 import tasks as tasks_mod
+import visualize as viz_mod
 from config import RunConfig, parse
+
+LOG_FIELDS = ["seed", "gen", "goal", "score", "hits", "acc", "active_nodes",
+              "left", "right", "mixed", "const", "depth", "evals", "secs_per_gen"]
 
 
 def _goal_at(cfg: RunConfig, gen: int) -> str:
@@ -42,9 +64,32 @@ def _goal_at(cfg: RunConfig, gen: int) -> str:
     return cfg.mvg_ops[(gen // cfg.switch_interval) % len(cfg.mvg_ops)]
 
 
+def save_checkpoint(path: pathlib.Path, gen: int, rng, parent, p_score, p_hits,
+                    best, best_hits, solved_gen, evals) -> None:
+    """Atomically pickle full search state so a run resumes exactly where it stopped."""
+    obj = {"gen": gen, "rng_state": rng.bit_generator.state,
+           "parent": parent, "p_score": p_score, "p_hits": p_hits,
+           "best": best, "best_hits": best_hits,
+           "solved_gen": solved_gen, "evals": evals}
+    tmp = str(path) + ".tmp"
+    with open(tmp, "wb") as f:
+        pickle.dump(obj, f)
+    os.replace(tmp, path)   # atomic: a crash mid-write cannot corrupt the checkpoint
+
+
 def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
-             n_patterns, targets) -> tuple[list[dict], cgp.Genotype, int]:
-    """One independent run. Returns (log rows, best genotype, its raw hits)."""
+             n_patterns, targets, split, out: pathlib.Path, run: str):
+    """One independent run. Returns its result dict, or None if already finished."""
+    csv_path = out / f"{run}_seed{seed}_log.csv"
+    ckpt_path = out / f"{run}_seed{seed}_ckpt.pkl"
+    result_path = out / f"{run}_seed{seed}_result.json"
+    frames = out / "frames"
+
+    if cfg.resume and result_path.exists():
+        print(f"[seed {seed}] already finished -> skipping "
+              f"(--no-resume to redo)", flush=True)
+        return json.loads(result_path.read_text(encoding="utf-8"))
+
     rng = np.random.default_rng(seed)
     arity = gates_mod.max_arity(gate_set)
     n_funcs = len(gate_set)
@@ -54,29 +99,76 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
     goal = _goal_at(cfg, 0)
     target = targets[goal]
 
-    # Step 1 -- random population, select the fittest.
-    pop = [cgp.random_genotype(rng, cfg.nodes, n_in, 1, n_funcs, arity)
-           for _ in range(cfg.popsize)]
-    scored = [cgp.fitness(g, gate_set, in_masks, target, mask, n_in, cfg.fitness)
-              for g in pop]
-    best_i = int(np.argmax([s for s, _ in scored]))
-    parent, (p_score, p_hits) = pop[best_i], scored[best_i]
+    if cfg.resume and ckpt_path.exists():
+        with open(ckpt_path, "rb") as f:
+            c = pickle.load(f)
+        rng.bit_generator.state = c["rng_state"]
+        start_gen = c["gen"]
+        parent, p_score, p_hits = c["parent"], c["p_score"], c["p_hits"]
+        best_geno, best_hits = c["best"], c["best_hits"]
+        solved_gen, evals = c["solved_gen"], c["evals"]
+        csv_f = csv_path.open("a", newline="", encoding="utf-8")
+        writer = csv.DictWriter(csv_f, fieldnames=LOG_FIELDS)
+        print(f"[seed {seed}] RESUME from gen {start_gen}/{cfg.generations} "
+              f"(hits {p_hits}/{n_patterns})", flush=True)
+    else:
+        # Step 1 -- random population, select the fittest.
+        pop = [cgp.random_genotype(rng, cfg.nodes, n_in, 1, n_funcs, arity)
+               for _ in range(cfg.popsize)]
+        scored = [cgp.fitness(g, gate_set, in_masks, target, mask, n_in, cfg.fitness)
+                  for g in pop]
+        i = int(np.argmax([s for s, _ in scored]))
+        parent, (p_score, p_hits) = pop[i], scored[i]
+        best_geno, best_hits = parent.copy(), p_hits
+        start_gen, solved_gen, evals = 0, -1, cfg.popsize
+        csv_f = csv_path.open("w", newline="", encoding="utf-8")
+        writer = csv.DictWriter(csv_f, fieldnames=LOG_FIELDS)
+        writer.writeheader()
 
-    rows: list[dict] = []
-    best_geno, best_hits = parent.copy(), p_hits
-    evals = cfg.popsize
+    draw_frames = cfg.viz and seed < cfg.viz_seeds
     t_interval = time.time()
-    solved_gen = -1
+    t_seed = time.time()
 
-    for gen in range(cfg.generations):
+    def log_row(gen: int) -> None:
+        nonlocal t_interval
+        pheno = cgp.phenotype(parent, n_in, gate_set, split)
+        c = pheno.counts()
+        span = ((max(1, cfg.switch_interval) if cfg.mvg else cfg.log_interval)
+                if gen > start_gen else 1)
+        secs = (time.time() - t_interval) / span
+        t_interval = time.time()
+        writer.writerow(dict(
+            seed=seed, gen=gen, goal=goal, score=round(float(p_score), 6),
+            hits=p_hits, acc=round(p_hits / n_patterns, 6),
+            active_nodes=pheno.n_active, left=c["left"], right=c["right"],
+            mixed=c["mixed"], const=c["const"],
+            depth=max(pheno.depth.values(), default=0),
+            evals=evals, secs_per_gen=round(secs, 6)))
+        csv_f.flush()
+        print(f"  [seed {seed:3d}] gen {gen:7d} | goal {goal:3s} | "
+              f"hits {p_hits:4d}/{n_patterns} ({p_hits / n_patterns:.4f}) | "
+              f"active {pheno.n_active:3d} (L{c['left']} R{c['right']} "
+              f"M{c['mixed']}) | {secs * 1e3:.2f} ms/gen", flush=True)
+        if draw_frames:
+            frames.mkdir(parents=True, exist_ok=True)
+            viz_mod.draw(parent, pheno, gate_set, n_in,
+                         frames / f"seed{seed}_gen{gen:07d}.png",
+                         title=viz_mod.frame_title(gen, goal, p_hits, n_patterns,
+                                                   pheno, seed), split=split)
+
+    gen = start_gen
+    for gen in range(start_gen, cfg.generations):
         new_goal = _goal_at(cfg, gen)
         if new_goal != goal:
-            # The goal moved: the parent's stored score refers to the old target
-            # and must be recomputed before any comparison against offspring.
+            # The goal moved: the parent's stored score refers to the old target and
+            # must be recomputed before any comparison against offspring.
             goal, target = new_goal, targets[new_goal]
             p_score, p_hits = cgp.fitness(parent, gate_set, in_masks, target,
                                           mask, n_in, cfg.fitness)
             evals += 1
+
+        if gen == start_gen or (gen % cfg.log_interval == 0 and not cfg.mvg):
+            log_row(gen)                        # baseline row before this generation
 
         # Steps 2-3 -- mutate the winner into offspring.
         offspring = [cgp.mutate(parent, rng, n_mut, n_in, n_funcs)
@@ -102,31 +194,44 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
         if solved_gen < 0 and p_hits == n_patterns:
             solved_gen = gen
 
-        # Logging. Under MVG rows are emitted at the END of each goal epoch, so
-        # every row is the same object -- a goal the lineage has had a full epoch
-        # to adapt to -- and rows line up with the switches. (Same convention as
-        # experiment 1, commit ed70189.) Gen 0 and the last generation always log.
-        epoch = max(1, cfg.switch_interval)
-        due = ((gen + 1) % epoch == 0) if cfg.mvg else (gen % cfg.log_interval == 0)
-        if due or gen == 0 or gen == cfg.generations - 1:
-            n_active = len(cgp.active_nodes(parent, n_in, gate_set))
-            span = (epoch if cfg.mvg else cfg.log_interval) if gen > 0 else 1
-            secs = (time.time() - t_interval) / span
-            t_interval = time.time()
-            rows.append(dict(seed=seed, gen=gen, goal=goal, score=p_score,
-                             hits=p_hits, acc=p_hits / n_patterns,
-                             active_nodes=n_active, evals=evals,
-                             secs_per_gen=round(secs, 6)))
-            print(f"  [seed {seed:3d}] gen {gen:6d} | goal {goal:3s} | "
-                  f"hits {p_hits:4d}/{n_patterns} ({p_hits / n_patterns:.4f}) | "
-                  f"active {n_active:3d} | {secs * 1e3:.2f} ms/gen", flush=True)
+        # Under MVG rows land at the END of each goal epoch, so every row is the same
+        # object -- a goal the lineage has had a full epoch to adapt to -- and rows
+        # line up with the switches (same convention as experiment 1, ed70189).
+        if cfg.mvg and (gen + 1) % max(1, cfg.switch_interval) == 0:
+            log_row(gen)
+
+        if cfg.checkpoint_interval and (gen + 1) % cfg.checkpoint_interval == 0:
+            save_checkpoint(ckpt_path, gen + 1, rng, parent, p_score, p_hits,
+                            best_geno, best_hits, solved_gen, evals)
 
         if cfg.stop_on_solution and p_hits == n_patterns:
             break
 
-    for r in rows:
-        r["solved_gen"] = solved_gen
-    return rows, best_geno, best_hits
+    log_row(gen)                                # endpoint row
+    csv_f.close()
+
+    # The final circuit of EVERY seed is drawn, even when per-log frames are capped.
+    pheno = cgp.phenotype(parent, n_in, gate_set, split)
+    if cfg.viz:
+        frames.mkdir(parents=True, exist_ok=True)
+        viz_mod.draw(parent, pheno, gate_set, n_in,
+                     frames / f"seed{seed}_final.png",
+                     title=viz_mod.frame_title(gen, goal, p_hits, n_patterns,
+                                               pheno, seed), split=split)
+    if cfg.save_best:
+        np.savez(out / f"{run}_seed{seed}_best.npz", **asdict(best_geno))
+
+    c = pheno.counts()
+    result = dict(seed=seed, best_hits=int(best_hits),
+                  best_acc=best_hits / n_patterns, final_hits=int(p_hits),
+                  solved_gen=int(solved_gen), gens_run=int(gen + 1),
+                  evals=int(evals), active_nodes=pheno.n_active,
+                  left=c["left"], right=c["right"], mixed=c["mixed"],
+                  seconds=round(time.time() - t_seed, 2))
+    result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    if ckpt_path.exists():
+        ckpt_path.unlink()          # finished -> the checkpoint is no longer needed
+    return result
 
 
 def main(argv=None) -> int:
@@ -136,16 +241,19 @@ def main(argv=None) -> int:
     n_patterns = tasks_mod.n_patterns(cfg.task)
     mask = tasks_mod.full_mask(cfg.task)
     in_masks = tasks_mod.input_masks(cfg.task)
+    # inputs 0..3 are the left retina block, 4..7 the right one; used only to colour
+    # and classify nodes, never by the search itself
+    split = n_in // 2 if tasks_mod.uses_operation(cfg.task) else None
 
-    # Precompute every goal's target mask once; MVG then costs a dict lookup.
     ops = cfg.mvg_ops if cfg.mvg else (cfg.operation,)
     targets = {op: tasks_mod.target_mask(cfg.task, op) for op in ops}
 
     arity = gates_mod.max_arity(gate_set)
     n_mut = cgp.n_mutations(cfg.nodes, arity, 1, cfg.mutation_rate)
 
-    name = (f"cgp_{cfg.task}_{'mvg-' + '-'.join(cfg.mvg_ops) if cfg.mvg else cfg.operation}"
-            f"_n{cfg.nodes}_g{cfg.generations}{('_' + cfg.tag) if cfg.tag else ''}")
+    mode = f"mvg-{'-'.join(cfg.mvg_ops)}" if cfg.mvg else f"fg-{cfg.operation}"
+    run = f"cgp_{cfg.task}_{mode}_n{cfg.nodes}_m{cfg.mutation_rate}"
+    name = f"{run}_g{cfg.generations}" + (f"_{cfg.tag}" if cfg.tag else "")
     out = pathlib.Path(cfg.out_dir) / name
     out.mkdir(parents=True, exist_ok=True)
 
@@ -154,29 +262,17 @@ def main(argv=None) -> int:
           f"gates [{cfg.gates}] arity {arity} | fitness {cfg.fitness}")
     print(f"  {cfg.nodes} nodes, {cgp.n_gene_slots(cfg.nodes, arity, 1)} gene slots, "
           f"{n_mut} mutated/application | (1+{cfg.popsize - 1}) ES")
-    print(f"  {cfg.n_seeds} seeds x {cfg.generations} generations -> {out}", flush=True)
+    print(f"  {cfg.n_seeds} seeds x {cfg.generations} generations | "
+          f"ckpt every {cfg.checkpoint_interval or '-'} | resume {cfg.resume} | "
+          f"viz {cfg.viz} (first {cfg.viz_seeds} seed(s))")
+    print(f"  -> {out}", flush=True)
 
-    all_rows: list[dict] = []
-    summary: list[dict] = []
+    summary = []
     t0 = time.time()
     for k in range(cfg.n_seeds):
-        seed = cfg.seed + k
-        rows, best, best_hits = run_seed(cfg, seed, gate_set, in_masks, mask,
-                                         n_in, n_patterns, targets)
-        all_rows.extend(rows)
-        solved = rows[-1]["solved_gen"] if rows else -1
-        summary.append(dict(seed=seed, best_hits=best_hits,
-                            best_acc=best_hits / n_patterns, solved_gen=solved,
-                            evals=rows[-1]["evals"] if rows else 0))
-        if cfg.save_best:
-            np.savez(out / f"best_seed{seed}.npz", **{k_: v for k_, v in
-                                                      asdict(best).items()})
+        summary.append(run_seed(cfg, cfg.seed + k, gate_set, in_masks, mask, n_in,
+                                n_patterns, targets, split, out, run))
 
-    if all_rows:
-        with (out / "log.csv").open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=list(all_rows[0]))
-            w.writeheader()
-            w.writerows(all_rows)
     with (out / "summary.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(summary[0]))
         w.writeheader()
@@ -184,10 +280,14 @@ def main(argv=None) -> int:
     (out / "config.json").write_text(json.dumps(asdict(cfg), indent=2), encoding="utf-8")
 
     accs = [s["best_acc"] for s in summary]
-    n_solved = sum(1 for s in summary if s["solved_gen"] >= 0)
-    print(f"\ndone in {time.time() - t0:.1f}s | best acc {np.mean(accs):.4f} "
-          f"+/- {np.std(accs):.4f} (max {max(accs):.4f}) | "
-          f"solved {n_solved}/{cfg.n_seeds} | -> {out}")
+    solved = [s for s in summary if s["solved_gen"] >= 0]
+    line = (f"\ndone in {time.time() - t0:.1f}s | best acc {np.mean(accs):.4f} "
+            f"+/- {np.std(accs):.4f} (max {max(accs):.4f}) | "
+            f"solved {len(solved)}/{cfg.n_seeds}")
+    if solved:
+        g = [s["solved_gen"] for s in solved]
+        line += f" | median gens-to-solve {int(np.median(g))}"
+    print(line + f" | -> {out}")
     return 0
 
 

@@ -42,6 +42,12 @@ class RunConfig:
     log_interval: int
     save_best: bool
     tag: str
+    # checkpointing
+    checkpoint_interval: int
+    resume: bool
+    # visualisation
+    viz: bool
+    viz_seeds: int
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -112,6 +118,26 @@ def build_parser() -> argparse.ArgumentParser:
                    help="write the best genotype of each seed to the run directory")
     g.add_argument("--tag", type=str, default="",
                    help="suffix appended to the run directory name")
+
+    g = p.add_argument_group("checkpointing")
+    g.add_argument("--checkpoint-interval", type=int, default=1000,
+                   help="generations between full-state checkpoints (0 = off); "
+                        "enables --resume. Matches kashtan_alon/train.py.")
+    g.add_argument("--resume", dest="resume", action="store_true", default=True,
+                   help="resume from a checkpoint and skip already-finished seeds "
+                        "[default: on]")
+    g.add_argument("--no-resume", dest="resume", action="store_false",
+                   help="ignore any existing checkpoint/result and start fresh "
+                        "(overwrites logs)")
+
+    g = p.add_argument_group("visualisation")
+    g.add_argument("--viz", dest="viz", action="store_true", default=True,
+                   help="save a circuit diagram alongside every log row [default: on]")
+    g.add_argument("--no-viz", dest="viz", action="store_false")
+    g.add_argument("--viz-seeds", type=int, default=1,
+                   help="how many seeds get a frame per log row. The FINAL circuit "
+                        "of every seed is always drawn regardless; this only caps the "
+                        "per-log frames, which otherwise run to seeds x rows images.")
     return p
 
 
@@ -153,4 +179,6 @@ def parse(argv=None) -> RunConfig:
         n_seeds=args.n_seeds, seed=args.seed, fitness=args.fitness,
         out_dir=args.out_dir, log_interval=args.log_interval,
         save_best=args.save_best, tag=args.tag,
+        checkpoint_interval=max(0, args.checkpoint_interval), resume=args.resume,
+        viz=args.viz, viz_seeds=max(0, args.viz_seeds),
     )

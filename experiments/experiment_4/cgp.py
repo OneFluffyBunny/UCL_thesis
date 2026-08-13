@@ -159,6 +159,7 @@ def active_nodes(g: Genotype, n_in: int, gates: Sequence[Gate]) -> list[int]:
     the arity actually used by a node's gate is followed, so surplus input genes
     do not drag nodes into the phenotype.
     """
+    func, conn = g.func.tolist(), g.conn.tolist()
     seen: set[int] = set()
     stack = [int(lbl) for lbl in g.ogene.tolist()]
     while stack:
@@ -169,22 +170,115 @@ def active_nodes(g: Genotype, n_in: int, gates: Sequence[Gate]) -> list[int]:
         if j in seen:
             continue
         seen.add(j)
-        for k in range(gates[int(g.func[j])].arity):
-            stack.append(int(g.conn[j, k]))
+        stack.extend(conn[j][:gates[func[j]].arity])
     return sorted(seen)
+
+
+@dataclass
+class Phenotype:
+    """The decoded circuit: active nodes plus the structure we actually report.
+
+    Density is NOT reported for CGP. It is a flawed metric here for the same reason
+    it was in experiment 1, and worse: a CGP genotype's edge count is fixed by
+    construction (`n_nodes * arity`), so "density" would be a constant. The
+    informative structural readout on a left/right retina is instead **where each
+    node's input cone comes from**:
+
+      left   -- the node depends only on retina pixels 0-3
+      right  -- only on pixels 4-7
+      mixed  -- on both halves
+      const  -- on neither (a constant gate)
+
+    A modular solution shows up directly as a large left group and a large right
+    group that meet only in a few mixed nodes near the output. A smeared,
+    non-modular solution is mixed almost everywhere. This needs no community
+    detection and no null model, so it is available now and is not hostage to the
+    modularity-metric work.
+    """
+    active: list[int]                 # node indices in the phenotype
+    depth: dict[int, int]             # node index -> longest path from a program input
+    cone: dict[int, frozenset[int]]   # node index -> program inputs it depends on
+    cls: dict[int, str]               # node index -> "left" / "right" / "mixed" / "const"
+    out_nodes: list[int]              # node index feeding each program output (-1 if an input)
+
+    @property
+    def n_active(self) -> int:
+        return len(self.active)
+
+    def counts(self) -> dict[str, int]:
+        c = {"left": 0, "right": 0, "mixed": 0, "const": 0}
+        for j in self.active:
+            c[self.cls[j]] += 1
+        return c
+
+
+def phenotype(g: Genotype, n_in: int, gates: Sequence[Gate],
+              split: int | None = None) -> Phenotype:
+    """Decode the genotype's structure. `split` = first input of the right half.
+
+    For the 8-pixel retina `split=4`: inputs 0-3 are the left 2x2 block and 4-7 the
+    right one (see kashtan_alon/tasks.py's pixel map). With `split=None` every node
+    with a non-empty cone is classed "mixed", which is the honest answer for tasks
+    that have no left/right structure.
+    """
+    active = active_nodes(g, n_in, gates)
+    active_set = set(active)
+
+    # Nodes are in topological order by construction: node j only references labels
+    # below n_in + j. So one ascending pass suffices for both cones and depths.
+    cone: dict[int, frozenset[int]] = {}
+    depth: dict[int, int] = {}
+    for j in range(g.n_nodes):
+        gate = gates[int(g.func[j])]
+        acc: set[int] = set()
+        d = 0
+        for k in range(gate.arity):
+            lbl = int(g.conn[j, k])
+            if lbl < n_in:
+                acc.add(lbl)
+                d = max(d, 1)
+            else:
+                acc |= cone[lbl - n_in]
+                d = max(d, depth[lbl - n_in] + 1)
+        cone[j] = frozenset(acc)
+        depth[j] = d
+
+    cls: dict[int, str] = {}
+    for j in active_set:
+        c = cone[j]
+        if not c:
+            cls[j] = "const"
+        elif split is None:
+            cls[j] = "mixed"
+        elif max(c) < split:
+            cls[j] = "left"
+        elif min(c) >= split:
+            cls[j] = "right"
+        else:
+            cls[j] = "mixed"
+
+    out_nodes = [int(lbl) - n_in if int(lbl) >= n_in else -1
+                 for lbl in g.ogene.tolist()]
+    return Phenotype(active=active, depth={j: depth[j] for j in active_set},
+                     cone={j: cone[j] for j in active_set}, cls=cls,
+                     out_nodes=out_nodes)
 
 
 def evaluate(g: Genotype, gates: Sequence[Gate], in_masks: Sequence[int],
              mask: int, n_in: int) -> list[int]:
     """Output truth-table masks, one per program output. Bit-parallel over patterns.
 
-    Every node is computed, not just the active ones: at 100 nodes the bookkeeping
-    to skip inactive ones costs more than the bitwise ops it saves.
+    Only the ACTIVE nodes are computed. `active_nodes` returns them ascending, which
+    is already a valid topological order because node j may only reference labels
+    below `n_in + j`. This matters more the larger the genotype: CGP typically keeps
+    well under a fifth of its nodes in the phenotype, so at 800 nodes this is the
+    difference between ~30 gate evaluations and 800.
     """
     vals = list(in_masks) + [0] * g.n_nodes
-    for j in range(g.n_nodes):
-        gate = gates[int(g.func[j])]
-        args = [vals[int(g.conn[j, k])] for k in range(gate.arity)]
+    func, conn = g.func.tolist(), g.conn.tolist()
+    for j in active_nodes(g, n_in, gates):
+        gate = gates[func[j]]
+        args = [vals[conn[j][k]] for k in range(gate.arity)]
         vals[n_in + j] = gate.fn(args, mask)
     return [vals[int(lbl)] for lbl in g.ogene.tolist()]
 
