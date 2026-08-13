@@ -113,8 +113,19 @@ two-week side experiment, not a second thesis.
 Spec only — no code yet. Blocked on `PAPER_SPEC.md` (see below).
 
 ⚠️ **Before writing any code**: `kashtan_alon/` runs 1–3 produced a null because
-the algorithm was reimplemented from the wrong source. The parameter tables in
-the ECGP PDF are **images** and did not survive text extraction, so the operator
-rates, levels-back, node counts and module-size limits are currently **unknown**.
-A verbatim `PAPER_SPEC.md` must be written and checked before implementation —
-same discipline that fixed `kashtan_alon/`.
+the algorithm was reimplemented from the wrong source. A verbatim `PAPER_SPEC.md`
+must be written and checked before implementation — same discipline that fixed
+`kashtan_alon/`. Every entry is marked `[verbatim]` / `[inferred]` / `[our
+choice]`, and **no code is written while anything reads `[inferred]`**.
+
+Note that the PDF's tables and inline math are **images** that text extraction
+drops silently — a missing number means "screenshot that page", never "pick
+something reasonable".
+
+Recovered so far (all `[verbatim]`): Table II in full (pop 5; 100 nodes / 300
+genes; 3% point mutation = 9 genes, probability 1; compress/expand 0.1/0.2;
+module point mutation 0.04; add/remove input 0.01/0.02; add/remove output
+0.01/0.02; module list initially empty; 50 runs); one-row topology with a node
+connectable to *any* previous node (⇒ levels-back unrestricted — not a parameter
+in this formulation); function set AND/NAND/OR/NOR. **Outstanding:** the maximum
+number of module inputs (p. 7, dropped inline symbol).
