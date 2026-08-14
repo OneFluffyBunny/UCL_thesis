@@ -483,7 +483,8 @@ def stage_title(gen: int, hits: int, n_patterns: int) -> str:
     census is already visible in the drawing -- repeating it six times only competes
     with the circuits for attention.
     """
-    return f"gen {gen}  |  accuracy {hits / n_patterns:.4f}"
+    return (f"gen {gen}  |  accuracy {100 * hits / n_patterns:.2f}% "
+            f"({hits}/{n_patterns})")
 
 
 def stage_grid(panels, gates, n_in: int, save_path, title: str = "",
