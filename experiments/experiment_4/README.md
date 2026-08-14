@@ -93,6 +93,48 @@ at all** under MVG.
   thesis claim that a compressed encoding manufactures conservation for free by
   giving each parameter many dependents.
 
+## H4 — possible future experiment: module proliferation (fixed goal, no switching)
+
+A *positive, countable* signature for the same persistence-vs-rediscovery claim,
+proposed 2026-08-13. Instead of measuring a **rate** difference (recovery time),
+measure whether a discovered module is **so useful that it spreads**.
+
+> If ECGP discovers a genuinely useful compound function, later genotypes should
+> contain **many instances of it**, and that proliferation should be driven by its
+> fitness contribution rather than by duplication drift.
+
+**Why the KA retina is the ideal task for this.** Its optimal solution contains
+*the same sub-circuit twice*: the left half is `obj(p0,p1,p2,p3)` and the right
+half is `obj(p6,p7,p4,p5)` — **identical function, disjoint inputs**, 9 gates each
+(see `RESULTS.md`, minimal-circuit note). The task therefore has a built-in
+reusable module of known size and known truth table:
+
+- **ECGP** can compress the half-detector once and instantiate it twice.
+- **CGP** has no reuse mechanism and must evolve the same 9 gates independently,
+  twice over.
+
+That is the persistence-vs-rediscovery dichotomy made structural, and it needs
+**no goal switching at all** — a fixed-goal CGP-vs-ECGP comparison, far cheaper
+than the MVG arms.
+
+**Observables.** Instantiation count per module id in the active phenotype;
+module survival time from creation; whether an evolved module's truth table
+matches a half-detector or a recognisable piece of one (this is H2's machinery).
+
+**Two cautions, both from the paper itself.**
+- ECGP's `compress` grabs a **random contiguous genotype section** — module
+  creation is blind, and nothing biases it toward the left/right boundary.
+- Walker & Miller report their own evolved modules "were represented in a much
+  less efficient form, consisting of up to five Boolean functions" and "the
+  majority of the modules also contained some inactive nodes". Expect messy,
+  oversized modules, not a clean XOR.
+
+**A null is required before calling proliferation *selection*.** A module can
+spread by duplication drift alone. The test is a **knock-out**: replace an
+instance with a random module of the same shape and check that fitness actually
+drops. Without that, instance count measures only that the duplication operator
+fired.
+
 ## A null is still a result
 
 If MVG produces no persistent modules even where the representation makes
@@ -110,7 +152,17 @@ two-week side experiment, not a second thesis.
 
 ## Status
 
-Spec only — no code yet. Blocked on `PAPER_SPEC.md` (see below).
+**CGP and ECGP are both built and verified; no ECGP experiment has been run yet.**
+The CGP cells are measured — FG solves at every genotype size, MVG never does; see
+`RESULTS.md` for the numbers, the genotype-length finding, the falsified step-size
+hypothesis and the open questions. H4 needs only a run now, not more machinery.
+
+ECGP lives in `ecgp.py` behind `--ecgp` (off by default, so every CGP number in
+`RESULTS.md` is reproduced by the same commands as before). `PAPER_SPEC.md`
+section 12 lists the 14 cases the paper leaves open, each `[our choice]`; the
+`[inferred]` count is still zero. Run it with, e.g.:
+
+    conda run -n lndp python train.py --ecgp --nodes 50 --operation and --n-seeds 12
 
 ⚠️ **Before writing any code**: `kashtan_alon/` runs 1–3 produced a null because
 the algorithm was reimplemented from the wrong source. A verbatim `PAPER_SPEC.md`
@@ -127,5 +179,8 @@ genes; 3% point mutation = 9 genes, probability 1; compress/expand 0.1/0.2;
 module point mutation 0.04; add/remove input 0.01/0.02; add/remove output
 0.01/0.02; module list initially empty; 50 runs); one-row topology with a node
 connectable to *any* previous node (⇒ levels-back unrestricted — not a parameter
-in this formulation); function set AND/NAND/OR/NOR. **Outstanding:** the maximum
-number of module inputs (p. 7, dropped inline symbol).
+in this formulation); function set AND/NAND/OR/NOR; and the module bounds — 2..`ms`
+nodes, 1..`n` outputs, 2..`2n` inputs — read off the rendered p. 5 paragraph, which
+closes the one item that was outstanding here. **Outstanding:** none; Table I
+("the effect of the operators on each node type") is image-only and unread, but it
+summarises rules already captured in prose, so it is a cross-check, not a gap.

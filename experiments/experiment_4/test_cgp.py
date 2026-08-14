@@ -12,7 +12,7 @@ they check the packing as well as the rule.
 
 from __future__ import annotations
 
-import numpy as np
+import random
 
 import cgp
 import gates as gates_mod
@@ -23,9 +23,16 @@ def _bits(mask: int, n: int) -> list[bool]:
     return [bool((mask >> r) & 1) for r in range(n)]
 
 
-def test_fast_matches_slow(n_trials: int = 40) -> None:
-    """Bit-parallel evaluation == per-pattern evaluation, on random genotypes."""
-    gate_set = gates_mod.build_set(",".join(gates_mod.ALL_GATES))
+def test_fast_matches_slow(n_trials: int = 40, spec: str | None = None) -> None:
+    """Bit-parallel evaluation == per-pattern evaluation, on random genotypes.
+
+    Run against BOTH gate sets, because `cgp.evaluate` has two backward-walk paths:
+    an unrolled one for an all-arity-2 function set (every default run, including
+    the paper's AND/NAND/OR/NOR) and a generic one for sets containing `not` or a
+    constant. Testing only the 9-gate set would leave the path we actually run on
+    uncovered.
+    """
+    gate_set = gates_mod.build_set(spec or ",".join(gates_mod.ALL_GATES))
     arity = gates_mod.max_arity(gate_set)
     n_in, n_nodes = 6, 25
     n_patterns = 1 << n_in
@@ -39,14 +46,16 @@ def test_fast_matches_slow(n_trials: int = 40) -> None:
                 m |= 1 << r
         in_masks.append(m)
 
-    rng = np.random.default_rng(1234)
+    rnd = random.Random(1234)
     for _ in range(n_trials):
-        g = cgp.random_genotype(rng, n_nodes, n_in, 1, len(gate_set), arity)
+        g = cgp.random_genotype(rnd, n_nodes, n_in, 1, len(gate_set), arity)
         fast = _bits(cgp.evaluate(g, gate_set, in_masks, mask, n_in)[0], n_patterns)
         slow = cgp.evaluate_slow(g, gate_set, n_in, n_patterns)[0]
         assert fast == slow, "bit-parallel evaluation disagrees with the reference"
+    path = ("unrolled binary" if cgp._uniform_binary(gate_set, arity)
+            else "generic mixed-arity")
     print(f"ok  fast == slow on {n_trials} random circuits "
-          f"({len(gate_set)} gates, arity {arity})")
+          f"({len(gate_set)} gates, arity {arity}, {path} path)")
 
 
 def test_ka_task_counts() -> None:
@@ -98,16 +107,18 @@ def test_mutation_stays_valid(n_trials: int = 200) -> None:
     gate_set = gates_mod.build_set(gates_mod.DEFAULT_GATES)
     arity = gates_mod.max_arity(gate_set)
     n_in, n_nodes = 8, 40
-    rng = np.random.default_rng(7)
-    g = cgp.random_genotype(rng, n_nodes, n_in, 1, len(gate_set), arity)
+    rnd = random.Random(7)
+    g = cgp.random_genotype(rnd, n_nodes, n_in, 1, len(gate_set), arity)
     n_mut = cgp.n_mutations(n_nodes, arity, 1, 0.03)
     for _ in range(n_trials):
-        g = cgp.mutate(g, rng, n_mut, n_in, len(gate_set))
+        g = cgp.mutate(g, rnd, n_mut, n_in, len(gate_set))
         for j in range(n_nodes):
-            assert (g.conn[j] < n_in + j).all(), f"node {j} references itself or later"
-        assert (g.ogene < n_in + n_nodes).all()
-        assert (g.ntype == 0).all(), "CGP must not produce non-zero node types"
-        assert (g.cout == 0).all() and (g.ocout == 0).all()
+            # conn is flat, row-major: node j's input genes are conn[j*a : (j+1)*a]
+            assert all(lbl < n_in + j for lbl in g.inputs_of(j)), \
+                f"node {j} references itself or later"
+        assert all(lbl < n_in + n_nodes for lbl in g.ogene)
+        assert all(t == 0 for t in g.ntype), "CGP must not produce non-zero node types"
+        assert all(c == 0 for c in g.cout) and all(c == 0 for c in g.ocout)
     print(f"ok  {n_trials} chained mutations keep the graph acyclic and CGP-shaped")
 
 
@@ -123,8 +134,8 @@ def test_active_nodes_subset() -> None:
     """Active nodes are a subset of all nodes, and the output is reachable."""
     gate_set = gates_mod.build_set(gates_mod.DEFAULT_GATES)
     arity = gates_mod.max_arity(gate_set)
-    rng = np.random.default_rng(3)
-    g = cgp.random_genotype(rng, 100, 8, 1, len(gate_set), arity)
+    rnd = random.Random(3)
+    g = cgp.random_genotype(rnd, 100, 8, 1, len(gate_set), arity)
     act = cgp.active_nodes(g, 8, gate_set)
     assert set(act) <= set(range(100))
     assert len(act) < 100, "a random 100-node genotype should have inactive nodes"
@@ -135,7 +146,8 @@ if __name__ == "__main__":
     test_gene_slot_count()
     test_ka_task_counts()
     test_one_half_predictor_is_capped()
-    test_fast_matches_slow()
+    test_fast_matches_slow()                                  # generic path
+    test_fast_matches_slow(spec=gates_mod.DEFAULT_GATES)      # unrolled path
     test_mutation_stays_valid()
     test_active_nodes_subset()
     print("\nall tests passed")

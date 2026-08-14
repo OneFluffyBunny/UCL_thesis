@@ -21,6 +21,28 @@ grounds the thesis's premise that it's worth evolving toward. More to add.
 
 ---
 
+## High-level hypotheses and abstractions
+
+Running log of cross-cutting hypotheses/hunches — not established results, flag
+as untested until backed by a controlled comparison. More to add.
+
+- **Hypothesis: constraints on connectivity may be critical for both sparsity
+  and modularity of the grown brain.** Impression from running NDP, the
+  `kashtan_alon/` reproduction, and experiment_1: left unconstrained, growth/
+  search is prone to converging on a dense, tangled brain rather than a sparse
+  modular one (consistent with the `qmetrics` density-confound note — a dense
+  graph makes Q ≈ 0 nearly unavoidable regardless of wiring). Not yet isolated
+  as a controlled variable across all three.
+- **Worth testing: does constraining also make search converge faster**, not
+  just sparser/more modular? Open question, not yet run as its own comparison.
+- **Hunch for *why*, if the speed effect holds**: constraints shrink the
+  search space, and the solution happens to sit inside the constrained
+  subspace — so a constrained search is effectively searching a smaller
+  haystack containing the same needle, while an unconstrained search wastes
+  budget covering the larger space outside it.
+
+---
+
 ## Evolutionary computation methods
 
 Optimisers used to search the DNA/genome across this thesis. So far: **CMA-ES**

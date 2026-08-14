@@ -215,3 +215,26 @@ type 0, I, and II nodes are shown in Table I"*, and every rule it summarises is
 stated in the prose captured in §6. So it is a **cross-check, not a missing
 value**. Worth one screenshot to confirm §6 against it before trusting the
 implementation.
+
+## 12. Implementation decisions the paper does not specify — all `[our choice]`
+
+Written when `ecgp.py` was implemented (2026-08-14). These are **not** parameters and
+none is `[inferred]`: each is a place where the paper's prose leaves a case open that
+code must nevertheless decide. Every one is commented at its site in `ecgp.py`.
+
+| # | Situation the paper leaves open | Decision | Why |
+|---|---|---|---|
+| 1 | "Pick two random points, respecting the module size limits" — two points, then reject illegal gaps? | Draw a legal length 2..`ms` uniformly, then a uniform position | Same support, no rejection loop, and independent points would bias toward short modules |
+| 2 | `compress` on a run **nothing outside reads** (entirely inactive code) — it would have 0 outputs, below the min of 1 | Give it one output: the last encapsulated node | Refusing instead would make compress silently rarer on exactly the inactive regions CGP drifts in |
+| 3 | Program outputs pointing *into* a compressed run — are they "later nodes"? | Yes; they get a module output like any other reference | The graph is otherwise left dangling |
+| 4 | A node's **output count shrinks** (type II holding a 3-output module mutates to a primitive), while later nodes still ask for output 2 | Clamp those references to the highest surviving output | Smallest repair; re-drawing them would inject mutation into genes the operator never selected |
+| 5 | A drawn input slot is **retired mid-application** because an earlier drawn function gene shrank that node's arity | The slot is spent, not re-drawn | Re-drawing raises the effective rate on every other gene |
+| 6 | A drawn slot lands on a **type I function gene**, which is immune | Spent, not re-drawn | Same reason as 5; otherwise the rate would scale with how many type I nodes an individual carries |
+| 7 | How many slots does **module point mutation** mutate? Called "a restricted genotype point mutation", given no rate of its own | The genotype rule, `max(1, round(rate × slots))` | With 2-5 node bodies the `max(1, …)` floor decides it either way |
+| 8 | **remove-input**: what happens to body genes that referenced the dropped input? | Re-pointed at a surviving module input chosen at random | A body node still needs two inputs; deleting is not representable |
+| 9 | **remove-output**: what happens to outer references carrying the dropped index? | Re-pointed at a surviving output at random; higher indices shift down | Same; the alternative is a dangling reference |
+| 10 | **Order** of the operators within one offspring | compress → expand → module operators → genotype point mutation | Point mutation then sees the module list the offspring is actually evaluated with, so a module made this generation can be re-used immediately |
+| 11 | Are the five module rates per offspring or per module? | Per module, per offspring | A module is the object they act on; the genotype operators stay per offspring |
+| 12 | "Set a node's function to any primitive or any module" — with what distribution? | Uniform over primitives ∪ module list | The unqualified reading; nothing in the paper weights them |
+| 13 | The second integer of a reference, when the source has several outputs | Drawn uniformly over the source's outputs, together with the label | The paper mutates the pair together "to ensure that every connection is still valid" |
+| 14 | The module list is "global and shared", but a (1+4) ES mutates 4 offspring independently | Each individual owns its dict; the **winner's** list, pruned to what it uses, becomes the next generation's | A literally shared list would let one offspring's module operator change another's fitness. Pruning-on-promotion is the paper's own rule (section 5), so this is the same semantics one generation at a time |

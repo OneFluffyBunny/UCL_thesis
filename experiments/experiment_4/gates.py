@@ -23,25 +23,35 @@ from __future__ import annotations
 from typing import Callable, NamedTuple, Sequence
 
 
+# Opcodes. `cgp.evaluate` dispatches on these with an inline if/elif chain rather
+# than calling `fn`, because a Python call plus building the `args` list costs more
+# than the bitwise op itself (measured: gate dispatch was a large slice of a ~2 us
+# per-node budget). The opcode keeps that fast path **general** -- it works for any
+# `--gates` subset in any order -- where hard-coding function indices would silently
+# break the moment someone reordered the flag.
+OP_AND, OP_OR, OP_NAND, OP_NOR, OP_XOR, OP_XNOR, OP_NOT, OP_CONST0, OP_CONST1 = range(9)
+
+
 class Gate(NamedTuple):
     name: str
     arity: int
     fn: Callable[[Sequence[int], int], int]      # over truth-table masks
     slow: Callable[[Sequence[bool]], bool]       # over single bools
+    op: int                                      # opcode for cgp.evaluate's fast path
 
 
 # The paper's set, plus the usual extras. Order here is irrelevant -- a genotype
 # stores an index into the *selected* subset, which is built by `build_set`.
 _REGISTRY = {
-    "and":    Gate("and",    2, lambda a, m: a[0] & a[1],            lambda a: a[0] and a[1]),
-    "or":     Gate("or",     2, lambda a, m: a[0] | a[1],            lambda a: a[0] or a[1]),
-    "nand":   Gate("nand",   2, lambda a, m: ~(a[0] & a[1]) & m,     lambda a: not (a[0] and a[1])),
-    "nor":    Gate("nor",    2, lambda a, m: ~(a[0] | a[1]) & m,     lambda a: not (a[0] or a[1])),
-    "xor":    Gate("xor",    2, lambda a, m: a[0] ^ a[1],            lambda a: a[0] != a[1]),
-    "xnor":   Gate("xnor",   2, lambda a, m: ~(a[0] ^ a[1]) & m,     lambda a: a[0] == a[1]),
-    "not":    Gate("not",    1, lambda a, m: ~a[0] & m,              lambda a: not a[0]),
-    "const0": Gate("const0", 1, lambda a, m: 0,                      lambda a: False),
-    "const1": Gate("const1", 1, lambda a, m: m,                      lambda a: True),
+    "and":    Gate("and",    2, lambda a, m: a[0] & a[1],            lambda a: a[0] and a[1],        OP_AND),
+    "or":     Gate("or",     2, lambda a, m: a[0] | a[1],            lambda a: a[0] or a[1],         OP_OR),
+    "nand":   Gate("nand",   2, lambda a, m: ~(a[0] & a[1]) & m,     lambda a: not (a[0] and a[1]),  OP_NAND),
+    "nor":    Gate("nor",    2, lambda a, m: ~(a[0] | a[1]) & m,     lambda a: not (a[0] or a[1]),   OP_NOR),
+    "xor":    Gate("xor",    2, lambda a, m: a[0] ^ a[1],            lambda a: a[0] != a[1],         OP_XOR),
+    "xnor":   Gate("xnor",   2, lambda a, m: ~(a[0] ^ a[1]) & m,     lambda a: a[0] == a[1],         OP_XNOR),
+    "not":    Gate("not",    1, lambda a, m: ~a[0] & m,              lambda a: not a[0],             OP_NOT),
+    "const0": Gate("const0", 1, lambda a, m: 0,                      lambda a: False,                OP_CONST0),
+    "const1": Gate("const1", 1, lambda a, m: m,                      lambda a: True,                 OP_CONST1),
 }
 
 DEFAULT_GATES = "and,nand,or,nor"          # Table II / PAPER_SPEC.md section 8

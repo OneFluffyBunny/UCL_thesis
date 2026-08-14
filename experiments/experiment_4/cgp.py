@@ -1,4 +1,4 @@
-"""CGP genotype, mutation and evaluation -- pure Python/numpy, no JAX.
+"""CGP genotype, mutation and evaluation -- pure Python, no numpy in the hot loop.
 
 Spec: `PAPER_SPEC.md` (Walker & Miller, IEEE TEVC 12(4), 2008). Sections cited
 below refer to it.
@@ -10,57 +10,84 @@ label strictly below its own.
 
 Genes are stored as **pairs**, which is the ECGP encoding:
 
-    func[j], ntype[j]        function gene:  (function-or-module id, node type)
-    conn[j,k], cout[j,k]     input gene k:   (source label, which output of it)
-    ogene[o], ocout[o]       output gene o:  (source label, which output of it)
+    func[j], ntype[j]              function gene:  (function-or-module id, node type)
+    conn[j*a+k], cout[j*a+k]       input gene k:   (source label, which output of it)
+    ogene[o], ocout[o]             output gene o:  (source label, which output of it)
 
 For pure CGP every `ntype` is 0 and every `*cout` is 0, exactly as the paper
 states ("every node encoded in the ECGP genotype is of node type 0, and the second
 integer of each pair encoding the node inputs is always 0"). Keeping the pairs now
 means ECGP slots in later without rewriting the genotype.
 
+WHY PLAIN LISTS AND `random.Random`, NOT NUMPY. The genotype used to be int32
+arrays. That cost more than it bought: `evaluate` called `.tolist()` on the whole
+genotype on every call -- converting an 800x2 array to use ~65 of its rows -- which
+was 8-27% of runtime and *grew* with genotype size, and `rng.integers()` costs
+~1-2 us per scalar draw against ~0.1 us for `random.randrange`. Switching the
+genotype to Python lists and the search RNG to `random.Random` measured **2.2-3.2x
+faster per generation** at 100-800 nodes with identical semantics. Arrays are still
+used for I/O (`np.savez`) and for summary statistics, never inside the loop.
+
+⚠️ The random stream therefore differs from the numpy-era code: a given seed does
+not reproduce a pre-2026-08-13 run. Reproducibility *within* this implementation is
+unaffected (same seed -> same run, and checkpoint/resume restores `getstate()`).
+
 EVALUATION -- truth-table masks. Each wire's behaviour over *all* 2**n_in input
 patterns is a single Python int: bit `r` is the wire's value on pattern `r`. A
 gate is then one bitwise op over every pattern simultaneously, and fitness is a
 population count. This is exact, not approximate -- `evaluate_slow` below is the
 obvious per-pattern implementation and `test_cgp.py` asserts the two agree.
+
+FURTHER SPEED, NOT TAKEN (yet). This module is now almost entirely Python-integer
+bitwise work, which is **PyPy's best case**; experiment 4 needs no JAX (numpy is
+only used for I/O and stats), so it could run under PyPy for plausibly another
+5-10x with no code change. That needs a separate environment, so it is recorded
+here as an option rather than a dependency. Numba is a poorer fit: the hot loop is
+a data-dependent graph walk, not an array kernel.
 """
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import Sequence
-
-import numpy as np
 
 from gates import Gate
 
 
 @dataclass
 class Genotype:
-    """One individual. Arrays are int32; see the module docstring for the layout."""
-    func: np.ndarray    # (n_nodes,)            function id, indexes the gate set
-    ntype: np.ndarray   # (n_nodes,)            node type; always 0 in CGP
-    conn: np.ndarray    # (n_nodes, arity)      source label per input gene
-    cout: np.ndarray    # (n_nodes, arity)      which output of that source; always 0 in CGP
-    ogene: np.ndarray   # (n_outputs,)          source label per program output
-    ocout: np.ndarray   # (n_outputs,)          which output of it; always 0 in CGP
+    """One individual, held as plain Python lists (see the module docstring).
+
+    `conn` and `cout` are **flat**, row-major: gene `k` of node `j` is at index
+    `j * arity + k`. Flat beats a list-of-lists here because the evaluator indexes
+    them millions of times and one indirection per access is measurable.
+    """
+    func: list[int]     # (n_nodes,)             function id, indexes the gate set
+    ntype: list[int]    # (n_nodes,)             node type; always 0 in CGP
+    conn: list[int]     # (n_nodes * arity,)     source label per input gene
+    cout: list[int]     # (n_nodes * arity,)     which output of that source; always 0 in CGP
+    ogene: list[int]    # (n_outputs,)           source label per program output
+    ocout: list[int]    # (n_outputs,)           which output of it; always 0 in CGP
+    arity: int          # input genes per node -- needed to index the flat lists
 
     def copy(self) -> "Genotype":
-        return Genotype(self.func.copy(), self.ntype.copy(), self.conn.copy(),
-                        self.cout.copy(), self.ogene.copy(), self.ocout.copy())
+        return Genotype(self.func[:], self.ntype[:], self.conn[:], self.cout[:],
+                        self.ogene[:], self.ocout[:], self.arity)
 
     @property
     def n_nodes(self) -> int:
-        return int(self.func.shape[0])
-
-    @property
-    def arity(self) -> int:
-        return int(self.conn.shape[1])
+        return len(self.func)
 
     @property
     def n_outputs(self) -> int:
-        return int(self.ogene.shape[0])
+        return len(self.ogene)
+
+    def inputs_of(self, j: int) -> list[int]:
+        """Source labels of node `j`'s input genes -- the readable accessor for the
+        flat layout. Not used in the hot loop, which indexes `conn` directly."""
+        b = j * self.arity
+        return self.conn[b:b + self.arity]
 
 
 def n_gene_slots(n_nodes: int, arity: int, n_outputs: int) -> int:
@@ -83,7 +110,62 @@ def n_mutations(n_nodes: int, arity: int, n_outputs: int, rate: float) -> int:
 # initialisation
 # ---------------------------------------------------------------------------
 
-def random_genotype(rng: np.random.Generator, n_nodes: int, n_in: int,
+def _draw_slots(rnd: random.Random, total: int, k: int) -> list[int] | set[int]:
+    """`k` distinct slot indices drawn uniformly from `range(total)`.
+
+    `random.sample` is correct but heavy: it builds a set/pool and routes every draw
+    through `_randbelow_with_getrandbits`, and profiling showed `mutate` (dominated
+    by exactly this) taking 59% of the search loop. When `k` is small relative to
+    `total` -- always true here, e.g. 36 of 1601 -- rejection sampling into a set is
+    the same distribution for ~`k` cheap draws: expected collisions are
+    `k^2 / 2*total`, under one for our sizes. `random()` is a single C call against
+    `randrange`'s Python-level bit_length loop.
+
+    The `int(random() * total)` bias is bounded by `total / 2**53` and is irrelevant
+    at these magnitudes. Falls back to `sample` when `k` is a large fraction of
+    `total`, where rejection would thrash.
+    """
+    if k >= total:
+        return list(range(total))
+    if k * 2 > total:
+        return rnd.sample(range(total), k)
+    rand = rnd.random
+    picked: set[int] = set()
+    add = picked.add
+    while len(picked) < k:
+        add(int(rand() * total))
+    return picked
+
+
+def _draw_slots_biased(rnd: random.Random, total: int, n_func: int, k: int,
+                       w: float) -> set[int]:
+    """`k` distinct slot indices with WIRING slots down-weighted by `w`.
+
+    ⚠️ [our choice -- NOT in the paper]. Walker & Miller mutate every gene slot with
+    equal probability, so with arity 2 a node's function gene is picked 1/3 of the
+    time and its two input genes 2/3. This samples a function slot with weight 1 and
+    a wiring slot (an input gene, or an output gene -- both change *what connects to
+    what*) with weight `w < 1`, testing whether the operator's step size is what
+    breaks MVG: a rewire relocates a whole subtree, a function swap edits one gate
+    in place.
+
+    Sequential rejection rather than a cumulative-weight table: draw uniformly, keep
+    a wiring slot with probability `w`. That is exactly sampling without replacement
+    with weights 1 : w, and stays a couple of cheap `random()` calls per pick, which
+    matters because `mutate` is ~59% of the search loop.
+    """
+    rand = rnd.random
+    picked: set[int] = set()
+    add = picked.add
+    while len(picked) < k:
+        s = int(rand() * total)
+        if s >= n_func and rand() >= w:
+            continue
+        add(s)
+    return picked
+
+
+def random_genotype(rnd: random.Random, n_nodes: int, n_in: int,
                     n_outputs: int, n_funcs: int, arity: int) -> Genotype:
     """A uniformly random valid genotype.
 
@@ -91,24 +173,26 @@ def random_genotype(rng: np.random.Generator, n_nodes: int, n_in: int,
     "These integers are initially chosen so that the program outputs are given by
     the outputs of the last O nodes in the genotype."
     """
-    func = rng.integers(0, n_funcs, size=n_nodes, dtype=np.int32)
-    ntype = np.zeros(n_nodes, dtype=np.int32)
-    conn = np.zeros((n_nodes, arity), dtype=np.int32)
+    rand = rnd.random
+    func = [int(rand() * n_funcs) for _ in range(n_nodes)]
+    conn: list[int] = []
     for j in range(n_nodes):
         # node j is labelled n_in + j and may reference any label below that
-        conn[j] = rng.integers(0, n_in + j, size=arity, dtype=np.int32)
-    cout = np.zeros((n_nodes, arity), dtype=np.int32)
-    ogene = np.arange(n_in + n_nodes - n_outputs, n_in + n_nodes, dtype=np.int32)
-    ocout = np.zeros(n_outputs, dtype=np.int32)
-    return Genotype(func, ntype, conn, cout, ogene, ocout)
+        lim = n_in + j
+        for _ in range(arity):
+            conn.append(int(rand() * lim))
+    return Genotype(func=func, ntype=[0] * n_nodes, conn=conn,
+                    cout=[0] * (n_nodes * arity),
+                    ogene=list(range(n_in + n_nodes - n_outputs, n_in + n_nodes)),
+                    ocout=[0] * n_outputs, arity=arity)
 
 
 # ---------------------------------------------------------------------------
 # mutation (spec section 6, "genotype point mutation")
 # ---------------------------------------------------------------------------
 
-def mutate(g: Genotype, rng: np.random.Generator, n_mut: int, n_in: int,
-           n_funcs: int) -> Genotype:
+def mutate(g: Genotype, rnd: random.Random, n_mut: int, n_in: int,
+           n_funcs: int, wire_w: float = 1.0) -> Genotype:
     """Return a mutated copy with exactly `n_mut` gene slots resampled.
 
     Table II gives "genotype point mutation probability 1" -- the operator is
@@ -119,31 +203,36 @@ def mutate(g: Genotype, rng: np.random.Generator, n_mut: int, n_in: int,
     current value; the paper does not require a mutation to change anything, and
     forcing a change would alter the neutral-drift behaviour the (1+4) ES depends
     on.
+
+    `wire_w` is a deviation from the paper and defaults to 1.0, which is the paper:
+    every slot equally likely. See `_draw_slots_biased`.
     """
     out = g.copy()
     n, a, n_out = g.n_nodes, g.arity, g.n_outputs
+    func, conn, ogene = out.func, out.conn, out.ogene
+    rand = rnd.random
 
     # Flat slot indexing: [0, n)          -> function gene of node j
-    #                     [n, n + n*a)    -> input gene (j, k)
+    #                     [n, n + n*a)    -> input gene (j, k), i.e. conn[s - n]
     #                     [n + n*a, ...)  -> output gene o
     total = n_gene_slots(n, a, n_out)
-    slots = rng.choice(total, size=min(n_mut, total), replace=False)
-
-    for s in slots.tolist():
+    n_a = n + n * a
+    k = min(n_mut, total)
+    slots = (_draw_slots(rnd, total, k) if wire_w == 1.0
+             else _draw_slots_biased(rnd, total, n, k, wire_w))
+    for s in slots:
         if s < n:
-            out.func[s] = rng.integers(0, n_funcs)
-        elif s < n + n * a:
-            t = s - n
-            j, k = divmod(t, a)
-            # any previous node or program input
-            out.conn[j, k] = rng.integers(0, n_in + j)
+            func[s] = int(rand() * n_funcs)
+        elif s < n_a:
+            t = s - n                       # flat conn index == j * a + k
+            conn[t] = int(rand() * (n_in + t // a))
             # the paired output-index gene is mutated at the same time -- "Both of
             # these are mutated at the same time, to ensure that every connection
             # in the graph is still valid". Single-output nodes in CGP => always 0.
-            out.cout[j, k] = 0
+            out.cout[t] = 0
         else:
-            o = s - (n + n * a)
-            out.ogene[o] = rng.integers(0, n_in + n)
+            o = s - n_a
+            ogene[o] = int(rand() * (n_in + n))
             out.ocout[o] = 0
     return out
 
@@ -152,26 +241,60 @@ def mutate(g: Genotype, rng: np.random.Generator, n_mut: int, n_in: int,
 # decoding
 # ---------------------------------------------------------------------------
 
+def _uniform_binary(gates: Sequence[Gate], arity: int) -> bool:
+    """True when every gate takes exactly 2 inputs and nodes have 2 input genes.
+
+    That is the paper's function set (AND/NAND/OR/NOR) and every default run, so it
+    gets an unrolled walk. The generic path below stays correct for `--gates`
+    selections containing `not`/`const0`/`const1`.
+    """
+    return arity == 2 and all(gt.arity == 2 for gt in gates)
+
+
 def active_nodes(g: Genotype, n_in: int, gates: Sequence[Gate]) -> list[int]:
     """Node indices (0-based, not labels) reachable from the program outputs.
 
     The genotype-phenotype map leaves the rest inactive -- CGP's neutrality. Only
     the arity actually used by a node's gate is followed, so surplus input genes
     do not drag nodes into the phenotype.
+
+    Returned ascending, which is already a valid topological order because node `j`
+    may only reference labels below `n_in + j`.
     """
-    func, conn = g.func.tolist(), g.conn.tolist()
-    seen: set[int] = set()
-    stack = [int(lbl) for lbl in g.ogene.tolist()]
-    while stack:
-        lbl = stack.pop()
-        if lbl < n_in:
-            continue                      # a program input, not a node
-        j = lbl - n_in
-        if j in seen:
-            continue
-        seen.add(j)
-        stack.extend(conn[j][:gates[func[j]].arity])
-    return sorted(seen)
+    n, a, conn, func = g.n_nodes, g.arity, g.conn, g.func
+    seen = bytearray(n)                 # bytearray beats a set: no hashing, no resize
+    active: list[int] = []
+    stack = [lbl - n_in for lbl in g.ogene if lbl >= n_in]
+
+    if _uniform_binary(gates, a):
+        while stack:
+            j = stack.pop()
+            if seen[j]:
+                continue
+            seen[j] = 1
+            active.append(j)
+            b = j + j
+            lbl = conn[b]
+            if lbl >= n_in:
+                stack.append(lbl - n_in)
+            lbl = conn[b + 1]
+            if lbl >= n_in:
+                stack.append(lbl - n_in)
+    else:
+        arities = [gt.arity for gt in gates]
+        while stack:
+            j = stack.pop()
+            if seen[j]:
+                continue
+            seen[j] = 1
+            active.append(j)
+            b = j * a
+            for k in range(arities[func[j]]):
+                lbl = conn[b + k]
+                if lbl >= n_in:
+                    stack.append(lbl - n_in)
+    active.sort()
+    return active
 
 
 @dataclass
@@ -220,31 +343,39 @@ def phenotype(g: Genotype, n_in: int, gates: Sequence[Gate],
     right one (see kashtan_alon/tasks.py's pixel map). With `split=None` every node
     with a non-empty cone is classed "mixed", which is the honest answer for tasks
     that have no left/right structure.
+
+    Cones and depths are accumulated over the **active nodes only**. That is both
+    correct and much cheaper than the whole genotype: every predecessor of an active
+    node is itself active (the backward walk followed it), and `active` is ascending
+    so a node's predecessors are always already resolved. Sweeping all `n_nodes`
+    instead cost 1.5 ms at 800 nodes, which matters because an MVG run logs every
+    `--switch-interval` (20) generations.
     """
     active = active_nodes(g, n_in, gates)
-    active_set = set(active)
+    a, conn, func = g.arity, g.conn, g.func
 
-    # Nodes are in topological order by construction: node j only references labels
-    # below n_in + j. So one ascending pass suffices for both cones and depths.
     cone: dict[int, frozenset[int]] = {}
     depth: dict[int, int] = {}
-    for j in range(g.n_nodes):
-        gate = gates[int(g.func[j])]
+    for j in active:
         acc: set[int] = set()
         d = 0
-        for k in range(gate.arity):
-            lbl = int(g.conn[j, k])
+        b = j * a
+        for k in range(gates[func[j]].arity):
+            lbl = conn[b + k]
             if lbl < n_in:
                 acc.add(lbl)
-                d = max(d, 1)
+                if d < 1:
+                    d = 1
             else:
                 acc |= cone[lbl - n_in]
-                d = max(d, depth[lbl - n_in] + 1)
+                dp = depth[lbl - n_in] + 1
+                if dp > d:
+                    d = dp
         cone[j] = frozenset(acc)
         depth[j] = d
 
     cls: dict[int, str] = {}
-    for j in active_set:
+    for j in active:
         c = cone[j]
         if not c:
             cls[j] = "const"
@@ -257,10 +388,8 @@ def phenotype(g: Genotype, n_in: int, gates: Sequence[Gate],
         else:
             cls[j] = "mixed"
 
-    out_nodes = [int(lbl) - n_in if int(lbl) >= n_in else -1
-                 for lbl in g.ogene.tolist()]
-    return Phenotype(active=active, depth={j: depth[j] for j in active_set},
-                     cone={j: cone[j] for j in active_set}, cls=cls,
+    out_nodes = [lbl - n_in if lbl >= n_in else -1 for lbl in g.ogene]
+    return Phenotype(active=active, depth=depth, cone=cone, cls=cls,
                      out_nodes=out_nodes)
 
 
@@ -268,19 +397,80 @@ def evaluate(g: Genotype, gates: Sequence[Gate], in_masks: Sequence[int],
              mask: int, n_in: int) -> list[int]:
     """Output truth-table masks, one per program output. Bit-parallel over patterns.
 
-    Only the ACTIVE nodes are computed. `active_nodes` returns them ascending, which
-    is already a valid topological order because node j may only reference labels
-    below `n_in + j`. This matters more the larger the genotype: CGP typically keeps
-    well under a fifth of its nodes in the phenotype, so at 800 nodes this is the
-    difference between ~30 gate evaluations and 800.
+    The hot path of the whole experiment. Three things make it fast:
+
+    1. Only the ACTIVE nodes are computed -- at 800 nodes that is ~65 gate
+       evaluations rather than 800.
+    2. The backward walk is **fused** into this function rather than calling
+       `active_nodes`, so `conn`/`func` are looked up once and the arity test is
+       hoisted out of the loop.
+    3. Gate dispatch is inlined on the opcode (see `gates.OP_*`) instead of calling
+       `gate.fn(args, mask)`, which would build a list and make a Python call per
+       node -- both more expensive than the bitwise op they wrap.
+
+    `evaluate_slow` is the readable reference; `test_cgp.py` asserts they agree.
     """
-    vals = list(in_masks) + [0] * g.n_nodes
-    func, conn = g.func.tolist(), g.conn.tolist()
-    for j in active_nodes(g, n_in, gates):
-        gate = gates[func[j]]
-        args = [vals[conn[j][k]] for k in range(gate.arity)]
-        vals[n_in + j] = gate.fn(args, mask)
-    return [vals[int(lbl)] for lbl in g.ogene.tolist()]
+    n, a, conn, func, ogene = g.n_nodes, g.arity, g.conn, g.func, g.ogene
+
+    # --- backward pass: which nodes are in the phenotype (see `active_nodes`)
+    seen = bytearray(n)
+    active: list[int] = []
+    stack = [lbl - n_in for lbl in ogene if lbl >= n_in]
+    if _uniform_binary(gates, a):
+        while stack:
+            j = stack.pop()
+            if seen[j]:
+                continue
+            seen[j] = 1
+            active.append(j)
+            b = j + j
+            lbl = conn[b]
+            if lbl >= n_in:
+                stack.append(lbl - n_in)
+            lbl = conn[b + 1]
+            if lbl >= n_in:
+                stack.append(lbl - n_in)
+    else:
+        arities = [gt.arity for gt in gates]
+        while stack:
+            j = stack.pop()
+            if seen[j]:
+                continue
+            seen[j] = 1
+            active.append(j)
+            b = j * a
+            for k in range(arities[func[j]]):
+                lbl = conn[b + k]
+                if lbl >= n_in:
+                    stack.append(lbl - n_in)
+    active.sort()
+
+    # --- forward pass, ascending == topological order
+    ops = [gt.op for gt in gates]
+    vals = list(in_masks) + [0] * n
+    for j in active:
+        b = j * a
+        op = ops[func[j]]
+        x = vals[conn[b]]
+        if op == 0:                                   # and
+            vals[n_in + j] = x & vals[conn[b + 1]]
+        elif op == 2:                                 # nand
+            vals[n_in + j] = ~(x & vals[conn[b + 1]]) & mask
+        elif op == 1:                                 # or
+            vals[n_in + j] = x | vals[conn[b + 1]]
+        elif op == 3:                                 # nor
+            vals[n_in + j] = ~(x | vals[conn[b + 1]]) & mask
+        elif op == 4:                                 # xor
+            vals[n_in + j] = x ^ vals[conn[b + 1]]
+        elif op == 5:                                 # xnor
+            vals[n_in + j] = ~(x ^ vals[conn[b + 1]]) & mask
+        elif op == 6:                                 # not
+            vals[n_in + j] = ~x & mask
+        elif op == 7:                                 # const0
+            vals[n_in + j] = 0
+        else:                                         # const1
+            vals[n_in + j] = mask
+    return [vals[lbl] for lbl in ogene]
 
 
 def evaluate_slow(g: Genotype, gates: Sequence[Gate], n_in: int,
@@ -290,6 +480,7 @@ def evaluate_slow(g: Genotype, gates: Sequence[Gate], n_in: int,
     Exists purely so `test_cgp.py` can assert the fast path agrees with it. Never
     used in the search loop.
     """
+    a = g.arity
     outs: list[list[bool]] = [[] for _ in range(g.n_outputs)]
     for r in range(n_patterns):
         # pattern r's bit for input i. Must match tasks.input_masks' packing: that
@@ -298,11 +489,11 @@ def evaluate_slow(g: Genotype, gates: Sequence[Gate], n_in: int,
         vals = [bool((r >> (n_in - 1 - i)) & 1) for i in range(n_in)]
         vals = vals + [False] * g.n_nodes
         for j in range(g.n_nodes):
-            gate = gates[int(g.func[j])]
-            args = [vals[int(g.conn[j, k])] for k in range(gate.arity)]
+            gate = gates[g.func[j]]
+            args = [vals[g.conn[j * a + k]] for k in range(gate.arity)]
             vals[n_in + j] = bool(gate.slow(args))
-        for o, lbl in enumerate(g.ogene.tolist()):
-            outs[o].append(bool(vals[int(lbl)]))
+        for o, lbl in enumerate(g.ogene):
+            outs[o].append(bool(vals[lbl]))
     return outs
 
 
