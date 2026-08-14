@@ -878,3 +878,36 @@ fewer top-level nodes. The entire gap was `mutate` (38.6 vs 4.7 µs).
 - **MVG comparison** — the actual point of experiment 4. Nothing here is that; FG50 is
   the sanity check that ECGP works at all before asking whether it *inherits* rather
   than rediscovers modularity across goal switches.
+
+---
+
+## 2026-08-14 — how an ECGP circuit is drawn (convention, not a result)
+
+The standard picture of an ECGP individual is now the **unflattened genotype**:
+`visualize.draw_modular`, one box per genome node, a module call a **single box** with
+one input port per parameter and one output port per module output, arrows landing on
+the individual ports and short tick marks marking them. Colour is module identity, so
+the same colour twice in one picture is one acquired function re-used twice.
+
+This replaces the flattened drawing as the default because flattening is precisely what
+destroys the thing the run is being read for. In the flattened view a 2-output module
+is inlined into its body gates, so **one call site becomes several boxes carrying the
+same tag** (`M687#6` twice is not two uses — it is one use, opened up). That is
+unreadable as a module map and generated three rounds of confusion before it was
+replaced.
+
+Where it applies: per-log frames, the final frame (`frames/seed<k>_final.png`) and the
+2×3 stage sheet (`seed<k>_stages.png`) — all unflattened for the ECGP arm. The
+flattened twin survives for the final circuit only, as `frames/seed<k>_final_flat.png`,
+because it is the graph that actually gets evaluated. The CGP arm is unchanged: with no
+modules the two views coincide, and cone colouring (`--colour-cones`) still applies
+there.
+
+Two things the modular view deliberately does not do. It draws the nodes active in the
+**genotype** graph, which is not the flattened active set (a module output can be dead
+while its box is alive), so the node counts in the two views will not agree. And it
+offers no cone colouring: a module box has several outputs with possibly different
+cones, so there is no single left/right/mixed class to paint it with.
+
+Regression check for any change here: ECGP seed 7, FG-and, 50 nodes, m=0.03 must still
+report `solved_gen = 52880`.

@@ -464,12 +464,17 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
                     stride[0] *= 2
         if draw_frames:
             frames.mkdir(parents=True, exist_ok=True)
-            viz_mod.draw(view, pheno, gate_set, n_in,
-                         frames / f"seed{seed}_gen{gen:07d}.png",
-                         title=viz_mod.frame_title(
-                             gen, goal, p_hits, n_patterns, pheno, seed,
-                             alg="ECGP" if cfg.ecgp else "CGP",
-                             mods=_module_caption(rows)), split=split)
+            _, org = with_origin(parent)        # so per-log frames name modules too
+            ttl = viz_mod.frame_title(gen, goal, p_hits, n_patterns, pheno, seed,
+                                      alg="ECGP" if cfg.ecgp else "CGP",
+                                      mods=_module_caption(rows))
+            path = frames / f"seed{seed}_gen{gen:07d}.png"
+            if cfg.ecgp:
+                viz_mod.draw_modular(parent, n_in, gate_set, n_funcs, path,
+                                     title=ttl, split=split)
+            else:
+                viz_mod.draw(view, pheno, gate_set, n_in, path, title=ttl, split=split,
+                             origin=org, colour_cones=cfg.colour_cones)
 
     gen = start_gen
     for gen in range(start_gen, cfg.generations):
@@ -582,34 +587,48 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
     final_gates = gate_rows(view, pheno)
     if cfg.viz:
         frames.mkdir(parents=True, exist_ok=True)
-        viz_mod.draw(view, pheno, gate_set, n_in,
-                     frames / f"seed{seed}_final.png",
-                     title=viz_mod.frame_title(
-                         gen, goal, p_hits, n_patterns, pheno, seed,
-                         alg="ECGP" if cfg.ecgp else "CGP",
-                         mods=_module_caption(final_gates)), split=split)
-    # The stage grid: nine points in ONE seed's history, so the picture reads as
-    # evolutionary time rather than as a comparison between independent runs.
+        _, org = with_origin(parent)
+        ttl = viz_mod.frame_title(gen, goal, p_hits, n_patterns, pheno, seed,
+                                  alg="ECGP" if cfg.ecgp else "CGP",
+                                  mods=_module_caption(final_gates))
+        if cfg.ecgp:
+            viz_mod.draw_modular(parent, n_in, gate_set, n_funcs,
+                                 frames / f"seed{seed}_final.png",
+                                 title=ttl, split=split)
+            # ...and, for the final circuit only, the FLATTENED twin. It is the graph
+            # that actually gets evaluated, so it is worth keeping; but it is a
+            # secondary view, because inlining is exactly what destroys the module
+            # boundaries the run is being read for.
+            viz_mod.draw(view, pheno, gate_set, n_in,
+                         frames / f"seed{seed}_final_flat.png",
+                         title=ttl + "  |  flattened (modules inlined)", split=split,
+                         origin=org, colour_cones=cfg.colour_cones)
+        else:
+            viz_mod.draw(view, pheno, gate_set, n_in,
+                         frames / f"seed{seed}_final.png", title=ttl, split=split,
+                         origin=org, colour_cones=cfg.colour_cones)
+    # The stage grid: six points in ONE seed's history, so the picture reads as
+    # evolutionary time rather than as a comparison between independent runs. Six
+    # rather than nine because each panel has to stay legible at printed size, laid
+    # out 2x3 so the sheet is wider than tall like the circuits inside it.
     if collect:
         if not stages or stages[-1][0] != gen:
             stages.append((gen, goal, p_hits, parent.copy()))
-        frames.mkdir(parents=True, exist_ok=True)
+        n_panels = viz_mod.STAGE_ROWS * viz_mod.STAGE_COLS
         panels = []
-        for i, (g_, goal_, hits_, snap) in enumerate(_even_picks(stages, 9)):
+        for g_, goal_, hits_, snap in _even_picks(stages, n_panels):
             v, org = with_origin(snap)
             ph = cgp.phenotype(v, n_in, gate_set, split)
-            mods = ""
-            if cfg.ecgp:
-                used = sorted({t.split("#")[0] for t in org if t})
-                mods = ("modules " + " ".join(used)) if used else "no modules yet"
-            panels.append(viz_mod.draw(
-                v, ph, gate_set, n_in, frames / f"seed{seed}_stage{i}.png",
-                title=viz_mod.frame_title(g_, goal_, hits_, n_patterns, ph, seed,
-                                          alg="ECGP" if cfg.ecgp else "CGP", mods=mods),
-                split=split, origin=org, figsize=(9.0, 6.0)))
-        viz_mod.grid(panels, out / f"seed{seed}_stages.png",
-                     title=f"{run}   |   seed {seed} through generational time "
-                           f"(gen {stages[0][0]} -> {stages[-1][0]})")
+            # ECGP panels carry the INDIVIDUAL, so the sheet is drawn unflattened like
+            # every other ECGP frame; CGP panels carry the genotype, which is the same
+            # object either way.
+            panels.append((snap if cfg.ecgp else v, ph,
+                           viz_mod.stage_title(g_, hits_, n_patterns), org))
+        viz_mod.stage_grid(
+            panels, gate_set, n_in, out / f"seed{seed}_stages.png",
+            title="ECGP" if cfg.ecgp else "CGP",
+            n_prim=n_funcs if cfg.ecgp else None,
+            split=split, colour_cones=cfg.colour_cones)
 
     if cfg.save_best:
         # Always the FLATTENED circuit: an npz holds arrays, not a module dict, and

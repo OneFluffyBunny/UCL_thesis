@@ -61,6 +61,7 @@ class RunConfig:
     viz_seeds: int
     grid: bool
     grid_seed: int
+    colour_cones: bool
     # parallelism
     workers: int
 
@@ -195,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="save a circuit diagram alongside every log row [default: on]")
     g.add_argument("--no-viz", dest="viz", action="store_false")
     g.add_argument("--grid", dest="grid", action="store_true", default=True,
-                   help="at the end of a run, tile 9 evenly spaced snapshots of ONE "
+                   help="at the end of a run, tile 6 evenly spaced snapshots of ONE "
                         "seed's history into runs/<name>/seed<k>_stages.png and open "
                         "it -- the circuit through generational time [default: on]")
     g.add_argument("--no-grid", dest="grid", action="store_false",
@@ -203,6 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "headless or batched runs")
     g.add_argument("--grid-seed", type=int, default=0,
                    help="which seed the stage grid follows")
+    g.add_argument("--colour-cones", dest="colour_cones", action="store_true",
+                   default=False,
+                   help="colour each gate by whether its input cone is the LEFT half of "
+                        "the retina, the RIGHT half, or both. That is the Kashtan-Alon "
+                        "modularity question; with it off (the default) colour carries "
+                        "MODULE identity instead, which is the ECGP question.")
     g.add_argument("--viz-seeds", type=int, default=0,
                    help="how many seeds get a frame per log row. The FINAL circuit of "
                         "every seed is always drawn regardless, and the stage grid "
@@ -279,6 +286,6 @@ def parse(argv=None) -> RunConfig:
         save_best=args.save_best, tag=args.tag,
         checkpoint_interval=max(0, args.checkpoint_interval), resume=args.resume,
         viz=args.viz, viz_seeds=max(0, args.viz_seeds), grid=args.grid,
-        grid_seed=args.grid_seed,
+        grid_seed=args.grid_seed, colour_cones=args.colour_cones,
         workers=max(0, args.workers),
     )

@@ -174,7 +174,9 @@ def random_genotype(rnd: random.Random, n_nodes: int, n_in: int,
     the outputs of the last O nodes in the genotype."
     """
     rand = rnd.random
-    func = [int(rand() * n_funcs) for _ in range(n_nodes)]
+    # A single-gate function set (e.g. --gates nand) has only one legal value, so
+    # drawing it is pure overhead -- every node's function gene is 0 regardless.
+    func = [0] * n_nodes if n_funcs == 1 else [int(rand() * n_funcs) for _ in range(n_nodes)]
     conn: list[int] = []
     for j in range(n_nodes):
         # node j is labelled n_in + j and may reference any label below that
@@ -204,6 +206,14 @@ def mutate(g: Genotype, rnd: random.Random, n_mut: int, n_in: int,
     forcing a change would alter the neutral-drift behaviour the (1+4) ES depends
     on.
 
+    `n_funcs == 1` (a single-gate function set, e.g. `--gates nand`) is a special
+    case worth noting: every function gene is provably always 0 -- init sets it,
+    and this operator can only resample it to `int(rand() * 1) == 0` -- so a
+    function-gene draw is a no-op *by construction*, not just in expectation. The
+    slot is still counted in `n_mut` / `total` (the mutation budget and its
+    distribution over slot kinds are unchanged -- this is a speed fix, not an
+    effective-rate change), but the wasted draw-and-write is skipped below.
+
     `wire_w` is a deviation from the paper and defaults to 1.0, which is the paper:
     every slot equally likely. See `_draw_slots_biased`.
     """
@@ -220,9 +230,11 @@ def mutate(g: Genotype, rnd: random.Random, n_mut: int, n_in: int,
     k = min(n_mut, total)
     slots = (_draw_slots(rnd, total, k) if wire_w == 1.0
              else _draw_slots_biased(rnd, total, n, k, wire_w))
+    single_func = n_funcs == 1
     for s in slots:
         if s < n:
-            func[s] = int(rand() * n_funcs)
+            if not single_func:
+                func[s] = int(rand() * n_funcs)
         elif s < n_a:
             t = s - n                       # flat conn index == j * a + k
             conn[t] = int(rand() * (n_in + t // a))
