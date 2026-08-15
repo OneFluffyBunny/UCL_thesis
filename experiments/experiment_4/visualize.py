@@ -258,6 +258,7 @@ def draw(g, pheno: cgp.Phenotype, gates, n_in: int, save_path,
 MOD_BOX_HW = 0.46          # module / gate box half-width in the modular drawing
 PORT_GAP = 0.30            # vertical distance between two ports on the same box
 X_STEP = 1.7               # horizontal distance between depth columns
+PIN_LEN = 0.14             # how far a port pin sticks out past the box edge
 
 
 def _arity(ind, j: int) -> int:
@@ -274,13 +275,12 @@ def _n_out(ind, j: int) -> int:
     return 1 if ind.ntype[j] == 0 else ind.modules[ind.func[j]].n_out
 
 
-def _modular_geometry(ind, n_in: int, split: int | None):
-    """Where every box, pin and port of the unflattened drawing goes.
+def _active_nodes(ind, n_in: int) -> set[int]:
+    """The nodes reachable from the outputs, walking the GENOTYPE graph.
 
-    Split out from the rendering so the figure can be sized from the layout before any
-    axes exist, and so one panel of a grid and a standalone frame lay out identically.
+    Not the same set as `cgp.Phenotype.active`, which is computed on the flattened
+    circuit: a module output can be dead while the module box that produces it is alive.
     """
-    # ---- which nodes matter, walking the genotype graph (not the flattened one) ----
     active: set[int] = set()
     stack = list(ind.ogene)
     while stack:
@@ -292,6 +292,26 @@ def _modular_geometry(ind, n_in: int, split: int | None):
             continue
         active.add(j)
         stack.extend(ind.conn[j][:_arity(ind, j)])
+    return active
+
+
+def n_module_calls(ind, n_in: int) -> int:
+    """How many boxes in the drawing are module calls, repetitions counted.
+
+    A module used three times counts three, because the question a stage sheet is read
+    for is how much of the circuit is built from acquired subroutines -- not how many
+    distinct ones the genome happens to hold.
+    """
+    return sum(1 for j in _active_nodes(ind, n_in) if ind.ntype[j] != 0)
+
+
+def _modular_geometry(ind, n_in: int, split: int | None):
+    """Where every box, pin and port of the unflattened drawing goes.
+
+    Split out from the rendering so the figure can be sized from the layout before any
+    axes exist, and so one panel of a grid and a standalone frame lay out identically.
+    """
+    active = _active_nodes(ind, n_in)
 
     depth: dict[int, int] = {}
     for j in sorted(active):           # ascending: a node only reads lower labels
@@ -324,11 +344,18 @@ def _modular_geometry(ind, n_in: int, split: int | None):
             pos[j] = ((d + 1) * X_STEP, y)
             y -= height[j] / 2 + 0.34
 
-    def port(j: int, k: int, n: int, side: int) -> tuple[float, float]:
-        """Position of port `k` of `n` on a box: side -1 = inputs (left), +1 = outputs."""
+    def port(j: int, k: int, n: int, side: int,
+             pin: bool = False) -> tuple[float, float]:
+        """Position of port `k` of `n` on a box: side -1 = inputs (left), +1 = outputs.
+
+        `pin=True` gives the *tip* of the pin rather than the point where it meets the
+        box, which is where a wire should land: the pins stick out of the package and
+        the wires attach to their ends, the way a chip is drawn.
+        """
         x, y = pos[j]
         h = height[j]
-        return (x + side * MOD_BOX_HW, y + h / 2 - (k + 0.5) * h / n)
+        return (x + side * (MOD_BOX_HW + (PIN_LEN if pin else 0.0)),
+                y + h / 2 - (k + 0.5) * h / n)
 
     return active, max_d, height, pos, in_pos, by_depth, port
 
@@ -359,8 +386,10 @@ def _render_modular(ax, ind, n_in: int, gates, n_prim: int, geom,
         ar = _arity(ind, j)
         for t in range(ar):
             s, so = ind.conn[j][t], ind.cout[j][t]
-            src = in_pos[s] if s < n_in else port(s - n_in, so, _n_out(ind, s - n_in), +1)
-            ax.add_patch(FancyArrowPatch(src, port(j, t, ar, -1), arrowstyle="-|>",
+            src = in_pos[s] if s < n_in else port(s - n_in, so, _n_out(ind, s - n_in),
+                                                 +1, pin=True)
+            ax.add_patch(FancyArrowPatch(src, port(j, t, ar, -1, pin=True),
+                                         arrowstyle="-|>",
                                          mutation_scale=9 * scale, color=EDGE,
                                          lw=1.0 * scale,
                                          alpha=0.75, shrinkA=2, shrinkB=2,
@@ -403,17 +432,18 @@ def _render_modular(ax, ind, n_in: int, gates, n_prim: int, geom,
         # module a subroutine rather than a gate -- is invisible.
         for k in range(_arity(ind, j)):
             px, py = port(j, k, _arity(ind, j), -1)
-            ax.plot([px - 0.05, px], [py, py], color="#2C3E50",
-                    lw=1.0 * scale, zorder=3)
+            ax.plot([px - PIN_LEN, px], [py, py], color="#2C3E50",
+                    lw=3.0 * scale, solid_capstyle="butt", zorder=4)
         for k in range(_n_out(ind, j)):
             px, py = port(j, k, _n_out(ind, j), +1)
-            ax.plot([px, px + 0.05], [py, py], color="#2C3E50",
-                    lw=1.0 * scale, zorder=3)
+            ax.plot([px, px + PIN_LEN], [py, py], color="#2C3E50",
+                    lw=3.0 * scale, solid_capstyle="butt", zorder=4)
 
     # ---- program outputs ----
     for o, (l, c) in enumerate(zip(ind.ogene, ind.ocout)):
-        src = in_pos[l] if l < n_in else port(l - n_in, c, _n_out(ind, l - n_in), +1)
-        ax.add_patch(FancyArrowPatch((src[0] + 0.06, src[1]), (src[0] + 0.75, src[1]),
+        src = in_pos[l] if l < n_in else port(l - n_in, c, _n_out(ind, l - n_in),
+                                              +1, pin=True)
+        ax.add_patch(FancyArrowPatch((src[0] + 0.02, src[1]), (src[0] + 0.75, src[1]),
                                      arrowstyle="-|>", mutation_scale=13 * scale,
                                      color="#2C3E50", lw=1.6 * scale, zorder=3))
         ax.text(src[0] + 0.82, src[1], "out", ha="left", va="center",
@@ -475,16 +505,22 @@ def frame_title(gen: int, goal: str, hits: int, n_patterns: int,
 STAGE_ROWS, STAGE_COLS = 2, 3
 
 
-def stage_title(gen: int, hits: int, n_patterns: int) -> str:
-    """The caption under one stage panel: when, and how well. Nothing else.
+def stage_title(gen: int, hits: int, n_patterns: int,
+                mod_calls: int | None = None) -> str:
+    """The caption under one stage panel: when, how well, and how modular. Nothing else.
 
     Deliberately much shorter than `frame_title`. On a sheet, everything constant
     across panels (algorithm, seed, goal) belongs in the figure title, and the node
     census is already visible in the drawing -- repeating it six times only competes
     with the circuits for attention.
+
+    `mod_calls` is the number of module BOXES in this panel, repetitions counted, so the
+    panels can be compared as a series without counting coloured boxes by eye. `None`
+    for CGP, which has no modules to count.
     """
-    return (f"gen {gen}  |  accuracy {100 * hits / n_patterns:.2f}% "
+    head = (f"gen {gen}  |  accuracy {100 * hits / n_patterns:.2f}% "
             f"({hits}/{n_patterns})")
+    return head if mod_calls is None else f"{head}  |  {mod_calls} module calls"
 
 
 def stage_grid(panels, gates, n_in: int, save_path, title: str = "",
