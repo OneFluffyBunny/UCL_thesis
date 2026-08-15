@@ -622,9 +622,11 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
             # ECGP panels carry the INDIVIDUAL, so the sheet is drawn unflattened like
             # every other ECGP frame; CGP panels carry the genotype, which is the same
             # object either way.
-            calls = viz_mod.n_module_calls(snap, n_in) if cfg.ecgp else None
+            # the count is of BOXES DRAWN, so it must come from the same graph the panel
+            # is drawn from: the genotype for ECGP, the flattened phenotype for CGP
+            hidden = viz_mod.n_hidden_nodes(snap, n_in) if cfg.ecgp else ph.n_active
             panels.append((snap if cfg.ecgp else v, ph,
-                           viz_mod.stage_title(g_, hits_, n_patterns, calls), org))
+                           viz_mod.stage_title(g_, hits_, n_patterns, hidden), org))
         viz_mod.stage_grid(
             panels, gate_set, n_in, out / f"seed{seed}_stages.png",
             title="ECGP" if cfg.ecgp else "CGP",

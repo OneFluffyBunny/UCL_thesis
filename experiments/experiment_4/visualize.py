@@ -295,14 +295,14 @@ def _active_nodes(ind, n_in: int) -> set[int]:
     return active
 
 
-def n_module_calls(ind, n_in: int) -> int:
-    """How many boxes in the drawing are module calls, repetitions counted.
+def n_hidden_nodes(ind, n_in: int) -> int:
+    """How many boxes the drawing has: every active node, gate or module call alike.
 
-    A module used three times counts three, because the question a stage sheet is read
-    for is how much of the circuit is built from acquired subroutines -- not how many
-    distinct ones the genome happens to hold.
+    One number for the size of the circuit, which is what a stage sheet is read for.
+    Splitting it by kind would make the caption an argument about what counts as a
+    node; the colours already say which boxes are modules.
     """
-    return sum(1 for j in _active_nodes(ind, n_in) if ind.ntype[j] != 0)
+    return len(_active_nodes(ind, n_in))
 
 
 def _modular_geometry(ind, n_in: int, split: int | None):
@@ -506,21 +506,20 @@ STAGE_ROWS, STAGE_COLS = 2, 3
 
 
 def stage_title(gen: int, hits: int, n_patterns: int,
-                mod_calls: int | None = None) -> str:
-    """The caption under one stage panel: when, how well, and how modular. Nothing else.
+                hidden: int | None = None) -> str:
+    """The caption under one stage panel: when, how well, how big. Nothing else.
 
     Deliberately much shorter than `frame_title`. On a sheet, everything constant
-    across panels (algorithm, seed, goal) belongs in the figure title, and the node
-    census is already visible in the drawing -- repeating it six times only competes
-    with the circuits for attention.
+    across panels (algorithm, seed, goal) belongs in the figure title; the cone census
+    does not, because repeating it six times only competes with the circuits for
+    attention.
 
-    `mod_calls` is the number of module BOXES in this panel, repetitions counted, so the
-    panels can be compared as a series without counting coloured boxes by eye. `None`
-    for CGP, which has no modules to count.
+    `hidden` is every box drawn in this panel -- plain gates and module calls together
+    -- so the panels can be compared as a series without counting boxes by eye.
     """
     head = (f"gen {gen}  |  accuracy {100 * hits / n_patterns:.2f}% "
             f"({hits}/{n_patterns})")
-    return head if mod_calls is None else f"{head}  |  {mod_calls} module calls"
+    return head if hidden is None else f"{head}  |  {hidden} hidden nodes"
 
 
 def stage_grid(panels, gates, n_in: int, save_path, title: str = "",
