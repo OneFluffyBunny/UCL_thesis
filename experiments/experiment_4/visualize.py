@@ -519,7 +519,7 @@ def stage_title(gen: int, hits: int, n_patterns: int,
     """
     head = (f"gen {gen}  |  accuracy {100 * hits / n_patterns:.2f}% "
             f"({hits}/{n_patterns})")
-    return head if hidden is None else f"{head}  |  {hidden} hidden nodes"
+    return head if hidden is None else f"{head}  |  {hidden} logic gates"
 
 
 def stage_grid(panels, gates, n_in: int, save_path, title: str = "",
