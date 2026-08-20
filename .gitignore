@@ -5,6 +5,22 @@ __pycache__/
 
 # Experiment outputs (regenerable; conclusions live in RESULTS.md)
 runs/
+runs_*/
+
+# PyPy interpreter + venv for experiment 5. Regenerable in one command:
+#   conda run -n lndp python experiments/experiment_5/setup_pypy.py
+# The interpreter itself is unpacked into the HOME directory, not here, so only the
+# venv needs ignoring -- but it is ~10 MB of binaries either way.
+.venv-pypy/
+
+# Throwaway analysis scripts. Deliberately unsaved -- but anything that backs a
+# COMMITTED claim (a figure in latex_figures/, a number quoted in add_to_latex.md or
+# in a docstring) must be promoted out of scratch_ into a named file first, or the
+# claim becomes unreproducible. experiments/experiment_4/analysis/ is the pattern.
+scratch_*
+
+# Console logs from ad-hoc runs (the run itself goes to runs/, conclusions to RESULTS.md)
+*_console.log
 
 # Locally-downloaded papers (copyrighted; keep out of a repo with a public remote)
 papers/
