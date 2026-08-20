@@ -5,15 +5,31 @@ repo — auto-memory does NOT travel through git — so everything a remote sess
 needs lives here or in the linked `.md` files.** This file *points*; the detail
 lives in the linked files (don't duplicate them).
 
-## ⚠️ Branches — read before any git command (changed 2026-08-20)
-There are now **exactly two**: `main` (stable, published) and **`fluffy_experiments`
-(the one and only working branch — all work goes here)**. `CGP`, `cgp_speedups` and
-`qmetrics` were **deleted**, local and remote, after being folded into
-`fluffy_experiments` by fast-forward (no commit was lost — every one of them was
-already an ancestor of the tip). **If a session still believes it is on `CGP` or
-`cgp_speedups`, it is not** — the checkout is shared, so its HEAD already moved.
-Re-read the branch with `git rev-parse --abbrev-ref HEAD` rather than trusting
-remembered context, and do not recreate the deleted names.
+## ⚠️ Branches and what is actually saved — read before any git command (2026-08-20)
+There are **exactly two** branches: `main` and `fluffy_experiments`. `CGP`,
+`cgp_speedups` and `qmetrics` were **deleted**, local and remote, after being folded
+into `fluffy_experiments` by fast-forward (no commit was lost — each was already an
+ancestor of the tip). **If a session still believes it is on `CGP` or `cgp_speedups`,
+it is not** — the checkout is shared, so its HEAD already moved. Re-read the branch
+with `git rev-parse --abbrev-ref HEAD` rather than trusting remembered context, and
+do not recreate the deleted names.
+
+- **`main` is frozen — do not commit to it, do not fast-forward it.** It is a
+  stable marker, not a working branch.
+- **All experiments and all work go on `fluffy_experiments`**, or on a branch forked
+  from it (fork freely; just never target `main`).
+- **`git push` only sends COMMITTED files. An untracked file is on nobody's branch
+  and no push will ever save it.** This is not theoretical: experiments 5 and 6 —
+  two complete experiments with their test suites, ~11k lines — sat untracked for
+  weeks, on one laptop only, and were invisible to the GPU box (which sees nothing
+  but this repo). Committed 2026-08-20. **`git add` the files you create.** After
+  finishing a unit of work, run `git status` and look at the `??` lines: anything
+  there is unsaved.
+- Deliberately NOT saved, by design: `runs/` (regenerable — conclusions belong in
+  `RESULTS.md`), `*.png` under `experiments/` (put figures worth keeping in
+  `latex_figures/`), `papers/`, `.venv-pypy/`, `LNDP/`, `NDP/`.
+- `scratch_*.py` are untracked by convention. That is a choice, not an accident —
+  but it does mean they are one `git clean` away from gone.
 
 ## What this project is
 Master's thesis (UCL): the **emergence of modularity** in evolved neural networks.
