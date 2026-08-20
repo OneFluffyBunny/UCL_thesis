@@ -1,0 +1,53 @@
+necgp stage run -- task=retina_ka2005 operation=xor gates=nand nodes=100 popsize=5 seed=0 max_generations=300000
+
+=== run A: nest_decay=0.5 (nesting ON) ===
+  [nest_decay=0.5] gen    5000  score 187.0000  hits 187/256  modules 13  depth_hist {1: 8, 2: 5}
+  [nest_decay=0.5] gen   10000  score 208.0000  hits 208/256  modules 15  depth_hist {1: 6, 2: 5, 3: 4}
+  [nest_decay=0.5] gen   15000  score 216.0000  hits 216/256  modules 17  depth_hist {1: 6, 2: 6, 3: 5}
+  [nest_decay=0.5] gen   20000  score 224.0000  hits 224/256  modules 17  depth_hist {1: 6, 2: 5, 3: 4, 4: 2}
+  [nest_decay=0.5] gen   25000  score 224.0000  hits 224/256  modules 17  depth_hist {1: 6, 2: 5, 3: 4, 4: 2}
+  [nest_decay=0.5] gen   30000  score 224.0000  hits 224/256  modules 15  depth_hist {1: 6, 2: 5, 3: 2, 4: 2}
+  [nest_decay=0.5] gen   35000  score 224.0000  hits 224/256  modules 17  depth_hist {1: 6, 2: 5, 3: 2, 4: 4}
+  [nest_decay=0.5] gen   40000  score 224.0000  hits 224/256  modules 15  depth_hist {1: 6, 2: 5, 3: 3, 4: 1}
+  [nest_decay=0.5] gen   45000  score 232.0000  hits 232/256  modules 16  depth_hist {1: 6, 2: 5, 3: 3, 4: 2}
+  [nest_decay=0.5] gen   50000  score 232.0000  hits 232/256  modules 16  depth_hist {1: 6, 2: 4, 3: 4, 4: 2}
+  [nest_decay=0.5] gen   55000  score 240.0000  hits 240/256  modules 16  depth_hist {1: 6, 2: 2, 3: 5, 4: 3}
+  [nest_decay=0.5] gen   60000  score 240.0000  hits 240/256  modules 15  depth_hist {1: 6, 2: 3, 3: 5, 4: 1}
+  [nest_decay=0.5] gen   65000  score 240.0000  hits 240/256  modules 15  depth_hist {1: 6, 2: 3, 3: 5, 4: 1}
+  [nest_decay=0.5] gen   70000  score 240.0000  hits 240/256  modules 15  depth_hist {1: 6, 2: 5, 3: 4}
+  [nest_decay=0.5] gen   75000  score 240.0000  hits 240/256  modules 15  depth_hist {1: 6, 2: 6, 3: 3}
+
+=== run B: nest_decay=0.0 (nesting OFF, everything else identical) ===
+  [nest_decay=0.0] gen    5000  score 185.0000  hits 185/256  modules 7  depth_hist {1: 7}
+  [nest_decay=0.0] gen   10000  score 196.0000  hits 196/256  modules 7  depth_hist {1: 7}
+  [nest_decay=0.0] gen   15000  score 202.0000  hits 202/256  modules 7  depth_hist {1: 7}
+  [nest_decay=0.0] gen   20000  score 202.0000  hits 202/256  modules 8  depth_hist {1: 8}
+  [nest_decay=0.0] gen   25000  score 206.0000  hits 206/256  modules 8  depth_hist {1: 8}
+  [nest_decay=0.0] gen   30000  score 206.0000  hits 206/256  modules 8  depth_hist {1: 8}
+  [nest_decay=0.0] gen   35000  score 206.0000  hits 206/256  modules 8  depth_hist {1: 8}
+  [nest_decay=0.0] gen   40000  score 206.0000  hits 206/256  modules 8  depth_hist {1: 8}
+  [nest_decay=0.0] gen   45000  score 208.0000  hits 208/256  modules 8  depth_hist {1: 8}
+  [nest_decay=0.0] gen   50000  score 209.0000  hits 209/256  modules 9  depth_hist {1: 9}
+  [nest_decay=0.0] gen   55000  score 211.0000  hits 211/256  modules 9  depth_hist {1: 9}
+  [nest_decay=0.0] gen   60000  score 218.0000  hits 218/256  modules 8  depth_hist {1: 8}
+  [nest_decay=0.0] gen   65000  score 223.0000  hits 223/256  modules 8  depth_hist {1: 8}
+  [nest_decay=0.0] gen   70000  score 232.0000  hits 232/256  modules 10  depth_hist {1: 10}
+  [nest_decay=0.0] gen   75000  score 232.0000  hits 232/256  modules 10  depth_hist {1: 10}
+  [nest_decay=0.0] gen   80000  score 232.0000  hits 232/256  modules 10  depth_hist {1: 10}
+  [nest_decay=0.0] gen   85000  score 236.0000  hits 236/256  modules 11  depth_hist {1: 11}
+  [nest_decay=0.0] gen   90000  score 236.0000  hits 236/256  modules 11  depth_hist {1: 11}
+  [nest_decay=0.0] gen   95000  score 236.0000  hits 236/256  modules 11  depth_hist {1: 11}
+  [nest_decay=0.0] gen  100000  score 236.0000  hits 236/256  modules 11  depth_hist {1: 11}
+  [nest_decay=0.0] gen  105000  score 240.0000  hits 240/256  modules 10  depth_hist {1: 10}
+  [nest_decay=0.0] gen  110000  score 240.0000  hits 240/256  modules 10  depth_hist {1: 10}
+  [nest_decay=0.0] gen  115000  score 240.0000  hits 240/256  modules 11  depth_hist {1: 11}
+
+--- comparison ---
+  nested  (nest_decay=0.50): SOLVED at gen 78134  (256/256 hits, 229.5s, 340 gen/s)
+  flat    (nest_decay=0.0)  : SOLVED at gen 115095  (256/256 hits, 136.3s, 844 gen/s)
+  nested vs flat: -36961 generations, +93.2s (nested faster)
+
+nested run final population: 17 modules alive, 11 of depth > 1 (real nesting): [654, 2811, 3025, 3097, 3337, 3386, 3391, 3408, 3409, 3410, 3411]
+
+stage grid written to C:\Users\raduc\programare\UCL_thesis\experiments\experiment_6\necgp\stages_seed0_nand.png
+
