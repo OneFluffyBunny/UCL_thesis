@@ -440,7 +440,7 @@ stop the modularity study in this architecture and move to a different one.
 
 Shared package at repo root: adapters turn any brain format (NDP's `W`,
 exp 1–3's `w`, `kashtan_alon`'s layer blocks) into a graph; metrics see only the
-graph. **Three metrics so far.**
+graph. **Four metrics so far.**
 
 **1. Newman Q** — (edges inside communities) − (expected if rewired at random
 keeping degrees).
@@ -460,6 +460,12 @@ isn't comparable across sparsities. Q_max is a hill-climb, so it biases Q_m up.
 at a partition the *task* specifies, rather than one we search for. The code is
 named for the question (left vs right); the concept's published name is the one
 above. See the section below.
+
+**4. Circuit purity** (`circuit_purity`) — for **logic circuits**
+specifically (experiment 4's CGP/ECGP), where the graph is a DAG of arity-2 gates
+rather than a community-structured network. Label the inputs by side and average
+down the DAG; a gate's purity is how far its ancestry leans one way. See the
+section below.
 
 ### Graph size must be controlled for — it is not a detail
 
@@ -540,6 +546,80 @@ a right module?**" That is a much easier question, and worth stating why.
   z fell from **+5.66 (p=0.005) to +0.88 (p=0.199)** once the null re-fitted.
   This is a general lesson for any planted-partition statistic, not a detail of
   this implementation.
+
+### Circuit purity — a left/right measure built for logic circuits
+
+The three metrics above were designed for weighted neural graphs. A Boolean
+circuit is a different object: a DAG whose every node has in-degree 2 (the gate's
+arguments), no weights, and a single output. Newman Q measured on such a circuit
+rewards long-and-thin wiring rather than modularity — on hand-built references it
+scored a *perfectly modular* circuit (Q_m 0.14) below a maximally entangled chain's
+size-matched peers, and its detected communities were pixel pairs, never the two
+halves. Hence a purpose-built metric.
+
+- **Definition.** Pin the program inputs to a side (left = 0, right = 1). Every
+  gate takes the **mean of its parents**; equivalently, a gate's value `x` is the
+  probability that a backward random walk from it, uniform over parents at each
+  step, ends on a right-hand input. `purity(v) = 2·|x_v − 0.5|`. Circuit purity is
+  the mean over active gates, excluding the inputs and the program output (a
+  readout must see both halves by construction). The ideal `L AND R` circuit — a
+  left module, a right module, one gate joining them — scores exactly **1**.
+- **Not new mathematics, new application.** The one-step case is Guimerà–Amaral's
+  **participation coefficient** (`P = 2p(1−p)`, so purity `= √(1−2P)`); propagating
+  it down the DAG is a **harmonic function / label propagation** (Zhu, Ghahramani &
+  Lafferty 2003) with the inputs as boundary values. The novelty is applying it to
+  evolved circuits, where no modularity metric had been proposed at all.
+- **ECGP must be measured on the FLATTENED circuit.** Averaging is not invariant
+  under module compression — a 3-input module reads 1/3 per parent while its
+  arity-2 expansion reads 1/4, 1/4, 1/2 — so a module-level graph and its own
+  expansion score differently, and CGP/ECGP would not be comparable.
+- **Calibration** (retina, 8 inputs, `and`; evolved circuits all at 256/256):
+
+  | circuit | active gates | purity |
+  |---|---|---|
+  | REF modular (two pure chains + 1 join) | 29 | **1.000** |
+  | REF tail (1 merge, then 28 pure-left gates) | 29 | 0.929 |
+  | evolved, best of 6 seeds | 23 | 0.915 |
+  | evolved, worst of 6 seeds | 33 | 0.568 |
+  | REF chain (one line eating all 8 pixels) | 29 | 0.530 |
+  | unevolved random (n = 87) | 16.8 | **0.426 ± 0.115** |
+
+- **Random baseline, by size** (`latex_figures/purity_metric/`). Sampling: draw
+  uniform random CGP genomes of 8…512 nodes, keep only the **active** subgraph
+  (nodes on a path to the output — inactive nodes are never scored and never enter
+  the denominator), and bucket by the **exact** active-gate count, 2…50. Genome
+  size has to be swept to reach the large buckets, so each (active count, genome
+  size) cell is capped equally — otherwise small buckets would be all small genomes
+  and genome size would be confounded with circuit size. 38k circuits, ≈300–1200 per
+  bucket. Residual confound measured separately and null: at fixed active count,
+  purity varies ≤0.02 across genome sizes against a per-circuit SD of ~0.10.
+
+  | active gates | 2 | 5 | 10 | 20 | 30 | 40 | 50 |
+  |---|---|---|---|---|---|---|---|
+  | mean purity | 0.524 | 0.474 | 0.453 | 0.434 | 0.417 | 0.405 | 0.393 |
+  | SD | 0.500 | 0.229 | 0.154 | 0.117 | 0.104 | 0.091 | 0.083 |
+
+  The baseline **decays slightly as circuits grow** (0.50 → 0.39) while the SD
+  tightens 6×. The decay is the metric behaving as designed, not an artefact:
+  purity falls as one advances through a circuit, because each extra layer averages
+  over a wider ancestry and any single side's share regresses toward ½ — bigger
+  circuits are deeper, so more of their gates sit in that mixed interior. Practical
+  consequence: **read a score against its own size bucket**, where the shrinking SD
+  makes the comparison sharper for large circuits, not weaker.
+- **+** O(V+E), one sweep: no community detection, no null model, no truth tables,
+  so it scales far past the 2^n_in wall that stops any behavioural measure.
+  Continuous (loggable per generation, regressable against fitness), per-node
+  (colour the circuit diagram by it), and arity-agnostic. Separates evolved
+  circuits from random cleanly (0.57–0.92 vs 0.43).
+- **−** It is a **wiring** statistic that ignores what the gates compute, so a
+  functionally dead argument still counts. Contamination **decays geometrically
+  with depth**: REF tail scores 0.929 although every one of its gates depends on
+  both halves. Whether that decay is right depends on the gates — an OR chain does
+  dilute an early input, an AND chain does not — and the metric cannot tell them
+  apart by construction. The floor is unanchored (the maximally non-modular chain,
+  0.530, outscores random, 0.426), it is a plain mean so pure filler raises it, and
+  its denominator is the gate count, so it is **size-confounded exactly like raw Q**
+  — compare only at matched circuit size.
 
 ### Constraints on the null model — correctness, not refinement
 

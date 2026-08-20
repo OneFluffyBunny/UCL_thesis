@@ -700,6 +700,100 @@ def left_right_q(G: nx.Graph, pinned: dict, *, exclude=(), assign: str = "optima
                           "groups": dict(gid)}
 
 
+def circuit_purity(G: nx.DiGraph, pinned: dict, *, exclude=()):
+    """METRIC 4 -- left/right purity of a LOGIC CIRCUIT's gates.
+
+    Built for experiment 4's Boolean circuits (CGP/ECGP), where every node is a
+    gate and its in-edges are its arguments -- the one graph shape the other three
+    metrics fit badly, because a circuit is a DAG with tiny fixed in-degree rather
+    than a community-structured network. Give the program inputs a side (left = 0,
+    right = 1) and let every gate take the MEAN of its parents. A gate's value is
+    then the probability that a backward random walk from it, choosing uniformly
+    among parents at each step, lands on a right-hand input.
+
+        purity(v) = 2 * |x_v - 0.5|     1 = all ancestors one side, 0 = balanced
+
+    Circuit purity is the mean over the gates, excluding the inputs (`pinned`) and
+    the program output (`exclude`) -- a single readout must see both halves by
+    construction, so scoring it charges a fixed penalty unrelated to modularity,
+    exactly as in `left_right_q`. The ideal `L AND R` circuit -- a left module, a
+    right module, one gate joining them -- scores exactly 1.
+
+    x_v is 0 or 1 exactly when every ancestor input is on one side (every parent
+    carries positive weight), so the EXTREMES say only what an ancestor-set check
+    already says. What this adds is the grading in between: a continuous reading of
+    *how* mixed the impure gates are, which a left/right/mixed classification
+    cannot give.
+
+    Added 2026-08-19, calibrated against a size-matched random baseline 2026-08-20
+    (38k unevolved circuits, active counts 2..50: mean falls 0.50 -> 0.39 and the SD
+    tightens 6x, so read a score against its OWN size bucket). It is deliberately a
+    WIRING statistic that ignores what the gates compute, so it is a proxy and not a
+    ground truth -- see the minus list.
+
+    ECGP: always measure the FLATTENED circuit. The averaging is not invariant
+    under module compression (a 3-input module reads 1/3 per parent, while its
+    arity-2 internals read 1/4, 1/4, 1/2), so a module-level graph and its own
+    expansion score differently and CGP/ECGP would not be comparable.
+
+    pinned  -- node -> side for the nodes whose side is known (the program
+               inputs). Exactly two distinct ids; the smaller one maps to 0.0.
+    exclude -- nodes dropped from the AVERAGE (pass the program output). They
+               still propagate, which for an output node changes nothing.
+
+    -> (purity, dict). Keys:
+       purity     mean gate purity, the returned value.
+       median     median gate purity. Prefer it when a circuit carries a long
+                  pure-but-useless tail, which pulls the mean up.
+       n_gates    gates that entered the average.
+       n_orphan   unpinned gates with no parents (no side; skipped).
+       values     node -> purity, for colouring a circuit diagram.
+       flow       node -> x, the raw 0..1 side mixture behind `values`.
+
+    + O(V+E), one topological sweep: no community detection, no null model and no
+      truth tables, so it survives tasks far past the 2^n_in wall that stops any
+      behavioural measure. Continuous, so it can be logged every generation and
+      regressed against fitness. Per-node, so a circuit diagram can be coloured by
+      it. Works at any arity, so ECGP modules need no special case.
+    - Wiring only: a functionally dead argument still counts. Contamination DECAYS
+      geometrically with depth, so a gate ten levels below a merge reads as nearly
+      pure even though it depends on both halves -- right for OR-like gates, wrong
+      for AND-like ones. That is the price of abstracting the gates away. It is a
+      plain mean, so pure filler raises it, and its denominator is the gate count,
+      so it is size-confounded like raw Q: compare only at matched circuit size.
+    """
+    if not G.is_directed():
+        raise ValueError("circuit_purity needs a DiGraph -- it reads parents")
+    ids = sorted({pinned[v] for v in G if v in pinned})
+    if len(ids) != 2:
+        raise ValueError(f"`pinned` must name exactly two sides, got {ids}")
+    lo = ids[0]
+    try:
+        order = list(nx.topological_sort(G))
+    except nx.NetworkXUnfeasible:
+        raise ValueError("circuit_purity needs an acyclic graph") from None
+
+    x, n_orphan = {}, 0
+    for v in order:
+        if v in pinned:
+            x[v] = 0.0 if pinned[v] == lo else 1.0
+            continue
+        par = [x[u] for u in G.predecessors(v) if u in x]
+        if not par:                       # a source that is not a program input
+            n_orphan += 1
+            continue
+        x[v] = sum(par) / len(par)
+
+    drop = set(exclude) | set(pinned)
+    vals = {v: 2.0 * abs(x[v] - 0.5) for v in x if v not in drop}
+    arr = np.array(list(vals.values()))
+    purity = float(arr.mean()) if len(arr) else float("nan")
+    return purity, {"purity": purity,
+                    "median": float(np.median(arr)) if len(arr) else float("nan"),
+                    "n_gates": len(vals), "n_orphan": n_orphan,
+                    "values": vals, "flow": dict(x)}
+
+
 def threshold_sweep(W, thresholds=None, *, quantiles=None, method: str = "greedy",
                     seed: int = 0, weighted: bool = False, normalized: bool = False,
                     **graph_kwargs):

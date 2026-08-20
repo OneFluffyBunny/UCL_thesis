@@ -28,6 +28,11 @@ separate modules?" -- which needs no search and so has no optimiser to fail:
     qm.plot_left_right(G, "lr.png", {i: i // 4 for i in range(8)},
                        exclude=[8], n_in=8)     # the same split, drawn
 
+`circuit_purity` is for LOGIC CIRCUITS (experiment 4's CGP/ECGP),
+where the graph is a DAG of arity-2 gates rather than a community-structured
+network. It needs a DiGraph and scores how far each gate's ancestry leans to one
+side of the inputs -- cheap, continuous, and blind to what the gates compute.
+
 matplotlib is imported lazily inside plot.py, so it is not needed to use the
 metrics. `normalized_qm` uses all cores by default (`n_jobs`); on Windows that
 needs the calling script to have an `if __name__ == "__main__":` guard, and it
@@ -36,11 +41,11 @@ falls back to serial if not.
 
 from .graph import (describe, from_blocks, from_matrix, layered_mask, role_mask,
                     roles_for)
-from .metrics import (left_right_q, newman_q, normalized_qm, partition,
-                      role_segregation, threshold_sweep)
+from .metrics import (circuit_purity, left_right_q, newman_q, normalized_qm,
+                      partition, role_segregation, threshold_sweep)
 from .plot import open_file, plot_communities, plot_left_right
 
 __all__ = ["describe", "from_blocks", "from_matrix", "layered_mask", "role_mask",
            "roles_for", "newman_q", "normalized_qm", "partition", "left_right_q",
-           "role_segregation", "threshold_sweep", "plot_communities",
-           "plot_left_right", "open_file"]
+           "circuit_purity", "role_segregation", "threshold_sweep",
+           "plot_communities", "plot_left_right", "open_file"]
