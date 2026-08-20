@@ -5,6 +5,16 @@ repo — auto-memory does NOT travel through git — so everything a remote sess
 needs lives here or in the linked `.md` files.** This file *points*; the detail
 lives in the linked files (don't duplicate them).
 
+## ⚠️ Branches — read before any git command (changed 2026-08-20)
+There are now **exactly two**: `main` (stable, published) and **`fluffy_experiments`
+(the one and only working branch — all work goes here)**. `CGP`, `cgp_speedups` and
+`qmetrics` were **deleted**, local and remote, after being folded into
+`fluffy_experiments` by fast-forward (no commit was lost — every one of them was
+already an ancestor of the tip). **If a session still believes it is on `CGP` or
+`cgp_speedups`, it is not** — the checkout is shared, so its HEAD already moved.
+Re-read the branch with `git rev-parse --abbrev-ref HEAD` rather than trusting
+remembered context, and do not recreate the deleted names.
+
 ## What this project is
 Master's thesis (UCL): the **emergence of modularity** in evolved neural networks.
 Thesis: modularity is **selected for by evolution, precedes learning, and is
