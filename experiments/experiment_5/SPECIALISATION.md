@@ -134,6 +134,22 @@ Measured on the **flattened** circuit, so CGP and ECGP go through identical code
 Labelled as exploratory in the writeup, with no significance claimed. With 24 cells I
 will otherwise find something, and it will be noise.
 
+### ⚠️ The secondary test is much weaker than it looks (noted 2026-08-21, before results)
+
+`full` and `zero` are **saturated by construction**, so the interaction prediction is
+close to unfalsifiable. Measured in the first completed cell (`staged-full-cgp4`,
+n=50): **43 of 50 seeds sit at exactly `SPEC = 0.000`**, and pilot P6's `pair_zero`
+runs sit at exactly `SPEC = 1.000`. A floored arm cannot show a gap whether the
+mechanism is real or not, so "no gap at full and zero" will be confirmed by the
+*ceiling*, not by the absence of the effect.
+
+This is recorded here rather than in the discussion because it is a design flaw, not
+a finding. The secondary test as written contributes almost no evidence, and the
+honest reading of the whole study rests on the **primary contrast alone**. A future
+version would need overlap levels that are graded rather than extremal — e.g. `O2 =
+L AND R` and `L OR R`, which share the left detector to differing degrees without
+forcing `SPEC` to an endpoint.
+
 **What falsifies H-S1:** `staged ≈ cold` at partial. That is a real negative result
 about whether E-S&W's mechanism crosses from gene networks to Boolean circuits, and
 will be written up as one rather than explained away.
