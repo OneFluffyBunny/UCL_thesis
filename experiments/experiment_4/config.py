@@ -45,6 +45,8 @@ class RunConfig:
     popsize: int
     generations: int
     stop_on_solution: bool
+    post_solve_gens: int
+    parsimony_tiebreak: bool
     n_seeds: int
     seed: int
     fitness: str
@@ -152,6 +154,27 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--no-stop-on-solution", dest="stop_on_solution",
                    action="store_false",
                    help="always run the full budget; forced under --mvg")
+    g.add_argument("--post-solve-gens", type=int, default=0,
+                   help="keep evolving this many MORE generations after a seed first "
+                        "reaches a perfect score, instead of halting immediately "
+                        "[default: 0 = halt immediately, the paper's protocol]. "
+                        "The (1+4) ES is elitist, so once solved the score can only "
+                        "stay at the max or neutrally tie-drift -- this is for "
+                        "watching whether unconstrained drift shrinks a bloated "
+                        "solution or the bloat is endemic. No effect if "
+                        "--no-stop-on-solution is set (nothing to extend from).")
+    g.add_argument("--parsimony-tiebreak", dest="parsimony_tiebreak",
+                   action="store_true", default=False,
+                   help="lexicographic parsimony pressure [our choice, NOT the "
+                        "paper's protocol -- default off, so a plain run is "
+                        "bit-identical to before this flag existed]. Among "
+                        "offspring TIED with the parent's score (selection rule 4b, "
+                        "the neutral-drift step), prefer the one with fewest active "
+                        "gates in its FLATTENED circuit (a module counts its "
+                        "constituent primitives, not itself as one node), breaking "
+                        "any remaining tie at random as before. Never trades fitness "
+                        "for size -- only biases which point on an already-tied "
+                        "neutral plateau the drift step lands on.")
     g.add_argument("--n-seeds", type=int, default=50,
                    help="independent runs [Table II]")
     g.add_argument("--seed", type=int, default=0, help="base RNG seed")
@@ -243,6 +266,8 @@ def parse(argv=None) -> RunConfig:
         raise SystemExit("--mutation-rate must be in (0, 1]")
     if args.nodes < 1:
         raise SystemExit("--nodes must be >= 1")
+    if args.post_solve_gens < 0:
+        raise SystemExit("--post-solve-gens must be >= 0")
     # 0 would make wiring genes unreachable and the topology frozen for the whole
     # run; the rejection sampler would also never terminate once every function
     # slot is already picked.
@@ -281,6 +306,8 @@ def parse(argv=None) -> RunConfig:
         task=args.task, operation=args.operation, mvg=args.mvg, mvg_ops=mvg_ops,
         switch_interval=args.switch_interval,
         popsize=args.popsize, generations=args.generations, stop_on_solution=stop,
+        post_solve_gens=args.post_solve_gens,
+        parsimony_tiebreak=args.parsimony_tiebreak,
         n_seeds=args.n_seeds, seed=args.seed, fitness=args.fitness,
         out_dir=args.out_dir, log_interval=args.log_interval,
         save_best=args.save_best, tag=args.tag,

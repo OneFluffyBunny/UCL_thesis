@@ -18,6 +18,22 @@ grounds the thesis's premise that it's worth evolving toward. More to add.
   any experience-driven refinement. This is why the thesis claims modularity
   *precedes* learning rather than being produced by it, and why our brains are
   scored as-grown rather than after a training phase.
+- **Real neurons never get free wiring — a biological constraint is whatever
+  makes connectivity scarce, not any one specific mechanism.** Axon growth and
+  maintenance cost energy and material (wiring-length cost, à la Clune et al.
+  2013); a neuron has a finite amount of dendritic/somatic surface for synapses
+  to land on (roughly, a fan-in-style cap, à la Kashtan-Alon's model); and
+  synaptic strength is homeostatically regulated so that a neuron's *total*
+  input drive is held within a range rather than growing without bound
+  (synaptic scaling — Turrigiano 2008 is the canonical review — which is the
+  direct biological analogue of our synaptic-strength budget). These three
+  mechanisms look unrelated at the implementation level, but they share the
+  same abstract role: **they make connectivity a scarce, competed-for resource
+  instead of a free good.** That scarcity is plausibly the actual ingredient
+  evolution needs to select for modularity — not any one of length, count, or
+  strength specifically, but the fact that *some* budget forces circuitry to be
+  reused/shared rather than freely duplicated when a goal changes. See "Testing
+  whether a constraint is necessary for modularity" below for the evidence.
 
 ---
 
@@ -436,6 +452,47 @@ stop the modularity study in this architecture and move to a different one.
 
 ---
 
+## Experiment 4/6 — CGP, ECGP, and necgp (nesting extension)
+
+Brief scratch section on the Boolean-circuit arm; expand later.
+
+- **CGP vs ECGP (experiment_4, ⚠️ frozen).** Both evolve Boolean circuits on
+  the KA retina task, pure Python, no gradients. ECGP adds two operators over
+  plain CGP: `compress` (bundle a window of genome-adjacent nodes into a
+  reusable module, callable by id) and `expand` (inline a module call back to
+  primitives). Modules may **not** contain modules — a body is always
+  primitives-only.
+- **necgp (experiment_6) relaxes that restriction**: a module's body may
+  itself call another module, gated by a decaying probability (`nest_decay`)
+  so deep nesting stays comparatively rare. Built to test whether evolution
+  keeps/reuses/builds-on modules given the option, rather than only calling
+  flat ones.
+- **Nesting's generation-count win is a real direction, not a significant
+  effect.** Single-seed run: 32% fewer generations to solve, nested vs flat.
+  9-seed paired sweep (same seed, nested vs flat): nested wins 6/9, mean
+  paired diff −17.8k generations, but Wilcoxon p = 0.16 — does not reach
+  significance at n=9.
+- **A large fraction of "modules," nested or not, do no real computation.**
+  Decomposing a solved circuit (drawing each real module's own internals,
+  walking the active circuit recursively through nesting so a module only
+  ever reached via another module's body is still counted) found 6 of 15
+  reachable module types (40%) — and 24 of 64 actual module calls in the
+  active circuit (37.5%) — are to modules with **zero internal gate
+  interaction**: a single primitive, or several primitives that never chain,
+  wrapped in module packaging. Root cause: ECGP's `compress` groups nodes
+  that are **adjacent in genome position**, not nodes that are **connected in
+  the phenotype's data-dependency graph** — position and data-flow are
+  different things, and compress only looks at the former. Nesting doesn't
+  fix this; it just gives the same failure mode a second layer to occur in.
+- **Read: this is a structural problem with the compression mechanism, not a
+  tuning problem.** Neither the generation-count trend nor the module
+  structure supports a behavioural-modularity claim for ECGP/necgp as built.
+  A phenotype-driven compression operator (select connected subgraphs of the
+  *active* circuit by real data dependency, not genome position) is the
+  candidate fix under discussion — write up once implemented and tested.
+
+---
+
 ## Modularity metrics (`qmetrics/`)
 
 Shared package at repo root: adapters turn any brain format (NDP's `W`,
@@ -640,6 +697,227 @@ could never produce, so Q_rand/Q_max describe the wrong ensemble.
 - Only *pairwise* constraints reduce to a mask. *Degree caps* (KA fan-in) need
   per-node counters, **not yet implemented**: rewiring preserves total degree
   but can shift a node's in/out split, so caps don't come free with the mask.
+
+---
+
+## Preliminary modularity results — circuit purity across experiments
+
+⚠️ **In the works.** First pass, one arm's worth of seeds each, no statistics —
+a naive cross-experiment comparison to see whether `circuit_purity` is worth
+trusting, not yet a result to cite. Expect this table to grow as more arms get
+saved genotypes.
+
+| domain | arm | n seeds | purity (median) | size (median) | task metric (median) | other structural metric (median) |
+|---|---|---:|---:|---|---|---|
+| exp_4 CGP | FG 50n, 4-gate | 12 | 0.777 | 19.5 active | acc 1.000 | cone-frac 0.659 |
+| exp_4 ECGP | FG 50n, 4-gate | 12 | 0.805 | 24.5 active | acc 1.000 | cone-frac 0.682 |
+| exp_4 CGP | FG 100n, NAND-only | 3 | 0.595 | 29.0 active | acc 1.000 | cone-frac 0.364 |
+| exp_4 CGP | FG 100n, 4-gate | 3 | 0.829 | 24.0 active | acc 1.000 | cone-frac 0.625 |
+| exp_4 CGP | MVG 50n (rerun, `--save-best`) | 4 | 0.843 | 9.5 active | acc 0.906 | cone-frac 0.386 |
+| exp_4 ECGP | MVG 50n (rerun, `--save-best`) | 4 | 0.793 | 12.0 active | acc 0.924 | cone-frac 0.528 |
+| exp_4 CGP | MVG 400n (rerun, `--save-best`) | 4 | 0.597 | 39.5 active | acc 0.984 | cone-frac 0.291 |
+| exp_4 ECGP | MVG 400n (rerun, `--save-best`) | 4 | 0.676 | 28.5 active | acc 0.932 | cone-frac 0.521 |
+| KA paper-faithful | FG | 5 | 0.598 | 41.0 edges | best_fit 0.891 | Q_m −0.007 |
+| KA paper-faithful | MVG | 5 | **0.952** | 34.0 edges | best_fit 0.969 | Q_m **0.240** |
+| KA no-fanin ablation | FG | 3 | 0.242 | 71.0 edges | best_fit 0.977 | Q_m −0.127 |
+| KA no-fanin ablation | MVG | 3 | **0.528** | 59.0 edges | best_fit 1.000 | Q_m **0.084** |
+| exp_3 (GD, margin loss) | retina/xor | 5 | N/A — cyclic graph | ~470/560 edges | acc 1.000 | raw Q ~0.019 (undirected) |
+
+**The metric has real explanatory power, despite every caveat above** — but
+exp_4's own MVG comparison shows exactly why it has to be read size-adjusted,
+not raw. On `kashtan_alon/`, purity tracks `Q_m` in direction **twice over**:
+MVG > FG at both the paper-spec fan-in and the no-fanin ablation, the same
+MVG-more-modular result the field already accepts from `Q_m` alone. Inside
+exp_4's FG-only arms, purity and the coarse cone-fraction proxy rank all four
+identically (ECGP > CGP, 4-gate > NAND-only).
+
+**exp_4's MVG rerun initially looked like it broke that agreement — it
+didn't, once size is controlled.** At the 50-node budget (the one place FG
+and MVG share a node count), *raw* purity says MVG ≥ FG (CGP: 0.843 vs 0.777;
+ECGP: 0.793 vs 0.805) while cone-fraction says the opposite, sharply (CGP:
+0.386 vs 0.659; ECGP: 0.528 vs 0.682) — a real disagreement between the two
+structural metrics, on the same circuits. But MVG's circuits are also much
+smaller (9.5–12 active gates vs 19.5–24.5 for FG), and the calibration table
+above already establishes that *random* circuits get purer as they shrink. Z-scoring
+each arm's purity against the random baseline **at its own active-gate count**
+(`scratch_purity_zscore.py`, linear interpolation of the calibration buckets)
+reverses the raw ranking:
+
+| arm | active (median) | purity | baseline mean / SD | z |
+|---|---:|---:|---|---:|
+| CGP  FG  50n  | 19.5 | 0.777 | 0.435 / 0.119 | 2.88 |
+| CGP  MVG 50n  |  9.5 | 0.843 | 0.455 / 0.161 | **2.40** |
+| ECGP FG  50n  | 24.5 | 0.805 | 0.426 / 0.111 | 3.41 |
+| ECGP MVG 50n  | 12.0 | 0.793 | 0.449 / 0.147 | **2.35** |
+
+Both algorithms: FG sits further above chance than MVG once size is
+controlled, even though MVG's raw number was equal or higher. So purity does
+**not** actually contradict cone-fraction here — it *agrees* that MVG is less
+modular than FG, exactly like the existing RESULTS.md finding — but a naive
+reading of the raw numbers would have said the opposite, and would have been
+wrong for a reason the metric's own documentation already flags (size
+confound) rather than anything new. **Lesson for the rest of this table: every
+row above except the size-matched KA pairs should really be read as a
+z-score against the calibration baseline, not as a raw number** — this has
+only been done for the 50n arms so far. The 400n MVG arms (z = 2.09 CGP,
+2.42 ECGP) have no size-matched FG-400n purity to compare against yet.
+
+**One confound surfaced along the way, worth remembering:** NAND-only vs
+4-gate circuits at matched size (29 vs 24 active nodes) differ almost as much
+in purity (0.595 vs 0.829) as FG vs MVG differs anywhere in this table — gate
+set alone moves the score. Any purity comparison has to hold the gate set
+fixed, not just the node count.
+
+**`circuit_purity` is architecturally inapplicable to exp_3 (and, by the same
+argument, exp_2).** Their `role_mask` permits hidden↔hidden edges in both
+directions, so the grown network is recurrent, not a DAG — every one of the 5
+saved genomes fails `nx.topological_sort`. This isn't a metric weakness, it's
+scope: the metric needs a feedforward circuit. Raw `newman_q` still runs there
+(~0.02, near zero) but per its own density-confound caveat that's close to
+uninterpretable at ~90% density — exp_3 still needs `normalized_qm`, not this.
+
+**Idea to keep in mind, not yet tested: purity may partly be reading the
+*task's* intrinsic modularity, not just the circuit's.** If the target
+function itself decomposes cleanly along the pinned left/right split (as
+`L AND R` does by construction), a circuit that merely *computes it correctly*
+may come out purer than one solving a scrambled/entangled target of the same
+size and gate budget — independent of anything evolution or the encoding did.
+A cheap check: take the same task, permute which inputs count as "left" vs
+"right" (or otherwise scramble the target's own decomposition) so the correct
+circuit can no longer lateralise as cleanly, then compare purity on evolved
+solutions to that variant against the ones above. If purity drops on the
+scrambled task at matched accuracy and size, that's the task-intrinsic
+component showing through, not a property of the search — and it would mean
+every purity number in this table needs a task-matched null, not just a
+size-matched one (the existing calibration only controls for active-gate
+count, not the target function's own decomposability).
+
+---
+
+## Testing whether a constraint is necessary for modularity
+
+**What "constraint" means here — three mechanisms, one abstract role.** Three
+different things get called a "constraint" across this project and the
+literature it engages with, and they are easy to conflate:
+
+1. **Clune et al. 2013's connection cost** — a *continuous fitness penalty* on
+   wiring length, requiring neurons to occupy physical space (cost ∝ Euclidean
+   distance between them). Explicitly excluded by this thesis's hard constraints
+   (no physical space).
+2. **Kashtan–Alon's fan-in cap** — a *hard architectural limit*: each neuron may
+   receive from at most 3 others (first hidden layer) or 2 (every layer after),
+   full stop, independent of space.
+3. **Our synaptic budget (`experiment_1`)** — a *conserved resource*: total
+   incoming `Σ|w|` per neuron is capped (`S`) and shared among however many
+   synapses exist, with a relative shrink (`τ`) pruning the weakest. Not a count
+   cap — a strength budget.
+
+What unifies them is not the mechanism but the **role**: each makes
+connectivity a *scarce, competed-for resource* rather than a free good. The
+hypothesis under test is that scarcity in this abstract sense — not wiring
+length specifically — is the ingredient MVG needs to produce modularity. With
+nothing to compete for, there is no trade-off forcing the network to reuse or
+specialise circuitry when the goal switches; it can just grow a redundant,
+entangled solution that already satisfies every goal at once (see the
+"one-module compromise" fact under Experiment 1, above: 0.833 under *both* AND
+and OR, zero re-adaptation cost, no sharing required — always available, and
+cheaper to find than a modular split, once wiring is free).
+
+**Evidence gathered so far.** All of it is consistent with the hypothesis; none
+of it is yet a direct ablation of KA's own constraint.
+
+- **`experiment_1`, no synaptic budget (Cost 1, above): the brain is fully
+  dense regardless of goal.** MVG converged to *literally* the complete
+  role-allowed graph (100% density, 77% of weights saturated at |w| > 0.999);
+  FG was little better (72–100% across the arms measured). Newman Q could not
+  register anything (0.000–0.053) — no sparse structure exists for a modularity
+  metric to find, weighted or not.
+- **New (2026-08-19), matched no-budget vs budget 2×2**, `retina_ka2005`,
+  `n_hidden=24`, popsize 64, 2,000 generations, 3 seeds/arm, scored with
+  `qmetrics.left_right_q` (primary) and `normalized_qm` (secondary), `n_rand=200`
+  (so `p=0.005` is the floor — 0/200 nulls matched):
+
+  | arm | density | left_right_q, mean (sig. seeds) | Q_m, mean (sig. seeds) |
+  |---|---:|---:|---:|
+  | FG, no budget | 100.0% | undefined — complete graph | undefined |
+  | MVG, no budget | 100.0% | undefined — complete graph | undefined |
+  | FG, budget (S=4, τ=0.9) | 48.7% | 0.225 (**2/3**, p=.020/.010) | 0.001 (1/3, p=.005) |
+  | MVG, budget (S=4, τ=0.9, E=20) | 37.7% | 0.467 (1/3, p=.005) | **0.453 (2/3**, p=.005/.005) |
+
+  Two findings, and they cut in different directions — report both, do not
+  average over the disagreement:
+  1. **Removing the budget doesn't lower modularity, it makes the question
+     unanswerable.** Density saturates to 100% in both FG and MVG, and the
+     metric is undefined on a complete graph. That is itself the strongest
+     form of "no modularity possible here" — stronger than a low score, because
+     there is no structure left to score.
+  2. **With the budget restored, the two metrics disagree on which goal wins.**
+     `Q_m` (secondary) shows a clean MVG > FG gap (0.453 vs 0.001, 2/3 vs 1/3
+     seeds significant). `left_right_q` (**primary**, per the metric-choice
+     guidance above) shows the opposite pattern in significance count — FG has
+     *more* individually-significant seeds (2/3) than MVG (1/3), even though
+     MVG's mean is nominally higher (0.467 vs 0.225); that mean is inflated by
+     one large but non-significant MVG outlier (seed 2, `LR_opt=1.000`,
+     `p=0.299`). So the designated primary metric does **not** cleanly support
+     "MVG produces more left/right modularity than FG" here — only `Q_m` does.
+     n=3/arm either way, so treat all of this as suggestive, not settled.
+- **`kashtan_alon/` reproduction: Q_m ≈ 0.35 (MVG) vs ≈ 0.15 (FG)**, both *with*
+  KA's fan-in cap intact (`kashtan_alon/RESULTS.md`). This is the literal system
+  the field cites for "MVG produces modularity," and it has always run with the
+  constraint switched on. **No one, including this project, has run it with the
+  cap removed.**
+
+**KA with the fan-in cap removed, under MVG — tested 2026-08-20
+(`kashtan_alon/RESULTS.md`, Run 6).** The prediction was that modularity would
+collapse toward the FG level or below, by the same mechanism the
+`experiment_1` no-budget arms demonstrate: unlimited fan-in removes the trade-off
+that forces reuse over duplication when the goal switches. **That's not quite
+what happened.** Same task, same GA hyperparameters as the constrained
+baseline (Run 5), only `NetConfig(fan_in=())` differs (3 seeds/condition):
+
+| condition | Q_m, no cap | Q_m, capped (Run 5) |
+|---|---|---|
+| MVG | 0.119 ± 0.140 | 0.245 ± 0.049 |
+| FG | −0.100 ± 0.113 | 0.025 ± 0.139 |
+
+Both conditions' absolute Q_m drop by almost the same amount (~0.12–0.13) when
+the cap is removed — but the **MVG−FG gap itself barely moves** (0.219 without
+the cap vs. 0.220 with it). MVG still beats FG by essentially the same margin;
+it just does so at a lower absolute level, because density roughly doubles in
+both conditions (33%→56% MVG, 38%→67% FG) without ever saturating to a
+complete graph the way `experiment_1`'s no-budget arms did.
+
+So the honest reading is **not** "the constraint is necessary for MVG > FG" —
+it's closer to "the constraint sets the *absolute level* of modularity KA's
+network can reach, but the *relative* MVG-over-FG advantage survives removing
+it." That's a real complication for the strong form of the hypothesis stated
+above: in this specific model, goal-switching itself appears to be doing most
+of the work of separating MVG from FG, independent of whether wiring is scarce.
+The scarcity story still explains why FG solves the task *better* without the
+cap (mean best fit 0.975 vs. 0.904 — more raw capacity means FG no longer
+needs to economize), but not why MVG stays ahead of FG regardless. Caveat:
+n=3/condition, not statistically significant (Welch p ≈ 0.11) — a 5+-seed
+rerun matching Run 5 is the next step before trusting the magnitude of either
+effect.
+
+⚠️ **Confound found 2026-08-20, after this was first written: the density
+comparison above is partly an artifact, not purely a result.**
+`kashtan_alon/model.py`'s `init_population()` seeds every genome's starting
+edge count as `k = round(init_density * cap)` — and `cap` is whatever the
+*current* fan-in limit is. With the cap removed, `cap` silently becomes "the
+full previous layer," so `init_density=0.5` (unchanged, paper default) seeds
+every genome at **exactly 50.0% density on generation 0**, vs. 27.4% for the
+capped baseline (Run 5) where `cap`=3 or 2. Checking the per-generation log:
+FG genuinely climbs from that 50% seed to a ~65–67% attractor within ~500
+generations and holds — real evolutionary movement. MVG mostly random-walks
+around its 50% start (41–54% the whole run) with little net drift. So part of
+the "density roughly doubles" claim above is just the init-density formula
+being reinterpreted against a much wider cap, not evolution converging
+anywhere — the two runs did not start from a comparable point. This doesn't
+overturn the Q_m/gap finding, but it does mean the density comparison,
+and the "wiring is no longer scarce" framing built on it, needs a rerun with
+a matched starting density before it can be trusted. See Run 6, note 5 in
+`kashtan_alon/RESULTS.md` for the full trajectory data.
 
 ---
 

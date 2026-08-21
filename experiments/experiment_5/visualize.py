@@ -381,6 +381,28 @@ def _modular_figsize(geom, n_in: int) -> tuple[float, float]:
                                            for v in by_depth.values()), default=1)) + 2.0))
 
 
+def _box_style(ind, j: int, gates, n_prim: int,
+              mod_colour: dict[str, str]) -> tuple[str, str]:
+    """(label, fill colour) for node `j`'s box in the unflattened drawing.
+
+    A primitive gate is named by its gate and drawn NEUTRAL. A module call is
+    named `M<id>` and coloured from the MODULE_COLOURS cycle -- UNLESS
+    `ecgp.is_fake_module` is true of its body, in which case it is ALSO drawn
+    NEUTRAL: structurally it is either one primitive gate, or several gates that
+    never actually feed each other. Ported from `experiment_4/visualize.py` --
+    same rule, split out so it is unit-testable without matplotlib.
+    """
+    import ecgp                        # local: keeps `visualize` usable in CGP-only runs
+    if ind.ntype[j] == 0:
+        return gates[ind.func[j]].name.upper(), NEUTRAL
+    mod = ind.modules[ind.func[j]]
+    name = ecgp.module_name(ind.func[j], n_prim)
+    if ecgp.is_fake_module(mod):
+        return name, NEUTRAL
+    return name, mod_colour.setdefault(
+        name, MODULE_COLOURS[len(mod_colour) % len(MODULE_COLOURS)])
+
+
 def _render_modular(ax, ind, n_in: int, gates, n_prim: int, geom,
                     title: str = "", split: int | None = None,
                     mod_colour: dict[str, str] | None = None,
@@ -390,8 +412,6 @@ def _render_modular(ax, ind, n_in: int, gates, n_prim: int, geom,
     Same contract as `_render`: geometry in, labels out, `_fit_labels` applied by the
     caller once `tight_layout` has settled how big a data unit is.
     """
-    import ecgp                        # local: keeps `visualize` usable in CGP-only runs
-
     active, max_d, height, pos, in_pos, _, port = geom
     mod_colour = {} if mod_colour is None else mod_colour
 
@@ -426,12 +446,7 @@ def _render_modular(ax, ind, n_in: int, gates, n_prim: int, geom,
     for j in sorted(active):
         x, y = pos[j]
         h = height[j]
-        if ind.ntype[j] == 0:
-            name, col = gates[ind.func[j]].name.upper(), NEUTRAL
-        else:
-            name = ecgp.module_name(ind.func[j], n_prim)
-            col = mod_colour.setdefault(
-                name, MODULE_COLOURS[len(mod_colour) % len(MODULE_COLOURS)])
+        name, col = _box_style(ind, j, gates, n_prim, mod_colour)
         is_out = j in out_nodes
         ax.add_patch(FancyBboxPatch((x - MOD_BOX_HW, y - h / 2), 2 * MOD_BOX_HW, h,
                                     boxstyle="round,pad=0.04",

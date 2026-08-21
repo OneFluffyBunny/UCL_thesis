@@ -667,6 +667,75 @@ def module_name(mid: int, n_prim: int) -> str:
     return f"M{mid - n_prim + 1}"
 
 
+# ---------------------------------------------------------------------------
+# inspection -- is a module actually a MODULE, or just gates wearing a box?
+# ---------------------------------------------------------------------------
+#
+# Ported verbatim from `experiment_4/ecgp.py` (same `Module` shape: flat `conn`,
+# body-only nesting) so the fake-module rule that drives `visualize._box_style`
+# there also applies to exp5's big-brain circuits. See that file's docstrings for
+# the full rationale.
+
+def _module_active_set(mod: Module) -> set[int]:
+    """Body-node indices read walking back from `out` (module-local label space:
+    `[0, n_in)` = module input, `n_in + b` = body node `b`)."""
+    seen: set[int] = set()
+    stack = [lbl - mod.n_in for lbl in mod.out]
+    while stack:
+        b = stack.pop()
+        if b in seen:
+            continue
+        seen.add(b)
+        for lbl in mod.conn[2 * b:2 * b + 2]:
+            if lbl >= mod.n_in:
+                stack.append(lbl - mod.n_in)
+    return seen
+
+
+def module_active_node_count(mod: Module) -> int:
+    """How many of the module's own body nodes are read, walking back from `out`."""
+    return len(_module_active_set(mod))
+
+
+def module_has_interaction(mod: Module) -> bool:
+    """True iff two of the module's own active body nodes are chained -- one
+    active node reads another active node's output, rather than every active
+    node reading only the module's own inputs.
+
+    A module with NO interaction is exactly N independent primitive gates
+    applied straight to the module's inputs and wired out in parallel: it could
+    be flattened to N raw gate boxes with zero loss of information. A single
+    active node (`is_trivial_module`) is the N=1 special case of this.
+    """
+    active = _module_active_set(mod)
+    for b in active:
+        for lbl in mod.conn[2 * b:2 * b + 2]:
+            if lbl >= mod.n_in and (lbl - mod.n_in) in active:
+                return True
+    return False
+
+
+def is_trivial_module(mod: Module) -> bool:
+    """True when the module's active body is a SINGLE primitive gate call.
+
+    Strictly weaker than `is_fake_module` below -- see that docstring for the
+    broader "parallel, non-interacting gates" case this one does not catch.
+    """
+    return module_active_node_count(mod) <= 1
+
+
+def is_fake_module(mod: Module) -> bool:
+    """True when the module has no internal gate interaction at all.
+
+    Strictly broader than `is_trivial_module`: a single active node, and N>=2
+    active nodes that all read the module's own inputs directly (never each
+    other), are both "fake" -- indistinguishable, gate-for-gate, from dropping
+    the active primitives in as plain boxes with no module wrapper. Read by
+    `visualize._box_style`, which greys these out.
+    """
+    return not module_has_interaction(mod)
+
+
 def active_nodes(ind: Individual, n_in: int) -> list[int]:
     """Node indices reachable backwards from the program outputs, topologically ordered.
 

@@ -526,6 +526,18 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
             promoted = True
         elif top == p_score:                                     # 4b
             ties = [i for i, s in enumerate(o_scores) if s == top]
+            if cfg.parsimony_tiebreak and len(ties) > 1:
+                # Lexicographic parsimony pressure [our choice, not the paper's
+                # protocol -- gated behind the flag so the default run is untouched].
+                # Fitness is unaffected (this only fires among offspring already tied
+                # on score), so it never trades correctness for size; it only biases
+                # which point on the neutral plateau the drift step lands on. Size is
+                # counted on the FLATTENED circuit (as_cgp), so a 7-gate module costs
+                # 7, matching how `active_nodes` is reported everywhere else.
+                sizes = [cgp.phenotype(as_cgp(kids[i]), n_in, gate_set, split).n_active
+                         for i in ties]
+                smallest = min(sizes)
+                ties = [i for i, sz in zip(ties, sizes) if sz == smallest]
             i = rnd.choice(ties)
             parent, (p_score, p_hits) = kids[i], o_scored[i]
             promoted = True
@@ -562,7 +574,13 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
                             best_geno, best_hits, solved_gen, evals, goal,
                             recoveries, rec_open)
 
-        if cfg.stop_on_solution and p_hits == n_patterns:
+        # solved_gen is set above the instant p_hits first hits n_patterns, so on
+        # that same generation gen == solved_gen and this doesn't break yet -- it
+        # only breaks once post_solve_gens more generations of (elitist, so
+        # score-preserving) neutral drift have run. post_solve_gens=0 (default)
+        # reduces to the original immediate-halt behaviour.
+        if (cfg.stop_on_solution and p_hits == n_patterns
+                and gen >= solved_gen + cfg.post_solve_gens):
             break
 
     log_row(gen)                                # endpoint row
@@ -627,9 +645,19 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
             hidden = viz_mod.n_hidden_nodes(snap, n_in) if cfg.ecgp else ph.n_active
             panels.append((snap if cfg.ecgp else v, ph,
                            viz_mod.stage_title(g_, hits_, n_patterns, hidden), org))
+        alg = "ECGP" if cfg.ecgp else "CGP"
+        mode = f"MVG {'-'.join(cfg.mvg_ops)}" if cfg.mvg else f"FG {cfg.operation}"
+        # "gates" here is the function-set ALPHABET size (how many distinct primitive
+        # gates a function gene may choose from), not the genotype's node/gene count
+        # (`--nodes`, the OTHER axis the 50-vs-100 sweep varies) -- both are shown so
+        # the two are never conflated at a glance.
+        gate_names = cfg.gates.upper().replace(",", "/")
+        stage_title = (f"{alg}  |  {mode}  |  {len(gate_set)} start"
+                       f"{'ing gate' if len(gate_set) == 1 else 'ing gates'} "
+                       f"({gate_names})  |  {cfg.nodes} genes")
         viz_mod.stage_grid(
             panels, gate_set, n_in, out / f"seed{seed}_stages.png",
-            title="ECGP" if cfg.ecgp else "CGP",
+            title=stage_title,
             n_prim=n_funcs if cfg.ecgp else None,
             split=split, colour_cones=cfg.colour_cones)
 
@@ -735,6 +763,12 @@ def main(argv=None) -> int:
     p_func = cfg.nodes / (cfg.nodes + cfg.wiring_weight * (cfg.nodes * arity + 1))
     print(f"  {cfg.nodes} nodes, {cgp.n_gene_slots(cfg.nodes, arity, 1)} gene slots, "
           f"{n_mut} mutated/application | (1+{cfg.popsize - 1}) ES")
+    if cfg.stop_on_solution and cfg.post_solve_gens:
+        print(f"  post-solve: keep drifting {cfg.post_solve_gens} more generations "
+              f"after first solving (score is capped, so this is pure neutral drift)")
+    if cfg.parsimony_tiebreak:
+        print(f"  parsimony-tiebreak ON: ties (rule 4b) prefer fewer flattened "
+              f"active gates, not a random pick")
     print(f"  wiring-weight {cfg.wiring_weight} -> {100 * p_func:.0f}% of mutations "
           f"hit a function gene, {100 * (1 - p_func):.0f}% rewire "
           f"({n_mut * (1 - p_func):.2f} rewires/offspring)")

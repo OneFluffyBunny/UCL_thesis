@@ -782,9 +782,9 @@ def flatten(ind: Individual, n_in: int) -> cgp.Genotype:
     return flatten_with_origin(ind, n_in, 0)[0]
 
 
-def _flatten_module(ind: Individual, mod: Module, n_in: int, args: list[int],
-                    tag: str, func: list[int], conn: list[int], origin: list[str],
-                    seen: dict[int, int], n_prim: int) -> list[int]:
+def _flatten_module(mod: Module, modules: dict[int, Module], n_in: int,
+                    args: list[int], tag: str, func: list[int], conn: list[int],
+                    origin: list[str], seen: dict[int, int], n_prim: int) -> list[int]:
     """Inline `mod`'s body (recursively, for a nested call) into the flat arrays.
 
     EXTENDED -- plain ECGP's flatten was a single pass because a body could only
@@ -792,6 +792,10 @@ def _flatten_module(ind: Individual, mod: Module, n_in: int, args: list[int],
     call. `args` are already-resolved outer labels, one per module input (all
     single-output, since a module input is a formal parameter). Returns the
     resolved outer label for each of `mod`'s own outputs.
+
+    Takes the module dict directly rather than an `Individual` -- the only thing
+    this ever needed from one -- so `module_active_primitive_count` can drive the
+    same recursive inlining over a single module with nothing else to hand it.
     """
     body_lbl: list[list[int]] = []          # body node -> one new label per its output
 
@@ -811,13 +815,106 @@ def _flatten_module(ind: Individual, mod: Module, n_in: int, args: list[int],
             origin.append(tag)
             body_lbl.append([new_lbl])
         else:
-            sub = ind.modules[mod.func[b]]
+            sub = modules[mod.func[b]]
             sub_args = [resolve(row_c, row_o, t) for t in range(len(row_c))]
             seen[mod.func[b]] = seen.get(mod.func[b], 0) + 1
             sub_tag = f"{tag}>{module_name(mod.func[b], n_prim)}#{seen[mod.func[b]]}"
-            body_lbl.append(_flatten_module(ind, sub, n_in, sub_args, sub_tag,
+            body_lbl.append(_flatten_module(sub, modules, n_in, sub_args, sub_tag,
                                             func, conn, origin, seen, n_prim))
     return [body_lbl[lbl - mod.n_in][c] for lbl, c in zip(mod.out, mod.ocout)]
+
+
+def _flatten_and_active(mod: Module, modules: dict[int, Module]
+                        ) -> tuple[list[int], set[int]]:
+    """`mod` recursively inlined to primitives-only `conn`, plus the active-node
+    set (backward walk from `mod`'s own outputs) in that flat label space.
+
+    Shared by `module_active_primitive_count` and `module_has_interaction` so
+    nesting only has to be inlined once per call.
+    """
+    func: list[int] = []
+    conn: list[int] = []
+    origin: list[str] = []
+    n = mod.n_in
+    outs = _flatten_module(mod, modules, n, list(range(n)), "", func, conn,
+                           origin, {}, 0)
+    seen: set[int] = set()
+    stack = [o - n for o in outs if o >= n]
+    while stack:
+        b = stack.pop()
+        if b in seen:
+            continue
+        seen.add(b)
+        for lbl in (conn[2 * b], conn[2 * b + 1]):
+            if lbl >= n:
+                stack.append(lbl - n)
+    return conn, seen
+
+
+def module_active_primitive_count(mod: Module, modules: dict[int, Module]) -> int:
+    """Primitive gates in `mod`'s body once recursively inlined to primitives and
+    pruned to only what `mod`'s own outputs actually read.
+
+    EXTENDED beyond plain ECGP's `module_active_node_count`: a necgp module's body
+    can itself call another module, so "one active body node" is not "one gate"
+    the way it is in plain ECGP -- a single active body node might be a nested
+    call hiding an arbitrary amount of further structure (or itself reduce to
+    nothing more than one gate, several nesting levels down). This runs the SAME
+    recursive inlining `flatten_with_origin` uses (`_flatten_module`, started here
+    on `mod` alone with its own formal parameters as inputs) and then counts
+    active nodes in the resulting flat, primitives-only graph -- the same backward
+    walk `active_nodes` does at the top level, just over the module's own labels.
+    """
+    _, active = _flatten_and_active(mod, modules)
+    return len(active)
+
+
+def module_has_interaction(mod: Module, modules: dict[int, Module]) -> bool:
+    """True iff, once `mod` is recursively flattened to primitives, two of its
+    own active primitive nodes are chained -- one reads another's output.
+
+    The nested generalisation of plain ECGP's `ecgp.module_has_interaction`
+    (`experiment_4/ecgp.py`): nesting is inlined away first (`_flatten_and_active`)
+    so a module that only wraps a single nested call, or bundles several nested/
+    primitive calls that never feed each other however deep the nesting goes, is
+    still caught as having no real interaction.
+    """
+    n = mod.n_in
+    conn, active = _flatten_and_active(mod, modules)
+    for b in active:
+        for lbl in (conn[2 * b], conn[2 * b + 1]):
+            if lbl >= n and (lbl - n) in active:
+                return True
+    return False
+
+
+def is_trivial_module(mod: Module, modules: dict[int, Module]) -> bool:
+    """True when `mod`'s active body -- recursively flattened through any amount
+    of nesting -- is a SINGLE primitive gate call.
+
+    The nested generalisation of plain ECGP's `ecgp.is_trivial_module`
+    (`experiment_4/ecgp.py`): see that function's docstring for why this is
+    common and what it means for a module to be one. Here it also catches a
+    module whose only "work" is calling one other module that itself turns out
+    to reduce to a single gate, however many nesting levels that took to write
+    down -- the box shape says "module" (possibly several times over) but the
+    function inside is still just a gate.
+
+    Strictly weaker than `is_fake_module` below -- see that docstring.
+    """
+    return module_active_primitive_count(mod, modules) <= 1
+
+
+def is_fake_module(mod: Module, modules: dict[int, Module]) -> bool:
+    """True when `mod`, recursively flattened through any amount of nesting, has
+    no internal gate interaction at all.
+
+    The nested generalisation of plain ECGP's `ecgp.is_fake_module`
+    (`experiment_4/ecgp.py`): strictly broader than `is_trivial_module` here too
+    -- several nested/primitive calls that each read straight off `mod`'s own
+    inputs and never feed each other are just as fake as a single-gate collapse.
+    """
+    return not module_has_interaction(mod, modules)
 
 
 def flatten_with_origin(ind: Individual, n_in: int,
@@ -848,8 +945,8 @@ def flatten_with_origin(ind: Individual, n_in: int,
         seen_calls[mid] = seen_calls.get(mid, 0) + 1
         tag = f"{module_name(mid, n_prim)}#{seen_calls[mid]}"
         args = [remap[(ind.conn[j][t], ind.cout[j][t])] for t in range(mod.n_in)]
-        outs = _flatten_module(ind, mod, n_in, args, tag, func, conn, origin,
-                               seen_calls, n_prim)
+        outs = _flatten_module(mod, ind.modules, n_in, args, tag, func, conn,
+                               origin, seen_calls, n_prim)
         for o, new_lbl in enumerate(outs):
             remap[(lbl, o)] = new_lbl
 

@@ -264,3 +264,16 @@ nothing until there is a null model for it (see `PAPER_SPEC.md` §7).
 - **The multiplier's input groups are not a decomposition** and are labelled as such.
   If `multN` is used, it is as the negative control, not as a task expected to
   decompose.
+
+## 2026-08-21 — ported the fake-module grey-out from experiment_4 (machinery, no run yet)
+
+`ecgp.is_fake_module`/`module_has_interaction` (experiment_4's fix for modules
+that collapse to a single gate, or to several gates that never interact — see
+its 2026-08-21 `RESULTS.md` entry) had never been ported here: `visualize.py`'s
+module-box colouring coloured every module regardless of whether it did
+anything. Ported both the predicate (`ecgp.py`, verbatim — the `Module` shape is
+identical between the two experiments) and the `_box_style` extraction/wiring in
+`visualize.py`; added `test_visualize.py` (did not exist before) plus the same
+hand-built + independent-edge-check tests `experiment_4/test_ecgp.py` has.
+Machinery only — no big-brain run has been decomposed with it yet, so there is
+no fake-fraction number for this experiment's own tasks to report.

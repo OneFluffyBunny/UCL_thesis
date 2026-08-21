@@ -11,6 +11,104 @@ search, only the goal schedule differs.
 
 ---
 
+## Run 6 — fan-in cap ablation, 3 seeds/condition (2026-08-20) → **partial support: absolute Q_m drops, but the MVG>FG gap survives**
+
+Direct ablation of KA's own constraint (the fan-in cap, `RETINA_FAN_IN = (3,3,3,2)`
+in `model.py`), testing the constraint-necessity hypothesis in `add_to_latex.md`
+("Testing whether a constraint is necessary for modularity"). Same Fig 5a retina
+task, same GA hyperparameters as Run 5 (pop 600, 25 000 gens, elite 150, Pc=0.5,
+Pm=0.5, `fitness=raw`, `qm_nrand=1000`) — the only change is
+`NetConfig(fan_in=())`: every neuron may now receive from every node in the
+previous layer instead of being capped at 3 (hidden layers) / 2 (output).
+
+- **Command:** `conda run -n lndp python run_ablation_no_fanin.py --n-seeds 3 --fresh`
+- **Where:** laptop (CPU) · 3 seeds/condition (fewer than Run 5's 5, for runtime —
+  see caveat below).
+
+| condition | mean Q_m (no cap) | per seed | mean best fit | mean density | Run 5 (capped) Q_m | Run 5 density |
+|---|---|---|---|---|---|---|
+| **MVG** | **0.119 ± 0.140** | 0.084, −0.000, 0.272 | 1.000 | 56.0% | 0.245 ± 0.049 | 33.4% |
+| **FG (L AND R)** | **−0.100 ± 0.113** | −0.197, −0.127, 0.025 | 0.975 | 66.7% | 0.025 ± 0.139 | 37.7% |
+
+- **Not significant at n=3:** Welch t = 2.11 (p ≈ 0.11), Mann–Whitney U = 8 (p ≈
+  0.10). Underpowered — treat magnitudes as suggestive only.
+- **The MVG−FG separation survives, almost unchanged:** gap = 0.219 with the cap
+  removed vs. 0.220 with it (Run 5). Every seed still ranks the way KA predicts
+  (MVG's worst seed, −0.0004, still beats FG's best seed, 0.025).
+- **But absolute Q_m drops for BOTH conditions**, by about the same amount
+  (MVG 0.245→0.119, ∆−0.126; FG 0.025→−0.100, ∆−0.125) — not selectively on FG.
+  Density roughly doubles in both conditions too (MVG 33%→56%, FG 38%→67%),
+  consistent with wiring no longer being scarce, but the network never saturates
+  to 100% the way `experiment_1`'s no-budget arms did (see note 3 below). ⚠️ See
+  note 5 below — a chunk of this density jump is an init-seeding artifact, not
+  purely evolution's doing.
+- **FG solves the task *better* without the cap** (mean best fit 0.975 vs Run 5's
+  0.904) while MVG stays saturated at 1.0 either way — unlimited fan-in gives FG
+  more raw capacity to just solve the task, which is the mechanism the
+  hypothesis predicts, but it doesn't push FG's Q_m low enough to erase the gap.
+
+**Verdict: does NOT cleanly confirm "removing the constraint kills modularity"
+— it complicates the strong form of that prediction.** What the data actually
+shows:
+1. **The MVG-driven relative advantage over FG looks constraint-independent** —
+   the ~0.22 gap holds whether or not the fan-in cap exists. Goal-switching
+   itself, not the fan-in cap specifically, appears to be doing most of the work
+   of separating MVG from FG in this model.
+2. **The fan-in cap does matter for absolute modularity magnitude** — both
+   conditions lose ~0.12–0.13 of Q_m without it, and FG's best fit rises. That's
+   consistent with "scarcity forces reuse" as a story about *how well/cheaply*
+   the task gets solved, not as the sole cause of MVG beating FG.
+3. n=3/condition, high variance (MVG spans −0.0004 to 0.272 — one seed sits
+   right inside Run 5's constrained range). Not proof either way at this n.
+4. **This does not match `experiment_1`'s no-budget result, and that mismatch
+   is itself informative.** There, removing the synaptic budget saturated both
+   arms to 100% density and made the modularity metric undefined (no structure
+   left to score) — the strongest possible "constraint removed → no modularity
+   measurable" outcome. Here, removing the fan-in cap raised density to only
+   56–67%, nowhere near saturating; KA's mutation operator (`ga.py`'s
+   `_add_edge`, one edge at a time, capped implicitly by `_fan_in()` returning
+   full layer width) never drives the network to the complete graph in 25 000
+   gens the way an unbounded continuous weight budget does. The two ablations
+   are not equivalent tests of "remove the constraint" — one hits a hard
+   ceiling (complete graph), the other doesn't.
+5. ⚠️ **`--init-density` is itself scaled by the cap, so removing the cap
+   silently changes the starting point, not just the mutation dynamics.**
+   `init_population()` seeds every genome with `k = round(init_density * cap)`
+   incoming edges per destination neuron. With `init_density=0.5` (default,
+   unchanged in this ablation) and the cap removed, `cap` = the full previous
+   layer's width, so **every genome starts at exactly 50.0% density on gen 0**
+   (confirmed in the log CSVs: gen-0 density is 50.00% for every uncapped seed,
+   vs. 27.36% for the Run 5/capped baseline, since there `cap`=3 or 2). Checking
+   the full per-gen trajectory: FG genuinely climbs from that 50% seed to a
+   ~65–67% attractor within the first ~500 generations and holds there for the
+   remaining 24 500 — real evolutionary movement. MVG mostly random-walks
+   between ~41–54% around its 50% start with no clear net drift, ending at
+   51.9–60.4%. **So the "density roughly doubles" framing above overstates how
+   much of the capped-vs-uncapped density gap is evolution's doing** — part of
+   it (the jump from 27%→50% at gen 0) is purely the init-density formula
+   reinterpreting "0.5" against a much wider cap, not a result. Re-running with
+   an `init_density` chosen to give a comparable *absolute* edge count at gen 0
+   (or logging density-vs-generation explicitly) would be needed to cleanly
+   separate "evolution converges to a different density" from "we planted a
+   denser forest to begin with."
+
+### Next steps (proposed)
+1. **More seeds** (5+, matching Run 5) to get the gap-survives finding past n=3
+   noise before trusting the exact magnitude of either effect.
+2. If the gap really does survive at higher n, the constraint-necessity framing
+   in `add_to_latex.md` needs revising for KA specifically: the fan-in cap
+   is not what makes MVG > FG in this model — something about goal-switching
+   itself is, and the cap only sets the absolute modularity ceiling.
+3. Worth trying a bigger ablation — remove fan-in *and* increase population/task
+   size so density can actually approach saturation — to get a cleaner match to
+   the `experiment_1` no-budget condition and see if the gap survives even there.
+4. **Fix the init-density confound (note 5) before trusting the density
+   numbers**: rerun with `init_density` scaled to match Run 5's gen-0 absolute
+   edge count (≈27% of 106 ≈ 29 edges), so both conditions start from the same
+   seed and any divergence is attributable to evolution, not initialization.
+
+---
+
 ## Run 5 — first KA-faithful run, 5 seeds (2026-08-03) → ✅ **MVG > FG reproduced (directional, significant)**
 
 The real test on the rebuilt (KA-faithful) code: MVG vs Fixed-Goal, pop 600, 25 000

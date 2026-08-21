@@ -150,6 +150,33 @@ vector under CMA-ES. Its role is an **existence proof about the mechanism**, in 
 substrate where acquisition, reuse and death are directly observable. Scope: a
 two-week side experiment, not a second thesis.
 
+## Speed — use PyPy for this experiment's runs (via `../experiment_5/`)
+
+At **8 inputs** this search sits in PyPy's sweet spot and is **~6x faster** there
+(measured 2026-08-19: 3 seeds x 100k generations of `retina_ka2005`, wall clock —
+33.6 s on CPython vs 5.4 s on PyPy; longer jobs move toward ~8-13x as the JIT
+warm-up amortises). A wire is only a 256-bit int here, so almost all the time is
+Python interpreter overhead, which is exactly what PyPy's JIT removes.
+
+⚠️ **This directory cannot run under PyPy**, and is frozen so it will not be
+changed to: `train.py` and `tasks.py` import numpy at module load (the task masks
+come from `kashtan_alon/tasks.py`), and `visualize.py` imports matplotlib. The
+PyPy-capable fork is **`../experiment_5/`**, which re-expresses the tasks in
+numpy-free mask algebra and keeps the plotting lazy;
+`experiment_5/test_equivalence.py` asserts its search is this one, generation for
+generation.
+
+    cd ../experiment_5
+    .venv-pypy/Scripts/python train.py --task retina_ka2005 --no-viz --save-best
+
+⚠️ **Seeds do not transfer.** experiment_5 changed `_draw_slots` to return picks in
+draw order (a `set` of ints iterates differently on CPython and PyPy), so the same
+seed gives a different run there. Every number in this directory's `RESULTS.md`
+must still be reproduced *here*, on CPython.
+
+And the speedup does not extend to bigger brains: PyPy crosses over at ~14 inputs
+and is up to 5x *slower* above it. See `../experiment_5/README.md`.
+
 ## Status
 
 **CGP and ECGP are both built and verified; no ECGP experiment has been run yet.**

@@ -152,6 +152,27 @@ def _modular_figsize(geom, n_in: int) -> tuple[float, float]:
                                            for v in by_depth.values()), default=1)) + 2.0))
 
 
+def _box_style(ind, j: int, gates, n_prim: int,
+              mod_colour: dict[str, str]) -> tuple[str, str]:
+    """(base label without the `|x` suffix, fill colour) for node `j`'s box.
+
+    Same rule as `experiment_4/visualize.py`'s `_box_style`, generalised to
+    nesting: a module call is drawn NEUTRAL, not given a MODULE_COLOURS entry, when
+    `ecgp.is_fake_module` says its recursively-flattened body has no gate
+    interaction -- one primitive, or several that never feed each other --
+    whatever nesting it took to write it down.
+    """
+    import ecgp
+    if ind.ntype[j] == 0:
+        return gates[ind.func[j]].name.upper(), NEUTRAL
+    mod = ind.modules[ind.func[j]]
+    name = ecgp.module_name(ind.func[j], n_prim)
+    if ecgp.is_fake_module(mod, ind.modules):
+        return name, NEUTRAL
+    return name, mod_colour.setdefault(
+        name, MODULE_COLOURS[len(mod_colour) % len(MODULE_COLOURS)])
+
+
 def _render_modular(ax, ind, n_in: int, gates, n_prim: int, geom,
                     title: str = "", split: int | None = None,
                     mod_colour: dict[str, str] | None = None,
@@ -161,8 +182,6 @@ def _render_modular(ax, ind, n_in: int, gates, n_prim: int, geom,
     Same contract as `experiment_4/visualize.py`'s `_render_modular`, plus the `|x`
     nesting-factor suffix on every box label (see module docstring).
     """
-    import ecgp
-
     active, max_d, height, pos, in_pos, _, port = geom
     mod_colour = {} if mod_colour is None else mod_colour
 
@@ -194,12 +213,7 @@ def _render_modular(ax, ind, n_in: int, gates, n_prim: int, geom,
     for j in sorted(active):
         x, y = pos[j]
         h = height[j]
-        if ind.ntype[j] == 0:
-            base_name, col = gates[ind.func[j]].name.upper(), NEUTRAL
-        else:
-            base_name = ecgp.module_name(ind.func[j], n_prim)
-            col = mod_colour.setdefault(
-                base_name, MODULE_COLOURS[len(mod_colour) % len(MODULE_COLOURS)])
+        base_name, col = _box_style(ind, j, gates, n_prim, mod_colour)
         name = f"{base_name}|{_nesting_factor(ind, j)}"
         is_out = j in out_nodes
         ax.add_patch(FancyBboxPatch((x - MOD_BOX_HW, y - h / 2), 2 * MOD_BOX_HW, h,

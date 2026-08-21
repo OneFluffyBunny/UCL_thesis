@@ -904,6 +904,94 @@ def evaluate(ind: Individual, gates: Sequence[Gate], in_masks: Sequence[int],
 # so it routinely encapsulates a dead input, and it has no reason to present the
 # arguments of two rediscoveries of XOR in the same order.
 
+def _module_active_set(mod: Module) -> set[int]:
+    """Body-node indices read walking back from `out` (module-local label space:
+    `[0, n_in)` = module input, `n_in + b` = body node `b`). Shared by every
+    "what does this module actually compute" check below."""
+    seen: set[int] = set()
+    stack = [lbl - mod.n_in for lbl in mod.out]
+    while stack:
+        b = stack.pop()
+        if b in seen:
+            continue
+        seen.add(b)
+        for lbl in mod.conn[2 * b:2 * b + 2]:
+            if lbl >= mod.n_in:
+                stack.append(lbl - mod.n_in)
+    return seen
+
+
+def module_active_node_count(mod: Module) -> int:
+    """How many of the module's own body nodes are read, walking back from `out`.
+
+    `compress` freezes whatever window it grabbed (see its docstring) -- dead
+    inputs and dead body nodes included -- so a module's declared size routinely
+    overstates what it actually computes. This is the same backward walk
+    `active_nodes` does over the outer genotype, run instead over one module's
+    private label space.
+    """
+    return len(_module_active_set(mod))
+
+
+def module_has_interaction(mod: Module) -> bool:
+    """True iff two of the module's own active body nodes are chained -- one
+    active node reads another active node's output, rather than every active
+    node reading only the module's own inputs.
+
+    A module with NO interaction is exactly N independent primitive gates
+    applied straight to the module's inputs and wired out in parallel: nothing
+    about the wiring combines them, so it could be flattened to N raw gate
+    boxes with zero loss of information about what the circuit computes. A
+    single active node (`is_trivial_module`) is the N=1 special case of this --
+    there is no second active node to chain to -- but N>=2 independent gates
+    (e.g. two unrelated NANDs each reading straight off the module's inputs,
+    landing on two different outputs) are just as much "not a real module" even
+    though they clear the N<=1 bar.
+    """
+    active = _module_active_set(mod)
+    for b in active:
+        for lbl in mod.conn[2 * b:2 * b + 2]:
+            if lbl >= mod.n_in and (lbl - mod.n_in) in active:
+                return True
+    return False
+
+
+def is_trivial_module(mod: Module) -> bool:
+    """True when the module's active body is a SINGLE primitive gate call.
+
+    A module's `out` genes always name a body node, never a raw module input
+    (section 4), so the active count is always >= 1; when it is exactly 1, the
+    module's entire computation -- every output -- reduces to one primitive gate
+    applied to (possibly repeated, possibly a strict subset of) its declared
+    inputs. That is not a rare edge case: `compress` has no reason to prefer a
+    window whose nodes turn out to matter, so a module born from a window that
+    happens to route most of its own output back out, or duplicate one input into
+    both gate args, is a bare gate wearing a module's declared arity as padding --
+    e.g. `NAND(x, x)` is `NOT(x)`, one active node, however many inputs the module
+    was compressed with.
+
+    Strictly weaker than `is_fake_module` below -- see that docstring for the
+    broader "parallel, non-interacting gates" case this one does not catch.
+    """
+    return module_active_node_count(mod) <= 1
+
+
+def is_fake_module(mod: Module) -> bool:
+    """True when the module has no internal gate interaction at all.
+
+    Strictly broader than `is_trivial_module`: a single active node (no second
+    node to chain to) and N>=2 active nodes that all read the module's own
+    inputs directly (never each other) are both "fake" by this definition --
+    in both cases the module is indistinguishable, gate-for-gate, from just
+    dropping its active primitives in as plain boxes with no module wrapper.
+    Read by `visualize._render_modular`, which greys these out rather than
+    giving them a module colour: the box shape says "module" but the function
+    inside is either one gate, or several gates that never actually talk to
+    each other.
+    """
+    return not module_has_interaction(mod)
+
+
 MAX_CANON_PERMS = 720     # above this the permutation search is skipped (see below)
 
 # label -> (n_inputs, predicate over the input bits). Only functions worth
