@@ -59,6 +59,29 @@ vary the **optimiser** (exp_2 and exp_3 share the *same* direct-encoding model,
   differentiable surrogate (`margin`, the exact one CMA-ES maximises → fair
   head-to-head; or `bce` → gradient-oracle bound); accuracy stays the reported
   (non-differentiable) metric. Isolates "how much does the gradient help?".
+- **experiment_4/ — CGP vs ECGP on the KA retina.** Boolean circuits, pure Python,
+  no JAX. Does module *re-use* (ECGP's compress/expand) actually happen, and does it
+  help under MVG? ⚠️ **FROZEN**: its logged runs are identified by seed, so its
+  search must not change. See its `RESULTS.md`.
+- **experiment_5/ — big brains (FORK of exp_4).** Many inputs *and many outputs*,
+  asking whether **behavioural** modularity emerges (which inputs actually move each
+  output) as opposed to exp_4's structural cone readout. Runs headless under **PyPy**;
+  `test_equivalence.py` proves it is exp_4's algorithm and that PyPy and CPython give
+  byte-identical runs. Machinery done, science not started. ⚠️ One exception:
+  `SPECIALISATION.md` is an **AI-authored sub-study** (Claude Code, 2026-08-21,
+  branch `spec-modularity`) — preregistered, run, refuted, and **not reviewed by a
+  human**. Quarantined in that one file on purpose; do not cite from it.
+- **experiment_6/ — nested modules.** ECGP (exp_4) explicitly forbids a module
+  containing a module; this experiment exists to build a variant that allows
+  nesting *with its complexity priced*, so evolution can be tested for whether it
+  keeps/reuses/builds-on modules rather than just calling flat ones. Self-Modifying
+  CGP (Harding/Miller/Banzhaf 2009, a developmental graph-rewriting mechanism, NOT
+  the same claim as nested named modules) is implemented and verified to search
+  correctly. The actual nested-ECGP target is un-built — Modular CGP's own paper
+  (Walker's thesis; Springer ch. 3) is paywalled/unreachable, so it will be an
+  original extension (leading idea: nesting gated by a decaying probability), not a
+  reproduction. See its `README.md` (framing), `PAPER_SPEC.md` (SMCGP spec, every
+  claim tagged verbatim/inferred/our-choice), `RESULTS.md`.
 
 ## External reference reproduction (`kashtan_alon/`)
 Not one of the three experiments — a **faithful reproduction of Kashtan–Alon 2005**
@@ -79,6 +102,12 @@ touching this. Run with `conda run -n lndp python kashtan_alon/run_paper.py` (th
 - `experiments/README.md` — full experiment-1 encoding spec.
 - `experiments/experiment_2/README.md` — direct-encoding control framing + `RESULTS.md`.
 - `experiments/experiment_3/README.md` — GD-vs-EC optimiser control; differentiability notes.
+- `experiments/experiment_4/README.md` + `PAPER_SPEC.md` — the ECGP spec and the
+  CGP-vs-ECGP framing; `RESULTS.md` is the notebook.
+- `experiments/experiment_5/README.md` — big-brain arm: task families, the
+  structural-vs-behavioural measurement, and **which interpreter to use**.
+- `experiments/experiment_6/README.md` + `PAPER_SPEC.md` — the nested-modules
+  framing and the SMCGP spec; `RESULTS.md` is the notebook.
 - `experiments/HISTORY.md` — the pre-migration git history (2 old commits).
 
 ## Established facts (don't relitigate)
@@ -90,12 +119,26 @@ touching this. Run with `conda run -n lndp python kashtan_alon/run_paper.py` (th
   (encoding can't express it) from *reachability* (search didn't find it).
 - **The #1 missing tool is a modularity METRIC** (Newman Q / Infomap on the grown
   adjacency) — build it before any new architecture; it's the thing we can't yet measure.
+- **PyPy is not a free win — it has a crossover.** In exp_5 (boolean circuits, one
+  truth-table integer per wire) PyPy is 3-6x faster below ~14 program inputs and up to
+  5x *slower* above it: CPython's big-integer bitwise ops are hand-written C, so once
+  one op costs more than the interpreter overhead around it PyPy's advantage is gone.
+  Measure with `experiments/experiment_5/bench.py --crossover` on any new machine
+  before choosing. Wide tasks = CPython; narrow tasks = PyPy.
+- **Exhaustive truth-table evaluation caps out around 20 inputs.** A wire is a
+  `2**n_in`-bit int: 8 KB at 16 inputs, 2 MB at 24. No interpreter fixes that; the only
+  way past it is scoring a sampled subset of patterns, which changes what fitness means.
 
 ## Conventions
 - Stack: JAX, Equinox, Optax, evosax (CMA_ES). Balanced accuracy (chance = 0.5),
   bipolar inputs {-1,+1}.
 - Run Python via the conda env: `conda run -n lndp python ...` (the terminal does
-  not persist conda activations, so prefix every run).
+  not persist conda activations, so prefix every run). ⚠️ `conda run` cannot take a
+  `python -c` script containing newlines — write a file instead.
+- Experiment 5 additionally has a PyPy venv, built by
+  `conda run -n lndp python experiments/experiment_5/setup_pypy.py` (works on the
+  Linux GPU box too). It has no packages and needs none: exp_5's search is
+  stdlib-only. Diagrams stay a CPython job (`render.py`).
 - Experiment outputs go to `runs/` (gitignored — regenerable; conclusions go in
   RESULTS.md).
 - Siblings `LNDP/` (the abandoned original framework) and `NDP/` are gitignored,
