@@ -285,4 +285,94 @@ combined reading is stated as such rather than the more convenient one being kep
 
 ## Results
 
-*(Nothing yet — phase 0 complete, phase 1 in progress.)*
+### Phase 3 — the confirmatory run (2026-08-21)
+
+24 cells x 50 seeds = **1 200 runs**, 4 223 s wall under PyPy on 8 workers.
+`runs/_spec/tidy.csv`, figure `runs/_spec/specialisation.png`.
+
+#### The primary contrast is a NULL
+
+> `staged` vs `cold`, overlap = partial, encoding = cgp4, one-sided Mann-Whitney U:
+> **U = 1481, p = 0.0558**, against a preregistered alpha of 0.05.
+> median SPEC **0.6340** (staged, n=50) vs **0.6111** (cold, n=50).
+> rank-biserial **r = +0.185**, 95% bootstrap CI **[-0.052, +0.404]**.
+> median difference **+0.0229**, 95% CI **[-0.0104, +0.0556]**.
+
+**H-S1 is not supported.** The direction is the predicted one and the p-value is close
+to the line, which is exactly the situation in which a result gets talked up; it is
+recorded here as a null because that is what the preregistered rule says it is. The
+effect-size interval includes zero, and the median shift is **2.3 percentage points on
+a 0-1 scale**, which would be a weak effect even if it were real.
+
+An honest caveat that cuts the other way: resampling these data says n = 50 per arm
+had only **49% power** for an effect this size. Phase 3 was close to a coin flip, so
+this null is weak evidence of absence. That is what phase 3.5 exists to fix.
+
+#### The secondary contrast is uninformative, as predicted
+
+| overlap | staged | cold | gap | p | r |
+|---|---|---|---|---|---|
+| full | 0.0000 | 0.0000 | +0.0000 | 0.267 | +0.041 |
+| **partial** | 0.6340 | 0.6111 | +0.0229 | 0.0558 | +0.185 |
+| zero | 1.0000 | 1.0000 | +0.0000 | 0.393 | +0.020 |
+
+The "no gap at full and zero" prediction is confirmed, and means nothing: both arms
+sit on their construction-forced endpoint in 43/50 and 50/50 seeds respectively, as
+flagged in section 5 before the run. **No weight is placed on this row.**
+
+#### No artefact explains the primary result
+
+* **Solve rate**: 50/50 in 23 of 24 cells, 49/50 in the last. Conditioning on solving
+  removed essentially nobody, so it is not a hidden selection step.
+* **Circuit size**: median active nodes 23 (staged) vs 22 (cold) in the primary cell.
+  SPEC is a ratio over influencing nodes, and the denominators match.
+* **Run duration**: Spearman rho(SPEC, solved_gen) within cells is near zero and
+  inconsistently signed; 2 of 24 cells reach p < 0.05, which is what chance gives.
+  So SPEC is not tracking how long a run took.
+
+#### Exploratory — the interesting result is NOT about SPEC
+
+`SPEC` barely moves anywhere. **Generations-to-solve does**, and in opposite
+directions depending on the gate set (medians, overlap = partial):
+
+| encoding | staged, total | staged, stage 2 only | cold | stage 2 vs cold |
+|---|---|---|---|---|
+| cgp4 | 80 592 | 60 592 | 69 609 | **-9 018** |
+| ecgp4 | 73 559 | 53 559 | 60 592 | **-7 033** |
+| **cgpnand** | 118 936 | 98 936 | 65 086 | **+33 850** |
+| ecgpnand | 88 131 | 68 131 | 64 902 | +3 229 |
+
+With the four-gate set, a solved stage-1 left-detector **transfers**: stage 2 reaches
+the full task ~9 000 generations faster than a cold start. It does not repay the
+20 000-generation staging tax, but the transfer is real and in the direction
+Espinosa-Soto & Wagner's co-option argument predicts.
+
+With **NAND only it reverses hard** — stage 2 takes ~34 000 generations *longer* than
+starting cold. A committed stage-1 solution appears to be an obstacle rather than a
+head start when every sub-function is expensive to rewire. If anything in this
+sub-study is worth following up, it is this: it is a large effect, it is the opposite
+of the intended one, and "curriculum learning can entrench a bad basis" is a more
+interesting claim than the one the study set out to test.
+
+⚠️ **This is exploratory and was visible during piloting** (`train.py` prints
+gens-to-solve in its summary line), so it is a hypothesis for a future preregistered
+run, not a finding. It has had no multiplicity correction and no mechanism test.
+
+#### Exploratory — SPEC by encoding
+
+| encoding | staged | cold | gap | p | r |
+|---|---|---|---|---|---|
+| cgp4 | 0.6340 | 0.6111 | +0.0229 | 0.0558 | +0.185 |
+| ecgp4 | 0.6190 | 0.6325 | **-0.0134** | 0.741 | -0.074 |
+| cgpnand | 0.6087 | 0.5886 | +0.0201 | 0.0041 | +0.308 |
+| ecgpnand | 0.5963 | 0.6030 | -0.0067 | 0.402 | +0.029 |
+
+Both **CGP** arms lean positive and both **ECGP** arms lean negative. Twelve contrasts
+were computed, so one at p = 0.004 is not surprising on its own; `cgpnand` is
+nevertheless the largest effect in the study and is the reason it gets replicated in
+phase 3.5 rather than merely mentioned.
+
+The `ecgpnand` / `zero` cell reaches p = 0.0006 with both medians at exactly 1.000.
+That is a tail effect at a hard ceiling and is noise, not signal — it is listed only
+so that the one impressive-looking p-value in the table is not quietly dropped.
+
