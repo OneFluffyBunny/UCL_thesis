@@ -342,10 +342,20 @@ directions depending on the gate set (medians, overlap = partial):
 | **cgpnand** | 118 936 | 98 936 | 65 086 | **+33 850** |
 | ecgpnand | 88 131 | 68 131 | 64 902 | +3 229 |
 
-With the four-gate set, a solved stage-1 left-detector **transfers**: stage 2 reaches
-the full task ~9 000 generations faster than a cold start. It does not repay the
-20 000-generation staging tax, but the transfer is real and in the direction
-Espinosa-Soto & Wagner's co-option argument predicts.
+With the four-gate set, a solved stage-1 left-detector appears to **transfer**: stage 2
+reaches the full task ~9 000 generations faster than a cold start.
+
+> ### ⚠️ CORRECTION (2026-08-21, from phase 3.5)
+>
+> **The `cgp4` transfer effect above is noise, and calling it "the interesting result"
+> was an over-read.** Its bootstrap 95% CI is **[−23 050, +20 725]** (p = 0.54) — three
+> times wider than the effect. On the replication's fresh seeds it **flips sign**:
+> stage 2 takes **+8 464** generations *more* than cold, CI [−1 774, +19 082].
+>
+> The paragraph is left standing rather than deleted because the mistake is the point:
+> the finding was correctly labelled exploratory and still got written up as though the
+> label were a formality. A median over 50 seeds of a heavy-tailed
+> generations-to-solve distribution is not a measurement.
 
 With **NAND only it reverses hard** — stage 2 takes ~34 000 generations *longer* than
 starting cold. A committed stage-1 solution appears to be an obstacle rather than a
@@ -375,4 +385,90 @@ phase 3.5 rather than merely mentioned.
 The `ecgpnand` / `zero` cell reaches p = 0.0006 with both medians at exactly 1.000.
 That is a tail effect at a hard ceiling and is noise, not signal — it is listed only
 so that the one impressive-looking p-value in the table is not quietly dropped.
+
+---
+
+### Phase 3.5 — the replication (2026-08-21)
+
+Seeds 1000–1199, disjoint from phase 3. `runs/_specrep/`, figure
+`runs/_specrep/replication.png`. Both contrasts as preregistered, α = 0.025 each.
+
+#### Both preregistered tests: NOT SUPPORTED
+
+| | staged median | cold median | diff | U | p | r (95% CI) |
+|---|---|---|---|---|---|---|
+| **R1** cgp4 | 0.6316 (n=198) | 0.6364 (n=200) | **−0.0048** | 19 917 | **0.4595** | +0.006 [−0.107, +0.116] |
+| **R2** cgpnand | 0.6071 (n=194) | 0.6000 (n=196) | +0.0071 | 20 290 | **0.1253** | +0.067 [−0.044, +0.180] |
+
+**H-S1 is refuted, not merely unsupported.** At n ≈ 200 per arm — 94% power for the
+phase-3 effect size — R1's effect is **zero to three decimal places** and its median
+difference flips sign. Phase 3's p = 0.0558 was a 49%-power coin flip landing heads,
+and this is the demonstration of it. Refusing to add seeds to phase 3 was the right
+call: had they been added, this same data would have been reported as a positive.
+
+R2 also fails. Phase 3's `cgpnand` SPEC effect (p = 0.004, r = +0.308) was the largest
+in the study and does not survive fresh seeds — which is what "one contrast in twelve"
+predicts.
+
+**Conclusion on the metric: `SPEC` does not move. Not with a staged schedule, not with
+either gate set, not at n = 400 across the two phases.**
+
+#### The one thing that DID replicate: staging costs generations
+
+Stage-2 generations to solve (staged, minus its 20 000-generation stage-1 tax) against
+cold. Positive = staging **hurt**.
+
+| gate set | phase | stage 2 | cold | difference | 95% CI | p |
+|---|---|---|---|---|---|---|
+| cgp4 | 3 (n=50) | 60 592 | 69 609 | −9 018 | [−23 050, +20 725] | 0.54 |
+| cgp4 | 3.5 (n=200) | 73 233 | 64 768 | **+8 464** | [−1 774, +19 082] | 0.070 |
+| cgpnand | 3 (n=50) | 98 936 | 65 086 | +33 850 | [−3 520, +68 888] | 0.088 |
+| **cgpnand** | **3.5 (n=200)** | **98 017** | **69 660** | **+28 357** | **[+12 586, +44 980]** | **0.00044** |
+
+Under **NAND-only, a solved stage-1 detector makes the full task ~28 000 generations
+HARDER**, on top of the 20 000 already spent acquiring it. The CI clears zero
+comfortably, on seeds the effect was not discovered in. The four-gate arm points the
+same way (+8 464) without reaching significance, so the picture is consistent:
+**staging is negative transfer here, and the poorer the primitive set the worse it
+gets.**
+
+Interpretation — untested, and offered as a hypothesis: with a rich gate set the
+stage-1 left-detector is a small structure that mutation can rebuild; under NAND-only
+it is a large committed one, and CGP's neutral drift has to dismantle it before the
+second demand can be served. That is **entrenchment**, and it is the opposite of the
+co-option effect the study was designed to look for.
+
+⚠️ **Status of this claim.** It is *not* preregistered. Phase 3 generated it and the
+statistic (stage-2 minus tax, median, two-sided Mann–Whitney) was chosen after seeing
+phase-3 data. What it does have is **out-of-sample confirmation on disjoint seeds**,
+which is stronger than exploratory but weaker than preregistered. It should be
+re-run as its own preregistered experiment before anyone believes it. Note also that
+phase 3's version of it was **p = 0.088 — never significant** — and was nonetheless
+written up here as "the interesting result". That was the second over-read of this
+study.
+
+---
+
+## 8. Conclusions
+
+1. **H-S1 is refuted.** Espinosa-Soto & Wagner's specialisation mechanism produces no
+   measurable change in node pleiotropy in evolved Boolean circuits under this
+   protocol, across 2 000 runs and 4 encodings. The GRN result did not transfer.
+2. **The metric works; there was nothing for it to find.** `influence` /
+   `specialisation` is exact and verified against brute force, and it reproduced every
+   construction-forced prediction (`full` → 0, `zero` → 1) precisely. The null is about
+   evolution, not about the instrument.
+3. **The design had two flaws, both recorded before the run.** The across-overlap
+   comparison was confounded by task construction (§2), and the surviving
+   interaction test was saturated into uselessness (§5). A future version needs graded
+   overlap levels — `L AND R`, `L OR R` — not extremal ones.
+4. **The surviving result is the opposite of the hypothesis**: incremental staging is
+   *negative* transfer, severely so under a minimal gate set. If any of this is worth
+   pursuing, it is that — and it speaks directly to the supervisor's
+   "incrementally increasing problem complexity" suggestion, with a caution attached.
+5. **Two over-reads happened and are left visible in this file.** A p = 0.056 was
+   called "close", and a p = 0.088 was called "the interesting result". Both were
+   labelled exploratory at the time, and the label did not stop either from being
+   written up as though it meant something. That is the failure mode this file exists
+   to document.
 
