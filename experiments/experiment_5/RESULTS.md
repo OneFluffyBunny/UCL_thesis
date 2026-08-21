@@ -6,6 +6,11 @@ whether **behavioural modularity** shows up there. Same conventions as
 claim tied to the command and seed count that produced it, and nulls written up as
 carefully as positives.
 
+⚠️ **`SPECIALISATION.md` is a separate, AI-authored sub-study.** It was designed and
+run by Claude Code on its own initiative (2026-08-21, branch `spec-modularity`) and has
+not been reviewed by a human. Its claims are quarantined in that file on purpose and
+must not be cited from here.
+
 ---
 
 ## 2026-08-18 — §1 the fork, the PyPy port, and where PyPy stops helping
