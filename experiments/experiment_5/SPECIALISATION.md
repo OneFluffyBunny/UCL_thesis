@@ -180,6 +180,61 @@ Two consequences for this design:
 
 ---
 
+## Phase 2 — the pilot, and the budgets it froze (2026-08-21)
+
+Run under PyPy, `runs/_spec_pilot/`. Compute turned out to be a non-issue: 20 seeds ×
+200 000 generations of CGP is **5.7 s** wall on 8 workers.
+
+| pilot | question | answer |
+|---|---|---|
+| P1 | how hard is stage 1 (`L` alone)? | **20/20 solved**, median **3 250** gens, max 17 250, p90 11 500 |
+| P2 | how hard is the full `partial` task, cold? | **20/20 solved**, median **46 921** gens, max ~86 000 |
+| P3 | does SPEC drift after the task is solved? | 0.654 at solve → ~0.62 by +20 000, then **flat to +100 000** |
+| P4 | does the staged arm still solve? | 12/12 at 300 000 gens |
+| P5 | does NAND-only still solve? | 11/12 at 300 000 gens → budget raised |
+| P6 | do `full` / `zero` solve? | 12/12 each; medians 2 855 and 18 520 |
+| P7/P8 | does ECGP solve, with both gate sets? | 12/12 each; ECGP is ~15× slower in wall clock |
+
+**Both kill-switch conditions cleared.** Stage 1 is solved but not instantly (so
+staging is real, not drift), and the full task is solved by every arm (so `SPEC` is
+measured on working circuits, not failures).
+
+### Frozen parameters
+
+| | value | why |
+|---|---|---|
+| `--stage1-gens` (staged arm) | **20 000** | covers P1's slowest seed (17 250) with headroom |
+| `--generations` | **500 000** | P5 censored 1/12 at 300 000; the primary analysis conditions on solving, so censoring is bias |
+| `--post-solve-gens` | **20 000** | clears P3's transient and equalises post-solution drift across arms |
+| `--nodes` | 100 | experiment 4's default, unchanged |
+| seeds | **50** | see below |
+
+**Measurement point:** the final logged row of each seed, i.e. exactly
+`solved_gen + 20 000`. Every measured circuit therefore has **identical fitness
+(perfect) and identical post-solution age**, so a `SPEC` difference cannot be a
+fitness difference in disguise. Seeds that never solve are excluded and the **solve
+rate is reported per cell** — if it ever differs between the staged and cold arms of
+one overlap level, the conditioning is itself a confound and will be said so.
+
+### Two deviations from section 5, both recorded before any confirmatory run
+
+1. **n = 50, not 30.** Raised solely because the pilot showed compute is not the
+   binding constraint. Fixed now; **no seeds will be added after seeing results.**
+2. **`gens-to-solve` was seen during piloting** — `train.py` prints it in its summary
+   line, so P2/P4/P5 exposed it before the confirmatory run. It is a *secondary*
+   outcome and is now demoted to exploratory-only; no claim will rest on it. `SPEC`
+   itself was **not** compared between staged and cold at any point during piloting.
+
+### One prediction already confirmed by construction, not by evolution
+
+Pilot P6's `pair_zero` runs return `SPEC = 1.000` with `n_pleio = 0` — every active
+node influences exactly one output, in every seed. That is section 2's confound
+appearing exactly as predicted: with disjoint demands the task alone forces
+`SPEC = 1`, and no evolutionary process is being measured. It is reported here as
+evidence the metric behaves as analysed, **not** as a result.
+
+---
+
 ## Results
 
 *(Nothing yet — phase 0 complete, phase 1 in progress.)*

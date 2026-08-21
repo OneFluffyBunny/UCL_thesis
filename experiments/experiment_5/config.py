@@ -46,6 +46,9 @@ class RunConfig:
     mvg: bool
     mvg_ops: tuple[str, ...]
     switch_interval: int
+    # `[exp5 -- SPECIALISATION.md]` staged demands: generations for which only
+    # program output 0 is scored. 0 == off (every output scored from gen 0).
+    stage1_gens: int
     # evolution
     popsize: int
     generations: int
@@ -153,6 +156,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="goal cycle under --mvg")
     g.add_argument("--switch-interval", type=int, default=20,
                    help="generations per goal epoch under --mvg (E; matches kashtan_alon/)")
+    g.add_argument("--stage1-gens", type=int, default=0,
+                   help="STAGED DEMANDS [SPECIALISATION.md]: score ONLY program "
+                        "output 0 for this many generations, then score every "
+                        "output for the rest -- with output 0 still scored. The "
+                        "genotype always carries every output; this only changes "
+                        "which ones fitness looks at. 0 disables staging, which "
+                        "is the `cold` control arm.")
 
     g = p.add_argument_group("evolution")
     g.add_argument("--popsize", type=int, default=5,
@@ -284,6 +294,23 @@ def parse(argv=None) -> RunConfig:
             raise SystemExit(f"unknown --mvg-ops: {bad} (known: {list(tasks_mod.OPERATIONS)})")
         if args.switch_interval < 1:
             raise SystemExit("--switch-interval must be >= 1")
+    if args.stage1_gens:
+        if args.stage1_gens < 1:
+            raise SystemExit("--stage1-gens must be >= 1 (0 disables staging)")
+        if args.stage1_gens >= args.generations:
+            raise SystemExit(
+                f"--stage1-gens {args.stage1_gens} leaves no generations for stage 2 "
+                f"(--generations {args.generations}). Stage 2 is the treatment.")
+        if tasks_mod.n_outputs(args.task) < 2:
+            raise SystemExit(
+                f"--stage1-gens needs a task with >= 2 program outputs; "
+                f"--task {args.task} has {tasks_mod.n_outputs(args.task)}")
+        if args.mvg:
+            # Two different non-stationarities at once. Either could produce a
+            # modularity effect and the design could not say which, so this is
+            # refused rather than warned about.
+            raise SystemExit("--stage1-gens and --mvg cannot be combined: both make "
+                             "the goal non-stationary and the result uninterpretable")
     if args.popsize < 2:
         raise SystemExit("--popsize must be >= 2 (one parent plus at least one offspring)")
     if not 0.0 < args.mutation_rate <= 1.0:
@@ -329,6 +356,7 @@ def parse(argv=None) -> RunConfig:
         max_module_size=args.max_module_size,
         task=args.task, operation=args.operation, mvg=args.mvg, mvg_ops=mvg_ops,
         switch_interval=args.switch_interval,
+        stage1_gens=args.stage1_gens,
         popsize=args.popsize, generations=args.generations, stop_on_solution=stop,
         post_solve_gens=args.post_solve_gens,
         parsimony_tiebreak=args.parsimony_tiebreak,

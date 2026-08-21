@@ -177,6 +177,13 @@ _PATTERNS = [
     (re.compile(r"^add(\d+)$"), "add", None),
     (re.compile(r"^mult(\d+)$"), "mult", None),
     (re.compile(r"^parity(\d+)$"), "parity", None),
+    # `[exp5 -- SPECIALISATION.md]` the paired-demand family: 8 KA retina pixels,
+    # two program outputs, differing ONLY in how much the second demand overlaps
+    # the first. Three families rather than one parameterised family because the
+    # variant is not a size, and `_parse` speaks (family, size).
+    (re.compile(r"^pair_full$"), "pair_full", 1),
+    (re.compile(r"^pair_partial$"), "pair_partial", 1),
+    (re.compile(r"^pair_zero$"), "pair_zero", 1),
 ]
 
 # family -> (inputs, outputs, does --operation mean anything?) as functions of size
@@ -188,11 +195,15 @@ _SHAPE = {
     "add":    (lambda k: 2 * k + 1, lambda k: k + 1, False),
     "mult":   (lambda k: 2 * k, lambda k: 2 * k, False),
     "parity": (lambda k: k, lambda k: 1, False),
+    "pair_full":    (lambda k: 8, lambda k: 2, False),
+    "pair_partial": (lambda k: 8, lambda k: 2, False),
+    "pair_zero":    (lambda k: 8, lambda k: 2, False),
 }
 
 TASK_FAMILIES = tuple(_SHAPE)
 EXAMPLE_TASKS = ("retina_ka2005", "retina_x2", "left", "and2", "copy",
-                 "add4", "mult3", "parity12")
+                 "add4", "mult3", "parity12",
+                 "pair_partial")
 
 
 def _parse(task: str) -> tuple[str, int]:
@@ -255,6 +266,16 @@ def target_masks(task: str, operation: str = "and") -> tuple[int, ...]:
         return (x[0],)
     if family == "and2":
         return (x[0] & x[1],)
+    if family.startswith("pair_"):
+        # `[exp5 -- SPECIALISATION.md]` O1 is always the LEFT object, so stage 1 is
+        # byte-identical across all three variants and the arms differ in exactly
+        # one thing: what the SECOND demand shares with the first.
+        left, right = _retina_halves(x, 0, mask)
+        if family == "pair_full":
+            return (left, left)                    # 100% overlap: the same demand twice
+        if family == "pair_partial":
+            return (left, (left ^ right) & mask)   # partial: shares the left detector
+        return (left, right)                       # 0% overlap: disjoint pixels
     if family == "left":
         return (_ka_object(x[0], x[1], x[2], x[3], mask),)
     if family == "retina":
@@ -315,6 +336,8 @@ def input_groups(task: str) -> tuple[frozenset[int], ...]:
         return tuple(frozenset(s) for s in g)
     if family == "mult":
         return (frozenset(range(k)), frozenset(range(k, 2 * k)))
+    if family.startswith("pair_"):
+        return (frozenset(range(0, 4)), frozenset(range(4, 8)))
     # `parity`, `left`, `and2`, `copy`: one group. Parity's is a real claim, not a
     # fallback -- the function genuinely does not decompose, so nothing can be "pure"
     # in a way that means anything, and every node lands in the single group.
