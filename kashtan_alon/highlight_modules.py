@@ -59,7 +59,8 @@ def _positions(cfg):
     return pos
 
 
-def draw_net(ax, weight_mats, cfg, result, title):
+def draw_net(ax, weight_mats, cfg, result, title, subtitle=None):
+    """`subtitle` replaces the default Q_m/modules/cross-edge second line."""
     q, communities = newman_q(weight_mats, cfg)
     node_comm = {n: ci for ci, comm in enumerate(communities) for n in comm}
     off, pos = cfg.offsets, _positions(cfg)
@@ -97,9 +98,11 @@ def draw_net(ax, weight_mats, cfg, result, title):
                        edgecolors="black", linewidths=0.6,
                        color=MODULE_PALETTE[node_comm.get(node, 0) % len(MODULE_PALETTE)])
 
-    q_m = result.get("q_m", float("nan"))
-    ax.set_title(f"{title}\nQ_m={q_m:.3f}  |  {len(communities)} modules  |  "
-                 f"{n_between} cross / {n_within + n_between} edges", fontsize=9)
+    if subtitle is None:
+        subtitle = (f"Q_m={result.get('q_m', float('nan')):.3f}  |  "
+                    f"{len(communities)} modules  |  "
+                    f"{n_between} cross / {n_within + n_between} edges")
+    ax.set_title(f"{title}\n{subtitle}", fontsize=9)
     ax.set_xlim(-4.2, 4.2)
     ax.set_ylim(-0.7, cfg.n_blocks + 0.4)
     ax.axis("off")
@@ -150,7 +153,9 @@ def retina_side(weight_mats, cfg, pure=0.8):
 _SIDE_COL = {"L": LEFT_COL, "R": RIGHT_COL, "M": MIX_COL, "-": DEAD_COL}
 
 
-def draw_net_lineage(ax, weight_mats, cfg, res, title):
+def draw_net_lineage(ax, weight_mats, cfg, res, title, subtitle=None):
+    """`subtitle` replaces the default Q_m/single-sided second line (stage sheets
+    caption panels by generation and accuracy instead, and have no per-panel Q_m)."""
     _, cls = retina_side(weight_mats, cfg)
     off, pos = cfg.offsets, _positions(cfg)
     for l, W in enumerate(weight_mats):
@@ -170,8 +175,10 @@ def draw_net_lineage(ax, weight_mats, cfg, res, title):
     # purity of the hidden layers (how many non-output neurons stay single-sided)
     hidden = [n for n in range(cfg.layers[0], cfg.n_nodes - 1)]
     pure = sum(cls[n] in ("L", "R") for n in hidden)
-    ax.set_title(f"{title}\nQ_m={res['q_m']:+.3f}  |  single-sided neurons "
-                 f"{pure}/{len(hidden)}", fontsize=9)
+    if subtitle is None:
+        subtitle = (f"Q_m={res['q_m']:+.3f}  |  single-sided neurons "
+                    f"{pure}/{len(hidden)}")
+    ax.set_title(f"{title}\n{subtitle}", fontsize=9)
     ax.set_xlim(-4.2, 4.2)
     ax.set_ylim(-0.7, cfg.n_blocks + 0.4)
     ax.axis("off")

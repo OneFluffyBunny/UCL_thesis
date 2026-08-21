@@ -6,10 +6,16 @@ elite strategy + crossover + mutation) on the retina task, under either:
                       --switch-interval generations (shared L/R sub-goals).
   * (default, FG)   : Fixed Goal -- one operation the whole run (the control).
 
-Each generation logs the best network's Newman Q (modularity), density and
-fitness, and appends them to runs/<name>_log.csv so the MVG-vs-FG Q trajectories
+Each generation logs the best network's Newman Q (modularity), left/right circuit
+purity, density and fitness, and appends them to runs/<name>_log.csv so the
+MVG-vs-FG trajectories
 can be compared. Kashtan-Alon's claim: Q climbs and stays high under MVG but not
 under a fixed goal.
+
+The champion BRAIN at each of those logged generations is archived too, to
+runs/<name>_brains.npz (see BrainArchive) -- so a metric invented later can be run
+over the whole trajectory without re-evolving it. runs/<name>_best.npz remains the
+single final/best network.
 
 Run `python train.py --help` for all flags. This is a reference reproduction; run
 long experiments in a per-experiment chat / on the GPU box, not the hub.
@@ -34,9 +40,30 @@ import model as M
 import ga
 from modularity import newman_q, normalized_qm, density, n_edges
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from qmetrics import circuit_purity, from_blocks
+
 
 def _encode(X, encoding):
     return X * 2.0 - 1.0 if encoding == "bipolar" else X
+
+
+def purity_of(wm, cfg):
+    """Circuit purity (qmetrics METRIC 4) of one champion's weight matrices.
+
+    Left half of the retina pinned to 0, right half to 1; every downstream neuron
+    takes the mean of its parents, and purity = 2*|x-0.5| averaged over the hidden
+    neurons (inputs and the output neuron excluded). 1.0 = every neuron reads one
+    side only; 0.0 = every neuron is a perfect 50/50 mix.
+    """
+    G = from_blocks([np.asarray(w, dtype=float) for w in wm],
+                    offsets=cfg.offsets, directed=True)
+    if G.number_of_edges() == 0:
+        return float("nan")
+    n_in = cfg.layers[0]
+    pinned = {i: (0 if i < n_in // 2 else 1) for i in range(n_in)}
+    p, _ = circuit_purity(G, pinned, exclude=[cfg.offsets[-1]])
+    return p
 
 
 def build_parser():
@@ -108,6 +135,67 @@ def _save_best_npz(path, best_indiv, cfg):
     np.savez(path, **save)
 
 
+class BrainArchive:
+    """Every logged generation's champion brain, kept so metrics can be recomputed.
+
+    The CSV records what we thought to measure at the time; this records the
+    NETWORKS, so a new metric (or a fixed one) can be run over the whole
+    trajectory later without re-evolving anything. One 8-8-4-2-1 champion is 106
+    int8 weights + 15 biases, so a 25k-generation run logged every 10 gens costs
+    ~300 KB -- cheap enough to be unconditional.
+
+    Stored as `<run>_brains.npz`: `gen` (T,), `w{l}` (T, n_l, n_l+1), `b{l}` (T, n_l+1).
+    Reload with `BrainArchive.load(path)`, or plain
+    `np.load(path)` -> `d["w0"][t]` is the champion at generation `d["gen"][t]`.
+    """
+
+    def __init__(self, path, cfg, resume=False):
+        self.path, self.cfg = path, cfg
+        self.gens, self.w, self.b = [], [[] for _ in range(cfg.n_blocks)], \
+            [[] for _ in range(cfg.n_blocks)]
+        if resume and os.path.exists(path):
+            d = np.load(path)
+            keep = d["gen"].tolist()
+            self.gens = keep
+            for l in range(cfg.n_blocks):
+                self.w[l] = list(d[f"w{l}"])
+                self.b[l] = list(d[f"b{l}"])
+
+    def trim_from(self, gen):
+        """Drop entries at or after `gen` -- they are about to be re-recorded."""
+        keep = sum(1 for g in self.gens if g < gen)
+        self.gens = self.gens[:keep]
+        for l in range(self.cfg.n_blocks):
+            self.w[l], self.b[l] = self.w[l][:keep], self.b[l][:keep]
+
+    def append(self, gen, wm, bm):
+        self.gens.append(gen)
+        for l in range(self.cfg.n_blocks):
+            self.w[l].append(np.asarray(wm[l]).copy())
+            self.b[l].append(np.asarray(bm[l]).copy())
+
+    def save(self):
+        if not self.gens:
+            return
+        out = {"gen": np.asarray(self.gens, dtype=np.int32)}
+        for l in range(self.cfg.n_blocks):
+            out[f"w{l}"] = np.stack(self.w[l])
+            out[f"b{l}"] = np.stack(self.b[l])
+        tmp = self.path + ".tmp.npz"
+        np.savez_compressed(tmp, **out)
+        os.replace(tmp, self.path)     # atomic, like the checkpoint
+
+    @staticmethod
+    def load(path):
+        """-> (gens, [w-blocks per step], [b-blocks per step]) for analysis code."""
+        d = np.load(path)
+        n_blocks = sum(1 for k in d.files if k.startswith("w"))
+        gens = d["gen"]
+        ws = [[d[f"w{l}"][t] for l in range(n_blocks)] for t in range(len(gens))]
+        bs = [[d[f"b{l}"][t] for l in range(n_blocks)] for t in range(len(gens))]
+        return gens, ws, bs
+
+
 def save_checkpoint(path, gen, rng, weights, biases, best_fit, best_indiv, best_op):
     """Atomically pickle full GA state so a run can resume exactly where it stopped."""
     obj = {"gen": gen, "rng_state": rng.bit_generator.state,
@@ -135,9 +223,12 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
     npz_path = os.path.join(args.out_dir, f"{run_name}_best.npz")
     ckpt_path = os.path.join(args.out_dir, f"{run_name}_ckpt.pkl")
     result_path = os.path.join(args.out_dir, f"{run_name}_result.json")
+    brains_path = os.path.join(args.out_dir, f"{run_name}_brains.npz")
 
     # --- resume from a mid-run checkpoint, or start fresh ---
-    if args.resume and os.path.exists(ckpt_path):
+    resuming = args.resume and os.path.exists(ckpt_path)
+    brains = BrainArchive(brains_path, cfg, resume=resuming)
+    if resuming:
         with open(ckpt_path, "rb") as f:
             c = pickle.load(f)
         rng.bit_generator.state = c["rng_state"]
@@ -146,14 +237,16 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
         best_indiv = (c["best_weights"], c["best_biases"])
         csv_f = open(csv_path, "a", newline="")
         writer = csv.writer(csv_f)
+        brains.trim_from(start_gen)   # a post-checkpoint tail would be re-recorded
         print(f"[seed {seed}] RESUME {mode} from gen {start_gen}/{args.generations} "
-              f"(best {best_fit:.3f})")
+              f"(best {best_fit:.3f}, {len(brains.gens)} brains kept)")
     else:
         weights, biases = M.init_population(rng, cfg, args.pop, args.init_density)
         start_gen, best_fit, best_indiv, best_op = 0, -1.0, None, None
         csv_f = open(csv_path, "w", newline="")
         writer = csv.writer(csv_f)
-        writer.writerow(["gen", "op", "best_fit", "mean_fit", "Q", "density", "edges"])
+        writer.writerow(["gen", "op", "best_fit", "mean_fit", "Q", "purity",
+                         "density", "edges"])
         print(f"[seed {seed}] mode={mode} fitness={args.fitness} task={args.task} "
               f"layers={list(cfg.layers)} pop={args.pop} max_edges={cfg.max_edges} "
               f"switch={args.switch_interval if args.mvg else '-'} gens={args.generations} "
@@ -182,16 +275,19 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
         final_indiv, final_fit, final_op = M.individual(weights, biases, gi), gen_best, cur_op
 
         if gen % args.log_interval == 0 or gen == args.generations - 1:
-            wm, _ = M.individual(weights, biases, gi)
+            wm, bm = M.individual(weights, biases, gi)
+            brains.append(gen, wm, bm)      # the brain itself, not just its metrics
             q, _ = newman_q(wm, cfg, weighted=args.weighted_q)
+            pur = purity_of(wm, cfg)
             dens = density(wm, cfg)
             writer.writerow([gen, cur_op, f"{gen_best:.4f}", f"{float(fit.mean()):.4f}",
-                             f"{q:.4f}", f"{dens:.2f}", n_edges(wm)])
+                             f"{q:.4f}", f"{pur:.4f}", f"{dens:.2f}", n_edges(wm)])
             csv_f.flush()   # intermediary results readable mid-run
             sps = (time.time() - t0) / (gen - start_gen + 1)
             op_str = f" | op: {cur_op}" if args.task == "retina" else ""
             print(f"  Gen {gen:5d} | Best: {gen_best:.3f} | Mean: {float(fit.mean()):.3f}"
-                  f" | Q: {q:.3f} | Density: {dens:.1f}%{op_str} | {sps:.3f}s/gen")
+                  f" | Q: {q:.3f} | Purity: {pur:.3f} | Density: {dens:.1f}%{op_str}"
+                  f" | {sps:.3f}s/gen")
 
         if args.early_stop and (not args.mvg) and best_fit >= args.target:
             print(f"  early stop: best {best_fit:.3f} >= target {args.target:.3f} at gen {gen}")
@@ -207,10 +303,13 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
                 and best_indiv is not None:
             save_checkpoint(ckpt_path, gen + 1, rng, weights, biases, best_fit, best_indiv, best_op)
             _save_best_npz(npz_path, best_indiv, cfg)
+            brains.save()   # crash-safe: the trajectory survives an interrupted run
             print(f"  [checkpoint @ gen {gen + 1}] -> {os.path.basename(ckpt_path)} | "
-                  f"best {best_fit:.3f} -> {os.path.basename(npz_path)}")
+                  f"best {best_fit:.3f} -> {os.path.basename(npz_path)} | "
+                  f"{len(brains.gens)} brains -> {os.path.basename(brains_path)}")
 
     csv_f.close()
+    brains.save()
     # Modularity is reported for the FINAL generation's champion (evolved topology).
     # Headline metric is KA's NORMALIZED Q_m (raw Newman Q is density-confounded and
     # only kept for the live per-gen trace); q is reported alongside for continuity.
