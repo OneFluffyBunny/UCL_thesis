@@ -154,9 +154,47 @@ def main(argv=None) -> int:
             print(f"{enc:<10} {ov:<9} {med(a):>8.4f} {med(b):>8.4f} "
                   f"{med(a) - med(b):>+8.4f} {pv:>10.4g} {rb:>+8.3f}")
 
+    robustness(rows)
+
     if not args.no_plot:
         plot(rows)
     return 0
+
+
+def robustness(rows):
+    """Two ways the primary contrast could be an artefact rather than the mechanism.
+
+    1. SIZE. SPEC is a ratio over influencing nodes, so if one arm simply evolves
+       smaller circuits the ratio can move for reasons that have nothing to do with
+       specialisation -- a 5-node circuit has fewer ways to be pleiotropic than a
+       25-node one.
+    2. AGE. The staged arm reaches its solution later in absolute generations (it
+       spends the first 20 000 on stage 1). If SPEC drifts with how long a run took,
+       the contrast is measuring duration. Pilot P3 said SPEC is flat for 100 000
+       generations after a solution, but that was one arm of one cell; this checks it
+       against `solved_gen` inside every cell, where a real duration effect would show
+       as a consistently signed correlation.
+    """
+    from scipy.stats import spearmanr
+    print(chr(10) + "=" * 72)
+    print("ROBUSTNESS -- is the contrast really about specialisation?")
+    print("=" * 72)
+    print(f"{'cell':<26} {'n':>4} {'med active':>11} {'med infl':>9} "
+          f"{'rho(SPEC,solved_gen)':>21} {'p':>9}")
+    for enc in ENCODINGS:
+        for ov in OVERLAPS:
+            for sched in SCHEDULES:
+                sel = [r for r in rows if r["schedule"] == sched and r["overlap"] == ov
+                       and r["encoding"] == enc and r["solved"] and r["spec"] is not None]
+                if len(sel) < 3:
+                    continue
+                infl = [int(r["n_spec"]) + int(r["n_pleio"]) for r in sel]
+                sp = [r["spec"] for r in sel]
+                sg = [r["solved_gen"] for r in sel]
+                rho, pv = spearmanr(sp, sg)
+                print(f"{sched + '-' + ov + '-' + enc:<26} {len(sel):>4} "
+                      f"{med([r['active_nodes'] for r in sel]):>11.1f} {med(infl):>9.1f} "
+                      f"{rho:>21.3f} {pv:>9.3g}")
 
 
 def plot(rows):

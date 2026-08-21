@@ -251,6 +251,38 @@ evidence the metric behaves as analysed, **not** as a result.
 
 ---
 
+## Phase 3.5 — a REPLICATION, preregistered before it ran (2026-08-21)
+
+Phase 3 returned a **null** on the primary contrast (p = 0.0558, α = 0.05; full
+numbers below). Two facts about that null, both computed before deciding anything:
+
+* the 95% bootstrap CI on the effect size is **[−0.052, +0.404]** — it includes zero;
+* resampling these data says n = 50 per arm had only **49% power** for an effect this
+  size. The study was a coin flip. n = 200 per arm reaches 94%.
+
+**This is NOT a licence to add seeds to phase 3.** Extending a dataset after seeing
+p = 0.056 is optional stopping, and it would invalidate the p-value that has already
+been reported. The phase-3 null stands exactly as reported, permanently.
+
+What is legitimate is an **independent replication**, fixed in advance and run on
+**disjoint seeds**. Declared here before execution:
+
+| | |
+|---|---|
+| seeds | **1000–1199** (phase 3 used 0–49; no overlap) |
+| n | **200 per arm**, fixed now, final |
+| contrasts | exactly **two**, both one-sided Mann–Whitney U for `staged > cold` |
+| | (R1) overlap=partial, encoding=**cgp4** — the phase-3 primary |
+| | (R2) overlap=partial, encoding=**cgpnand** — phase 3's largest exploratory effect (r = +0.308), which needs confirmation before it means anything |
+| α | **0.025 each** (Bonferroni over the two) |
+| everything else | identical to phase 3: 500 000 gens, 20 000 stage-1, 20 000 post-solve, 100 nodes |
+
+No other cell is replicated and no other test will be run on these seeds. If R1 and R2
+disagree with phase 3 in either direction, **both results get reported**, and the
+combined reading is stated as such rather than the more convenient one being kept.
+
+---
+
 ## Results
 
 *(Nothing yet — phase 0 complete, phase 1 in progress.)*
