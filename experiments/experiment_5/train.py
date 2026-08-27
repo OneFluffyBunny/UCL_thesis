@@ -378,6 +378,12 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
     # The perfect score. `n_patterns` alone stopped being it the moment a program
     # could have several outputs, and every "solved?" test below reads this.
     n_scored = n_out                    # reassigned below once start_gen is known
+    # `[exp5 -- ENTRENCHMENT.md]` what stage 1 actually built, captured at the
+    # boundary. The entrenchment hypothesis is that the SIZE of the committed
+    # stage-1 circuit is what costs stage 2, so it needs to be a recorded cause
+    # rather than something inferred from the final circuit (which stage 2 rewrote).
+    # ⚠️ NOT checkpointed: run these with --checkpoint-interval 0.
+    stage1_solved_gen, stage1_active, stage1_hits = -1, -1, -1
     total_hits = cgp.max_hits(n_out, n_patterns)
     # `visualize.py` still takes a single input index to gap the input column at.
     # That is a LAYOUT hint, not the classification (which now uses `groups`), so it
@@ -661,6 +667,9 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
             # (`total_hits`) that just changed. Carrying a stage-1 `best_hits` of
             # 256/256 into a stage-2 world of /512 would report a solved run that
             # never solved anything.
+            view1 = as_cgp(parent)
+            stage1_active = cgp.phenotype(view1, n_in, gate_set, groups).n_active
+            stage1_hits, stage1_solved_gen = int(p_hits), int(solved_gen)
             n_scored = new_scored
             total_hits = cgp.max_hits(n_scored, n_patterns)
             target = targets[goal][:n_scored]
@@ -869,6 +878,8 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
     c = pheno.counts()
     result = dict(seed=seed, best_hits=int(best_hits),
                   **_spec_columns(view), stage1_gens=int(cfg.stage1_gens),
+                  stage1_solved_gen=stage1_solved_gen, stage1_active=stage1_active,
+                  stage1_hits=stage1_hits,
                   best_acc=best_hits / total_hits, final_hits=int(p_hits),
                   solved_gen=int(solved_gen), gens_run=int(gen + 1),
                   evals=int(evals), active_nodes=pheno.n_active,
