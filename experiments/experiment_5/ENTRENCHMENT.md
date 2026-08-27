@@ -168,6 +168,83 @@ This is what the `G1` ladder is pinned to, and it is the basis for limitation 4.
 
 ---
 
-## Results
+## Results (2026-08-27) — 2 400 runs, `runs/_ent/`
 
-*(Nothing yet — preregistered, not yet run.)*
+**E-H1 is not supported. Neither is its alternative.** The damage is real and
+replicates a third time, but its dose–response shape matches *neither* preregistered
+mechanism.
+
+### The dose–response curve
+
+Stage-2 generations to solve (`solved_gen − G1`), median over solved seeds:
+
+| G1 | `and,nand,or,nor` | vs cold | `nand` only | vs cold |
+|---|---|---|---|---|
+| **0** (cold) | 60 008 | — | 70 046 | — |
+| 1 000 | 79 506 | **+19 498** | 105 376 | **+35 330** |
+| 3 000 | 65 560 | +5 552 | 88 019 | +17 973 |
+| 10 000 | 72 314 | +12 306 | 88 554 | +18 508 |
+| 20 000 | 69 145 | +9 138 | 92 818 | +22 772 |
+| 100 000 | 71 399 | +11 392 | 95 901 | +25 855 |
+
+Solve rates 189–200 / 200 in every cell, so this is not censoring.
+
+**The shape is a step, not a ramp.** The full cost is already paid at `G1 = 1 000` —
+the *smallest* dose, at which only ~25 % of seeds have solved stage 1 — and a further
+**hundredfold** increase in stage-1 length adds nothing beyond it. Median
+`stage1_active` is flat at 15–18 nodes across the whole ladder.
+
+### The three preregistered tests
+
+| test | result | |
+|---|---|---|
+| **E-P1** (anchor) | **SUPPORTED** | NAND, G1=20 000 vs cold: +22 772, U = 22 133, one-sided p = 0.00068 |
+| **E-P2** (discriminating) | **NOT SUPPORTED** | Δ_early = +17 973 (over 3 000 gens of dose); Δ_late = +3 083 (over **80 000**); difference −14 890, 95 % CI [−42 468, +7 024] |
+| **E-P3** (mechanism) | **NOT SUPPORTED** | Spearman ρ(`stage1_active`, stage-2 gens) = **+0.036**, one-sided p = 0.31 |
+
+**E-P1** was declared in advance to be the third look at a known effect and therefore
+an anchor rather than new evidence. It behaved as expected. The effect is now seen on
+three disjoint seed sets (0–49, 1000–1199, 2000–2199); **negative transfer from staging
+is the one solid finding of this whole line.**
+
+⚠️ **E-P2 is inconclusive, not a refutation.** The CI includes zero, so the
+preregistered criterion fails — but the point estimate is firmly in the *predicted*
+direction (80 000 generations of extra dose buy +3 083, while the first 3 000 buy
++17 973). Failing to exclude zero is not evidence for the alternative, and this write-up
+does not claim drift-time won. The honest reading is that the design lacked the power to
+separate a plateau from a shallow ramp at this n.
+
+**E-P3 is a clean null**, and it is the informative one. ρ ≈ 0 in the preregistered cell
+and in all ten cells descriptively (range −0.117 to +0.049, no consistent sign). **How
+much structure stage 1 committed does not predict the cost at all.**
+
+### What the shape actually says
+
+The cost is not proportional to what stage 1 *built* (E-P3), and not proportional to how
+long stage 1 *ran* (the ladder is flat from 1 000 to 100 000). It appears in full at the
+first dose. That leaves a third mechanism, not preregistered here:
+
+> **The toll is the switch itself.** Under (1+4) the population *is* one lineage. When
+> the fitness denominator changes, that single lineage is wherever the previous goal put
+> it, and it pays a roughly fixed re-entry cost regardless of how good or how large its
+> previous solution was.
+
+This converges with an independent result already in this repo: `experiment_4/RESULTS.md`
+records that under MVG — *repeated* goal switching — (1+4) CGP never solved the retina at
+all, and that **0 of 25 552 epochs retained a solution across a switch**. This sub-study is
+the single-switch version of the same phenomenon, and it prices it: ~20 000–35 000
+generations, ~2× worse under NAND-only.
+
+`experiment_4/RESULTS.md` already names the suspect and it is *not* on the list of
+mechanisms preregistered above: **`--popsize`**. Kashtan–Alon ran 600 individuals with
+crossover, so a goal switch cost them diversity; a (1+4) elitist lineage takes the switch
+across its entire population at once. That is the test this result points at.
+
+### Status
+
+* **E-H1 (entrenchment): not supported.** The acquired stage-1 solution is not the cause —
+  its size predicts nothing.
+* **Drift-time: not supported either.** 100× more stage-1 time adds nothing.
+* **Negative transfer itself: confirmed, three times, on disjoint seeds.**
+* Limitation 1 of §6 (the unselected output gene drifting) is now moot as an explanation:
+  it would have to grow with `G1`, and the curve is flat.
