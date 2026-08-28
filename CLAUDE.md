@@ -68,9 +68,13 @@ vary the **optimiser** (exp_2 and exp_3 share the *same* direct-encoding model,
   output) as opposed to exp_4's structural cone readout. Runs headless under **PyPy**;
   `test_equivalence.py` proves it is exp_4's algorithm and that PyPy and CPython give
   byte-identical runs. Machinery done, science not started. ⚠️ One exception:
-  `SPECIALISATION.md` is an **AI-authored sub-study** (Claude Code, 2026-08-21,
-  branch `spec-modularity`) — preregistered, run, refuted, and **not reviewed by a
-  human**. Quarantined in that one file on purpose; do not cite from it.
+  `SPECIALISATION.md`, `ENTRENCHMENT.md` and `CALIBRATION.md` are **AI-authored
+  sub-studies** (Claude Code, 2026-08-21..28, branch `spec-modularity`) — preregistered,
+  run, and **not reviewed by a human**. Quarantined in those three files on purpose; do
+  not cite from them. Net result if you read only one thing: `CALIBRATION.md` shows the
+  `SPEC` metric is **92% determined by the task** (eta^2 = 0.917) and that a *random*
+  circuit already scores 0.92 on a 2-output task — so SPEC works as a description of a
+  solved circuit but has almost no room to respond to a treatment.
 - **experiment_6/ — nested modules.** ECGP (exp_4) explicitly forbids a module
   containing a module; this experiment exists to build a variant that allows
   nesting *with its complexity priced*, so evolution can be tested for whether it

@@ -11,6 +11,23 @@
 > thesis without re-deriving it by hand.
 >
 > Started 2026-08-21 on branch `spec-modularity`, forked from `fluffy_experiments`.
+>
+> ---
+>
+> ### ⚠️ CORRECTION (2026-08-28) — "H-S1 refuted" is TOO STRONG
+>
+> [`CALIBRATION.md`](CALIBRATION.md) later measured what this file never did: **whether
+> SPEC has room to move.** It largely does not. Task identity explains **92 % of SPEC's
+> variance** (η² = 0.917), and a random *unevolved* circuit already scores **0.92** on
+> these 2-output tasks — so this study went looking for an *increase* in a statistic
+> already pinned near its ceiling by the substrate.
+>
+> **Read every "refuted" below as "not detected within the ~0.1-wide band the target
+> leaves free".** The null reported here is a real null *about SPEC on `pair_partial`*.
+> It is **not** a null about modularity. H-S1 is closer to **untested** than refuted.
+>
+> The saturation warning in §5 was correct, and understated: it applies to the `partial`
+> arm too, not only to the `full` and `zero` endpoints.
 
 ---
 
