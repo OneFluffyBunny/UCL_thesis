@@ -174,16 +174,27 @@ correct, and worse than it was written: it applies to `pair_partial` too, not on
 
 ## 4c. Secondary tasks
 
-`add4` (9 in, 5 out), `mult4` (8 in, 8 out) and `retina_x2` (16 in, 2 out) were run
-alongside to see whether the picture survives at more outputs. **None of them solved**
-within the budgets given (500 000 / 500 000 / 300 000 generations). They therefore
-contribute only to the confound check, where they confirm limitation 3: unsolved `add4`
-circuits score a mid-range SPEC (median 0.433) and unsolved `retina_x2` circuits scored
-1.0 in the pilot, purely because their outputs hang off disjoint junk cones.
+⚠️ **The secondary run was stopped before it finished.** What actually exists:
+
+| task | seeds run | of planned | solved | median SPEC (unsolved) |
+|---|---|---|---|---|
+| `add4` (9 in, 5 out) | 50 | 50 — **complete** | **0/50** | 0.4520 |
+| `mult4` (8 in, 8 out) | 40 | 50 — partial | **0/40** | 0.5588 |
+| `retina_x2` (16 in, 2 out) | 0 | 30 — **never started** | — | — |
+
+So `add4` genuinely failed to solve in 500 000 generations across a full 50 seeds;
+`mult4` failed across the 40 seeds it got; and **`retina_x2` was never run at all** —
+the only `retina_x2` numbers anywhere in this file are the 4-seed pilot in §5
+limitation 3, which is not part of this run.
+
+They contribute only to the confound check, where they confirm limitation 3: unsolved
+circuits sit at a mid-range SPEC (0.45, 0.56) with no relation to organisation, purely
+because their outputs hang off partly-disjoint junk cones.
 
 **Consequence: the ground-truth claim is established at 2 outputs only.** Whether SPEC's
 ordering survives at 5 or 8 outputs is untested, and would need tasks that actually solve
-in budget.
+in budget — `add4` and `mult4` are both too hard for (1+4) CGP at 100 nodes, which is
+itself worth knowing before anyone designs a many-output study on this substrate.
 
 
 ---
