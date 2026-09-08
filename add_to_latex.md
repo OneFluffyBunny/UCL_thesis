@@ -762,6 +762,11 @@ z-score against the calibration baseline, not as a raw number** — this has
 only been done for the 50n arms so far. The 400n MVG arms (z = 2.09 CGP,
 2.42 ECGP) have no size-matched FG-400n purity to compare against yet.
 
+⚠️ **Re-check this "resolution" before trusting it.** The z-score gap
+above (FG ~0.5–1.0 higher than MVG) is medians only, no variance, and is
+similar in size to the gate-set confound noted below — read the numbers
+again carefully before citing this as a real agreement rather than a wash.
+
 **One confound surfaced along the way, worth remembering:** NAND-only vs
 4-gate circuits at matched size (29 vs 24 active nodes) differ almost as much
 in purity (0.595 vs 0.829) as FG vs MVG differs anywhere in this table — gate
