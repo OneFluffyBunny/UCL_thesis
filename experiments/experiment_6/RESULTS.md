@@ -324,3 +324,88 @@ Scratch script/figure (`necgp/scratch_decompose_final.py`,
 `necgp/scratch_decompose_final_seed0.png`) are gitignored by convention
 (`scratch_*.py`, `*.png` under `experiments/` — see root `CLAUDE.md`); this
 section is the durable record of the finding.
+
+---
+
+## 2026-08-21 — necgp_pairwise: ⚠️ EXPERIMENTAL, third attempt, NOT `necgp/`
+
+Direct response to the fake-module finding above. `necgp/`'s `compress` grabs a
+window of genome-**adjacent** nodes and accepts unconditionally — genome
+position carries no information about which nodes actually feed each other,
+which is the root cause of the 37.5% fake-call rate. `necgp_pairwise/` (new
+directory, kept fully separate from `necgp/` on purpose) replaces `compress`
+with a version that always proposes exactly **one genome-adjacent pair**
+(never a wider window) and **rejects it, as a no-op, unless the resulting
+module's own module-has-interaction check passes** — i.e., unless its exposed
+outputs genuinely depend on an internal edge. Deliberately stripped down at
+the same time, to keep any result attributable to this one change:
+`module_point_mutate`/`add_input`/`remove_input`/`add_output`/`remove_output`
+are removed entirely (not just zeroed) — a module's interface is fixed forever
+at whatever `compress` gave it. Four knobs left: `mutation_rate`,
+`compress_prob`, `expand_prob`, `nest_decay`. `max_module_size` (still 5, same
+number `necgp/` used) is reinterpreted as a cap on the resulting module's own
+recursively-flattened primitive count, since every module body here is always
+exactly 2 slots — a slot-count bound would do nothing. See
+`necgp_pairwise/README.md` and `ecgp.py`'s module docstring for the full
+mechanism.
+
+**A real bug surfaced and got fixed before any result should be trusted.**
+The first design used only the cheap check "does the second node read the
+first node's output" — necessary but, it turns out, not sufficient. Seed 0's
+first run hit `validate()`'s new invariant assertion: a module whose body was
+`NAND(in0,in1) -> NAND(prev,in2)` — a genuine internal edge — but whose
+*exposed* output (`out=[...]`, computed from what external code referenced
+before the merge) turned out to be only the *first* NAND, because nothing
+outside the pair had ever used the second NAND's raw value. The second node's
+dependency on the first was real but never surfaced — fake by the same
+`module_has_interaction` definition used everywhere else, despite passing the
+cheap check. Fixed by building the candidate module fully and checking
+`module_has_interaction` on it directly (the authoritative check) before
+splicing it in, keeping the cheap check only as a fast pre-filter. Worth
+recording as a lesson on its own: "the two nodes reference each other" and
+"the module's own outputs depend on that reference" are different claims, and
+only the second is the one that matters.
+
+**Result, 5 seeds (0–4), NAND-only, `retina_ka2005`/xor, same budget/params
+`necgp/` used (`nodes=100 popsize=5 max_generations=300000`), after the fix:**
+
+| seed | solved gen | modules alive | module types reachable | fake types | module calls | fake calls |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 | 27852 | 6 | 6 | **0** | 42 | **0** |
+| 1 | 217937 | 9 | 8 | **0** | 64 | **0** |
+| 2 | 47952 | 6 | 5 | **0** | 38 | **0** |
+| 3 | 55320 | 6 | 6 | **0** | 38 | **0** |
+| 4 | 17815 | 4 | 4 | **0** | 37 | **0** |
+| **total** | — | — | **29** | **0 (0%)** | **219** | **0 (0%)** |
+
+Every single seed solved the task, every `validate()` call (which now also
+asserts no fake module survived) passed, and **zero** module types or module
+calls across all 5 seeds were fake — vs. `necgp/`'s single-seed decomposition
+above, which found 40% of reachable module types and 37.5% of module calls
+fake. Nesting still happens under this mechanism too: 2–4 of each seed's
+module types are depth-2 (a module nesting another), so the interaction
+guarantee survives nesting, not just the depth-1 case.
+
+**Generations to solve are noisy and not yet a fair comparison to `necgp/`.**
+27852 / 217937 / 47952 / 55320 / 17815 for seeds 0–4 vs. `necgp/`'s nested
+numbers for the same seeds (78134 / 63938 / 29551 / 15662 / 99051) — no
+consistent direction (faster on 0 and 4, much slower on 1, slower on 2 and 3),
+and seed 1's 217937 is a clear outlier. This is expected, not concerning: the
+operator set differs by more than just the interaction check (four fewer
+mutation operators competing for the same mutation budget), so this is not a
+controlled speed comparison — read only the fake-module result above as the
+finding this run was designed to test.
+
+**Not yet done, in order of what matters most:** a paired significance test
+analogous to the 9-seed sweep above (5 seeds is not enough to trust the speed
+numbers either way, and speed was never the question this run was built to
+answer); checking whether `max_module_size=5` is actually a binding
+constraint anywhere (no seed above needed it — largest flattened module seen
+is 4 primitives — so **no evidence yet that 5 needs raising**, revisit if a
+seed starts hitting it); a decomposition figure for one of these seeds,
+analogous to `necgp/scratch_decompose_final_seed0.png`, now that there should
+be nothing fake left to draw; whether the same fix (candidate-then-check
+instead of a cheap proxy) reveals a similar gap if ported back to `necgp/`'s
+own window-based `compress` — not attempted, `necgp/` is frozen-by-convention
+for this kind of change per its own docs, so any such fix belongs here, not
+there.

@@ -1,0 +1,94 @@
+=== SEED 0 ===
+necgp_pairwise run [EXPERIMENTAL] -- task=retina_ka2005 operation=xor gates=nand nodes=100 popsize=5 seed=0 max_module_size=5 nest_decay=0.5 max_generations=300000
+
+  [seed=0] gen   20000  score 236.0000  hits 236/256  modules 6  depth_hist {1: 3, 2: 3}
+
+=== seed 0: SOLVED at gen 27852  (256/256 hits, 57.6s, 483 gen/s) ===
+  validate() passed -- including the 'no fake module survived' assertion
+  modules alive: 6  depth_hist {1: 3, 2: 3}
+  module types reachable in active circuit: 6  (0 fake -- should be 0)
+  module calls in active circuit: 42  (0 fake -- should be 0)
+        M2  x12   depth=1  flattened_primitives=2
+        M1  x9    depth=1  flattened_primitives=2
+        M6  x8    depth=2  flattened_primitives=3
+        M3  x6    depth=1  flattened_primitives=2
+        M4  x5    depth=2  flattened_primitives=2
+        M5  x2    depth=2  flattened_primitives=2
+
+=== SEED 1 ===
+necgp_pairwise run [EXPERIMENTAL] -- task=retina_ka2005 operation=xor gates=nand nodes=100 popsize=5 seed=1 max_module_size=5 nest_decay=0.5 max_generations=300000
+
+  [seed=1] gen   20000  score 210.0000  hits 210/256  modules 3  depth_hist {1: 2, 2: 1}
+  [seed=1] gen   40000  score 218.0000  hits 218/256  modules 5  depth_hist {1: 3, 2: 2}
+  [seed=1] gen   60000  score 218.0000  hits 218/256  modules 6  depth_hist {1: 4, 2: 2}
+  [seed=1] gen   80000  score 219.0000  hits 219/256  modules 6  depth_hist {1: 4, 2: 2}
+  [seed=1] gen  100000  score 224.0000  hits 224/256  modules 7  depth_hist {1: 4, 2: 3}
+  [seed=1] gen  120000  score 229.0000  hits 229/256  modules 7  depth_hist {1: 4, 2: 3}
+  [seed=1] gen  140000  score 239.0000  hits 239/256  modules 7  depth_hist {1: 4, 2: 3}
+  [seed=1] gen  160000  score 244.0000  hits 244/256  modules 7  depth_hist {1: 4, 2: 3}
+  [seed=1] gen  180000  score 250.0000  hits 250/256  modules 7  depth_hist {1: 4, 2: 3}
+  [seed=1] gen  200000  score 250.0000  hits 250/256  modules 7  depth_hist {1: 4, 2: 3}
+
+=== seed 1: SOLVED at gen 217937  (256/256 hits, 344.3s, 633 gen/s) ===
+  validate() passed -- including the 'no fake module survived' assertion
+  modules alive: 9  depth_hist {1: 5, 2: 4}
+  module types reachable in active circuit: 8  (0 fake -- should be 0)
+  module calls in active circuit: 64  (0 fake -- should be 0)
+        M1  x24   depth=1  flattened_primitives=2
+        M6  x16   depth=1  flattened_primitives=2
+       M12  x7    depth=2  flattened_primitives=4
+        M7  x5    depth=2  flattened_primitives=2
+       M10  x5    depth=2  flattened_primitives=2
+        M2  x3    depth=1  flattened_primitives=2
+        M3  x2    depth=2  flattened_primitives=3
+       M13  x2    depth=1  flattened_primitives=2
+
+=== SEED 2 ===
+necgp_pairwise run [EXPERIMENTAL] -- task=retina_ka2005 operation=xor gates=nand nodes=100 popsize=5 seed=2 max_module_size=5 nest_decay=0.5 max_generations=300000
+
+  [seed=2] gen   20000  score 232.0000  hits 232/256  modules 5  depth_hist {1: 3, 2: 2}
+  [seed=2] gen   40000  score 240.0000  hits 240/256  modules 5  depth_hist {1: 3, 2: 2}
+
+=== seed 2: SOLVED at gen 47952  (256/256 hits, 71.7s, 669 gen/s) ===
+  validate() passed -- including the 'no fake module survived' assertion
+  modules alive: 6  depth_hist {1: 3, 2: 3}
+  module types reachable in active circuit: 5  (0 fake -- should be 0)
+  module calls in active circuit: 38  (0 fake -- should be 0)
+        M1  x17   depth=1  flattened_primitives=2
+        M5  x8    depth=2  flattened_primitives=2
+        M2  x5    depth=2  flattened_primitives=3
+        M6  x5    depth=1  flattened_primitives=2
+        M3  x3    depth=1  flattened_primitives=2
+
+=== SEED 3 ===
+necgp_pairwise run [EXPERIMENTAL] -- task=retina_ka2005 operation=xor gates=nand nodes=100 popsize=5 seed=3 max_module_size=5 nest_decay=0.5 max_generations=300000
+
+  [seed=3] gen   20000  score 215.0000  hits 215/256  modules 4  depth_hist {1: 3, 2: 1}
+  [seed=3] gen   40000  score 239.0000  hits 239/256  modules 6  depth_hist {1: 5, 2: 1}
+
+=== seed 3: SOLVED at gen 55320  (256/256 hits, 66.2s, 836 gen/s) ===
+  validate() passed -- including the 'no fake module survived' assertion
+  modules alive: 6  depth_hist {1: 5, 2: 1}
+  module types reachable in active circuit: 6  (0 fake -- should be 0)
+  module calls in active circuit: 38  (0 fake -- should be 0)
+        M2  x13   depth=1  flattened_primitives=2
+        M1  x8    depth=1  flattened_primitives=2
+        M8  x8    depth=1  flattened_primitives=2
+        M4  x4    depth=2  flattened_primitives=3
+        M3  x3    depth=1  flattened_primitives=2
+        M7  x2    depth=1  flattened_primitives=2
+
+=== SEED 4 ===
+necgp_pairwise run [EXPERIMENTAL] -- task=retina_ka2005 operation=xor gates=nand nodes=100 popsize=5 seed=4 max_module_size=5 nest_decay=0.5 max_generations=300000
+
+
+=== seed 4: SOLVED at gen 17815  (256/256 hits, 19.9s, 893 gen/s) ===
+  validate() passed -- including the 'no fake module survived' assertion
+  modules alive: 4  depth_hist {1: 2, 2: 2}
+  module types reachable in active circuit: 4  (0 fake -- should be 0)
+  module calls in active circuit: 37  (0 fake -- should be 0)
+        M1  x18   depth=1  flattened_primitives=2
+        M3  x15   depth=1  flattened_primitives=2
+        M5  x3    depth=2  flattened_primitives=2
+        M2  x1    depth=2  flattened_primitives=3
+
