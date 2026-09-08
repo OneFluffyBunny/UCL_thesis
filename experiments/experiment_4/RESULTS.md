@@ -1377,3 +1377,26 @@ script/run can get this picture for any individual, not just this one seed-0
 replay. `scratch_decompose_final.py` is now a thin driver: reproduce a specific
 run's final individual, verify it against the logged result, call
 `decompose.draw_decomposition`.
+
+## TODO (flagged 2026-09-02, not started) — incremental-complexity curriculum instead of task-switching
+
+User's own framing: "the last experiment we might want to try here is to have
+incrementally increasing problem complexity instead of task switching (if
+time allows) in the ECGP (or similar) framework." Explicitly deferred.
+
+Idea: replace MVG's goal-SWITCHING curriculum (alternate between fixed tasks
+of fixed difficulty, e.g. `--mvg and,or`) with a goal-COMPLEXITY curriculum —
+start easy/small and incrementally increase problem complexity over
+generations, instead of oscillating between tasks. This experiment is FROZEN
+here (root `CLAUDE.md`), so it cannot be built in this directory — would need
+a new fork/experiment, same constraint already applied to the compress-window
+fake-module fix above.
+
+Likely the same idea already ranked #3 in the 2026-08-15 final-weeks planning
+session ("additive/cumulative goals instead of goal-switching"), flagged
+there as at risk of re-walking into an already-logged null:
+"Curriculum-vs-cold experiments so far are nulls (no speed or modularity
+gain)" (root `CLAUDE.md` established facts). Check what that prior null
+actually tested (literal complexity ramping, or something else, e.g.
+warm-start vs cold-start on one fixed target) before re-deriving
+infrastructure.
