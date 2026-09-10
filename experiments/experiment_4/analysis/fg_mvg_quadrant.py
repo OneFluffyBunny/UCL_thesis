@@ -76,8 +76,37 @@ def read_cell(base, pattern):
         R = np.array([int(r["right"]) for r in rows], dtype=float)
         Mx = np.array([int(r["mixed"]) for r in rows], dtype=float)
         seeds.append((gens, {"sided": (L + R) / np.maximum(L + R + Mx, 1.0),
-                             "acc": acc}))
+                             "acc": acc,
+                             # kept as data, not plotted: the goal live at each row.
+                             # An MVG run's LAST row is on whichever goal the
+                             # schedule left running, and that is the same goal in
+                             # every seed, so a raw endpoint accuracy is a one-goal
+                             # number -- and the FG cells' is the OTHER goal.
+                             "goal": np.array([r.get("goal", "") for r in rows])}))
     return cfg, seeds
+
+
+def end_acc_on(seeds, goal):
+    """-> (mean endpoint accuracy restricted to rows scored on `goal`, n seeds).
+
+    For an FG cell every row is that goal and this is just the last accuracy; for
+    an MVG cell it is the last accuracy logged during a `goal` epoch, which is the
+    only figure comparable with the FG cells."""
+    vals = []
+    for _, v in seeds:
+        sel = np.nonzero(v["goal"] == goal)[0]
+        if len(sel):
+            vals.append(v["acc"][sel[-1]])
+    return (float(np.mean(vals)) if vals else float("nan")), len(vals)
+
+
+def match_goal(cells):
+    """The goal the FG cells were evolved on -- what every cell is compared on."""
+    for _, _, _, _, seeds in cells:
+        goals = {g for _, v in seeds for g in np.unique(v["goal"])}
+        if len(goals) == 1:
+            return goals.pop()
+    return "and"
 
 
 def on_grid(seeds, grid, col):
@@ -137,15 +166,24 @@ def main():
 
     grid = np.unique(np.r_[0, np.logspace(2, np.log10(gmax), 400)])
 
+    goal = match_goal(cells)
     print(f"\n{'cell':30s}{'gates':18s}{'gens':>9}{'seeds':>6}{'solved':>9}"
-          f"{'med gen@solve':>15}{'sided end':>11}{'acc end':>9}")
+          f"{'med gen@solve':>15}{'sided end':>11}{'last row':>13}"
+          f"{'acc on ' + goal.upper():>12}")
     for label, _, _, cfg, seeds in cells:
         ns, nt, med = solve_stats(seeds)
         se = np.mean([v["sided"][-1] for _, v in seeds])
-        ae = np.mean([v["acc"][-1] for _, v in seeds])
+        raw = np.mean([v["acc"][-1] for _, v in seeds])
+        last_goals = "/".join(sorted({str(v["goal"][-1]) for _, v in seeds}))
+        matched, n_m = end_acc_on(seeds, goal)
         print(f"{label:30s}{str(cfg.get('gates','?')):18s}"
               f"{cfg.get('generations',''):>9}{nt:>6}{ns:>4}/{nt:<4}"
-              f"{med:>15,.0f}{se:>11.3f}{ae:>9.3f}")
+              f"{med:>15,.0f}{se:>11.3f}"
+              f"{raw:>8.3f} ({last_goals}){matched:>12.3f}")
+    print(f"  'last row' is the endpoint accuracy on whatever goal the run ended on "
+          f"-- NOT comparable across arms.\n"
+          f"  'acc on {goal.upper()}' is the last accuracy each cell logged during a "
+          f"{goal.upper()} epoch: the like-for-like column.")
 
     fig, axes = plt.subplots(1, len(PANELS), figsize=(9.0 * len(PANELS), 6.0))
     for ax, (col, ylab, title, ylim) in zip(axes, PANELS):
@@ -156,8 +194,15 @@ def main():
                 ax.fill_between(grid, smooth(mean - sd, cli.smooth),
                                 smooth(mean + sd, cli.smooth), color=colour,
                                 alpha=0.10, lw=0)
+            # the legend's endpoint number is goal-matched for the accuracy panel;
+            # `mean[-1]` there would be an MVG cell's OR score beside an FG cell's AND
+            if col == "acc":
+                end, _ = end_acc_on(seeds, goal)
+                tag = f"on {goal.upper()} {end:.3f}"
+            else:
+                tag = f"final {mean[-1]:.3f}"
             ax.plot(grid, smooth(mean, cli.smooth), color=colour, ls=ls, lw=2.0,
-                    label=f"{label}   ({len(M)} seeds, final {mean[-1]:.3f})")
+                    label=f"{label}   ({len(M)} seeds, {tag})")
         ax.set_xscale("log")
         ax.set_xlabel("generation (log scale)")
         ax.set_ylabel(ylab)

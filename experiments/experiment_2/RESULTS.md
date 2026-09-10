@@ -131,6 +131,17 @@ python train.py --task retina --mvg --mvg-ops and,or --switch-interval 20 --n-hi
 
 ### MVG (`and` ↔ `or`, switch every 20 gens)
 
+> **Code fix 2026-09-10 — the tables here were already right; `train.py` was not.**
+> The caveat below was being handled by hand, run after run: `best` is a maximum
+> across goal switches, and `final` is the endpoint scored on whichever goal the
+> LAST generation ran — the same goal in every seed, since the schedule is
+> deterministic — so an MVG `final` and an FG `final` are different tasks.
+> `train_seed` now scores the endpoint genome against **every** goal the run could
+> face and returns `acc_by_op`, and the multi-seed summary ranks and averages on
+> the matched goal (`--operation`, i.e. AND) rather than on `final`. For a fixed
+> goal the dict has one entry and nothing changes. No re-training needed for the
+> tables below, which were already split per op.
+
 Per-op best-in-population accuracy across all 2000 logged generations (the
 single reported "best accuracy" is misleading on its own, same caveat as the
 xor/and run above — it only reflects whichever op happened to be active):

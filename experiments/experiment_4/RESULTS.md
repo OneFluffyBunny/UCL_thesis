@@ -27,8 +27,16 @@ Lab notebook for the CGP/ECGP module-reuse experiment. Hypothesis and design in
 >   re-extracted from git and re-run on the same seed — `_best.npz` **byte-identical**,
 >   `result.json` identical except the wall-clock `seconds` field, `log.csv` identical
 >   in every substantive column (only `secs_per_gen` differs).
-> - **`analysis/fg_mvg_quadrant.py` and the `fg_mvg_quadrant_n*.png` figures**, which
->   read the final CSV row rather than a maximum.
+> - ~~**`analysis/fg_mvg_quadrant.py` and the `fg_mvg_quadrant_n*.png` figures**, which
+>   read the final CSV row rather than a maximum.~~ **Partly wrong — corrected
+>   2026-09-10.** Reading the final row does dodge the cross-goal *maximum*, but the
+>   final row's **goal** differs by arm: an MVG run ends on whichever of AND/OR the
+>   schedule left live (OR, in every seed), while the FG cells are always AND. The
+>   "acc end" column therefore compared two different tasks. Fixed: the script now
+>   reports the last accuracy each cell logged during an **AND** epoch, and the
+>   accuracy panel's legend uses that. The correction is small here — the endpoint
+>   accuracies barely differ by goal (see the table below) — but it was not zero and
+>   was not verified before being called unaffected.
 > - The **per-generation CSVs** for every run, which log the true current score with a
 >   `goal` column and were always correct.
 >
@@ -107,6 +115,23 @@ a circuit is only "best" *at* a goal):
 | ECGP MVG 50n [or] | 0.798 | 12.0 | 0.898 |
 | CGP MVG 400n ⚠️ not replayed | 0.597 | 39.5 | 0.984 |
 | ECGP MVG 400n ⚠️ not replayed | 0.676 | 28.5 | 0.932 |
+
+**Quadrant endpoints, goal-matched** (`analysis/fg_mvg_quadrant.py`, n=50, 4 seeds
+per cell, 800k generations, re-derived 2026-09-10 after the goal fix above):
+
+| cell | sided end | last row (its goal) | acc on AND | solved |
+|---|---:|---:|---:|---:|
+| CGP · FG | 0.776 | 1.000 (and) | **1.000** | 4/4 |
+| ECGP · FG | 0.874 | 1.000 (and) | **1.000** | 4/4 |
+| CGP · MVG | 0.438 | 0.838 (or) | **0.837** | 0/4 |
+| ECGP · MVG | 0.494 | 0.844 (or) | **0.821** | 0/4 |
+
+The goal mismatch was worth ≤0.023 here (ECGP MVG 0.844 on OR vs 0.821 on AND), so
+no conclusion moves. Note the headline that does not change either way: on this task
+**FG solves it 8/8 and MVG solves it 0/8** — the opposite of the kashtan_alon
+retina result, where MVG is the arm that escapes the plateau. The switch interval
+differs by two orders of magnitude (2000 vs 20 generations), which is the first
+thing to check before reading anything into that contrast.
 
 The two n400 rows still read a bare `_best.npz` written from the cross-goal peak;
 their purity and acc are **not** corrected. The superseded n50 `_best.npz` files were
