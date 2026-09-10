@@ -3,7 +3,12 @@
 The specification of the **neural-network / retina experiment** (Fig. 5) of
 Kashtan & Alon, *Spontaneous evolution of modularity and network motifs*, PNAS
 102(39):13773–13778, doi:10.1073/pnas.0503610102. Full text fetched from
-**PMC1236541** on **2026-08-04**.
+**PMC1236541** on **2026-08-04**; cross-checked 2026-09-09 against the user-supplied
+PDF (`papers/kashtan-alon-2005-...pdf`, 6 pages = main text only, **no SI attached** —
+the paper explicitly points to separate "Figs. 6–9, Supporting Text, and Tables 1–6 ...
+published as supporting information on the PNAS web site" that neither source has).
+The re-read surfaced one row this file had missed (the neuron-count penalty, §5) —
+otherwise the two sources agree everywhere checked.
 
 This file is the paper, not our code. Every row is tagged:
 
@@ -71,6 +76,8 @@ This file is the paper, not our code. Every row is tagged:
 | Measure | ✅ QUOTED | *"The fitness of a network was defined by the fraction of correct recognitions in this environment."* (raw fraction correct, no class balancing). |
 | **Evaluation set** | ✅ QUOTED | *"The environment contained 100 different randomly chosen retina patterns."* → **fitness is over a 100-pattern sample, NOT all 256 patterns.** |
 | Resampling frequency of the 100 patterns | ⚠️ AMBIGUOUS | Not stated whether the 100 patterns are fixed or redrawn each generation. |
+| **Neuron-count penalty** | ✅ QUOTED — 🛑 **NOT IN OUR CODE** | *"A penalty of 0.01 was applied for every additional neuron above a predefined number of neurons (here we used 13 neurons)."* From the *Neural Network Evolution* methods paragraph — applies to **both MVG and FG**, not a circuit-only term (unlike the 0.2/11-gate circuit penalty, which genuinely is circuit-only — see the callout at the top of this file). Found 2026-09-09 reading the actual PDF main text; **absent from `model.py`'s `fitness()`, which is pure accuracy with no complexity term.** This is a confirmed fidelity gap in every run in `RESULTS.md`, not just the fan-in ablation. |
+| "Additional neuron above 13" — what counts as a neuron | ⚠️ AMBIGUOUS (inferred by analogy) | Genome is fixed at 15 neuron-genes, so a literal neuron *count* can't vary — the penalty must count **effective** neurons (by analogy with the circuit section's explicit *"effective gates ... gates with a directed path to the output"*). Not restated for neurons in the main text; a reasonable inference, not a quote. |
 
 ## 6. Modularity measurement
 

@@ -9,6 +9,56 @@ every 20 gens) the normalized modularity **Q_m** rises and *stays high* (**0.35 
 0.02**); under a Fixed Goal it stays low (**0.15 ± 0.02**). Same network, same
 search, only the goal schedule differs.
 
+> ⚠️ **Known fidelity gap, found 2026-09-09, applies to every run below:** the paper's
+> retina fitness includes *"a penalty of 0.01 ... for every additional [effective]
+> neuron above [13]"* (`PAPER_SPEC.md` §5) — our `model.py fitness()` has no
+> complexity term at all, pure accuracy. This is a real, if small, parsimony
+> pressure the paper's own runs had that ours don't. It's a plausible partial
+> explanation for the sparsity/density questions raised while discussing Run 6 — the
+> real experiment had *some* active pressure against unnecessary structure that our
+> reproduction lacks entirely, on top of the mutation-symmetry argument already in
+> Run 6's write-up. Not yet added to the code or re-run.
+
+---
+
+## Run 7 — Run 6 ablation extended to 5 seeds/condition + purity/left_right_q scored on all 20 runs (2026-09-10, rough notes) → **direction survives at full power on all 4 metrics**
+
+Two things, both analysis/completion of existing work, no code changes:
+1. **Run 6 extended from 3 to 5 seeds/condition** (trained only the 2 missing MVG +
+   2 missing FG seeds; resumed, so seeds 0-2 are untouched from Run 6). Command:
+   `conda run -n lndp python run_ablation_no_fanin.py --n-seeds 5`.
+2. **`qmetrics`'s circuit purity (METRIC 4) and `left_right_q` (METRIC 3, planted
+   left/right partition)** — implemented in `qmetrics/` but never run on any
+   kashtan_alon result before now — computed on all 20 saved `*_best.npz` genomes
+   (Run 5's 10 + Run 6's 10), analysis-only, alongside the existing Q_m/raw Q.
+   Scripted in `scratch_metrics_table.py` (gitignored, `scratch_` convention;
+   rerun any time — no re-evolution needed).
+
+| group | n | Q_m | raw Q | purity | left_right_q |
+|---|---|---|---|---|---|
+| Run 5 FG (capped fan-in) | 5 | 0.025 | 0.380 | 0.561 | 0.546 |
+| Run 5 MVG (capped fan-in) | 5 | 0.245 | 0.479 | 0.929 | 0.916 |
+| Run 6 FG (no fan-in) | 5 | −0.071 | 0.216 | 0.307 | 0.537 |
+| Run 6 MVG (no fan-in) | 5 | 0.079 | 0.306 | 0.567 | 0.766 |
+
+Significance on Q_m (Welch t two-sided / Mann-Whitney U one-sided MVG>FG):
+- Run 5: t=3.34, p=0.021; MWU p=0.016 (matches the original Run 5 write-up below).
+- **Run 6 at n=5** (was n=3, "not significant, treat as suggestive"): t=2.11,
+  p=0.070 (two-sided, borderline); MWU p=0.048 (significant).
+
+**Verdict:** MVG beats FG on **all four metrics**, both capped and uncapped — the
+direction is robust to removing the fan-in cap. The Run 6 gap, previously
+underpowered at n=3, is now borderline/significant at n=5. Absolute modularity
+still drops in both arms when the cap is removed (as in Run 6's original
+write-up) — scarcity still sets the ceiling on how modular a solution gets, it
+just isn't necessary for MVG to beat FG.
+
+Not yet done: `left_right_q`/purity logged live per-generation the way
+`runs_purity/` logs purity for Run 5 (that folder's genomes are bit-identical
+to Run 5's by construction, so its archived per-gen brains are usable for this
+without any new training — see `analysis/fg_mvg_purity.py`). No equivalent
+per-generation archive exists for Run 6 yet.
+
 ---
 
 ## Run 6 — fan-in cap ablation, 3 seeds/condition (2026-08-20) → **partial support: absolute Q_m drops, but the MVG>FG gap survives**
