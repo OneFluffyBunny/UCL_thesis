@@ -263,8 +263,8 @@ def draw_net_purity(ax, weight_mats, cfg, result, title, subtitle=None,
                 ax.text(x, y, label, ha="center", va="center", fontsize=6, zorder=5)
 
     if subtitle is None:
-        subtitle = (f"Q_m={result.get('q_m', float('nan')):+.3f}  |  "
-                    f"circuit purity={purity:.3f}")
+        subtitle = (f"Q_m={result.get('q_m', float('nan')):+.2f}  |  "
+                    f"circuit purity={purity:.2f}")
     ax.set_title(f"{title}\n{subtitle}", fontsize=9)
     # the outermost retina pixels sit at +-4.1, so the margin has to clear a node
     # RADIUS too -- at node_scale > 1 a tighter limit slices the end pixels in half
@@ -274,6 +274,12 @@ def draw_net_purity(ax, weight_mats, cfg, result, title, subtitle=None,
 
 
 def _sheet(draw_fn, out_name, suptitle, handles):
+    """⚠️ Draws `<run>_best.npz`, the FINAL-generation champion. Generation 24,999
+    is mid-OR-epoch for every MVG seed, so the MVG row shows OR solvers and the FG
+    row AND solvers. Measured cost of that mismatch (scratch_audit_final_goal.py):
+    purity 0.929 vs 0.933 and Q_m +0.259 vs +0.311 against the same runs' AND
+    champions -- structurally the same picture, with MVG's modularity slightly
+    UNDERSTATED. analysis/paper_grid.py draws the goal-matched version."""
     rows = [("mvg", "MVG"), ("fg", "FG")]
     fig, axes = plt.subplots(2, 5, figsize=(4 * 5, 9))
     for r, (tag, label) in enumerate(rows):

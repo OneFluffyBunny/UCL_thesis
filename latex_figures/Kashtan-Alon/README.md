@@ -52,12 +52,6 @@ Notes:
 Approved 2026-09-10. The copy in this folder came from
 `kashtan_alon/runs_dense/switch_window_seed0.png`.
 
----
-
-## Pending review
-
-These are built and open for review but **not yet copied into this folder**.
-
 ### `fg_vs_mvg_purity.png` — accuracy and purity across evolution
 
 | | |
@@ -79,6 +73,21 @@ past the collapse. The switch cost is visible in the *population mean*
 (`mean_fit`), which is the middle row of `switch_window_seed0.png`. An earlier
 version split this panel by goal; the two curves coincided by construction, for
 the same reason, and the split was removed.
+
+The MVG advantage in the accuracy panel was audited (2026-09-10) and survives:
+the two goals are equally hard (best constant output 0.750 on both), MVG's own
+curve differs by <0.01 between AND-phase and OR-phase rows, and goal-matched
+best-on-AND champions give MVG 0.975 vs FG 0.904 raw, 0.967 vs 0.829 balanced —
+MVG ahead on every seed under both metrics. See `kashtan_alon/RESULTS.md`.
+
+Approved 2026-09-10. The copy in this folder came from
+`kashtan_alon/runs_purity/fg_vs_mvg_purity.png`.
+
+---
+
+## Pending review
+
+These are built and open for review but **not yet copied into this folder**.
 
 ### `paper_10runs_grid.png` — the 10 final champion circuits
 

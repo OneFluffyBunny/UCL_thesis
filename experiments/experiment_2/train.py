@@ -185,7 +185,21 @@ def train_seed(brain_cfg, run_cfg, seed):
 
     best_genome = eqx.combine(reshaper.reshape_single(best_flat), static)
     final_genome = eqx.combine(reshaper.reshape_single(final_flat), static)
-    return best, best_genome, final, final_genome, run_name
+
+    # Under --mvg, `final` is the endpoint champion scored on whichever goal the
+    # LAST generation ran -- and the schedule is deterministic, so that goal is the
+    # SAME one in every seed. An MVG "final" is therefore systematically a one-goal
+    # number while an FG "final" is the other goal's, and putting them side by side
+    # compares two different tasks. Scoring the endpoint genome against every goal
+    # the run could face is the only FG-comparable figure; for a fixed goal this
+    # dict has one entry and equals `final`.
+    run_ops = tuple(run_cfg.mvg_ops) if run_cfg.mvg else (run_cfg.operation,)
+    acc_by_op = {}
+    for op in run_ops:
+        y_op = tasks.targets(run_cfg.task, op, X)
+        _, a_op = batched_eval(jnp.asarray(final_flat)[None, :], y_op)
+        acc_by_op[op] = float(a_op[0])
+    return best, best_genome, final, final_genome, run_name, acc_by_op
 
 
 def main():
@@ -201,11 +215,19 @@ def main():
     # Under --mvg the best-EVER champion peaked on whichever goal happened to be
     # active at the time, so the final-generation champion is the comparable one.
     headline = "final" if run_cfg.mvg else "best"
+    # ...and even `final` is scored on one goal only (see train_seed), so the arm
+    # comparison is made on `match_op`: the goal an FG run of this task would use.
+    run_ops = tuple(run_cfg.mvg_ops) if run_cfg.mvg else (run_cfg.operation,)
+    match_op = run_cfg.operation if run_cfg.operation in run_ops else run_ops[0]
 
     results = []
     for i in range(run_cfg.n_seeds):
         seed = run_cfg.seed + i
-        best, best_genome, final, final_genome, run_name = train_seed(brain_cfg, run_cfg, seed)
+        (best, best_genome, final, final_genome,
+         run_name, acc_by_op) = train_seed(brain_cfg, run_cfg, seed)
+        print(f"[seed {seed}] endpoint champion by goal: "
+              + "  ".join(f"{o}={v:.3f}" for o, v in acc_by_op.items())
+              + f"   (arm comparison uses {match_op.upper()})")
 
         pngs = {}
         for tag, acc, genome in (("best", best, best_genome), ("final", final, final_genome)):
@@ -222,17 +244,21 @@ def main():
                             title=f"{tag.capitalize()} DNA - {run_name} - accuracy {acc:.3f}",
                             open_after=(run_cfg.open_image and run_cfg.n_seeds == 1
                                         and tag == headline))
-        results.append((seed, best, final, pngs[headline]))
+        results.append((seed, best, final, pngs[headline], acc_by_op[match_op]))
 
     if run_cfg.n_seeds > 1:
         print("\n=== summary ===")
-        for seed, best, final, _ in results:
-            print(f"  seed {seed}: best {best:.3f} | final {final:.3f}")
-        # rank + average on the headline metric for this arm (see `headline` above)
-        col = 2 if headline == "final" else 1
-        best_seed, b, f, best_png = max(results, key=lambda r: r[col])
-        print(f"best seed by {headline}: {best_seed} (best {b:.3f} | final {f:.3f})"
-              f"  |  mean {headline} {np.mean([r[col] for r in results]):.3f}")
+        for seed, best, final, _, matched in results:
+            print(f"  seed {seed}: best {best:.3f} | final {final:.3f} "
+                  f"| on {match_op.upper()} {matched:.3f}")
+        # Rank and average on the GOAL-MATCHED number, the only one that means the
+        # same thing in both arms. `best` (cross-goal max under --mvg) and `final`
+        # (one goal, arm-dependent) are kept in the per-seed lines for continuity.
+        best_seed, b, f, best_png, m = max(results, key=lambda r: r[4])
+        print(f"best seed on {match_op.upper()}: {best_seed} "
+              f"(best {b:.3f} | final {f:.3f} | on {match_op.upper()} {m:.3f})"
+              f"  |  mean on {match_op.upper()} "
+              f"{np.mean([r[4] for r in results]):.3f}")
         if run_cfg.open_image:
             from visualize import _auto_open
             _auto_open(best_png)

@@ -105,19 +105,28 @@ def main():
                     r = json.load(f)
                 qm = r.get("q_m", r.get("q"))
                 fit = r.get("final_fit", r.get("best_fit"))
-                print(f"[seed {seed}] already complete (final-gen fit {fit:.3f} | "
-                      f"Q_m {qm:.3f}) -> skip")
-                results[name].append((seed, fit, qm))
+                op = r.get("final_op", r.get("best_op", "?"))
+                print(f"[seed {seed}] already complete (final-gen fit {fit:.3f} "
+                      f"on {op.upper()} | Q_m {qm:.3f}) -> skip")
+                results[name].append((seed, fit, qm, op))
                 continue
             open_after = args.viz and (i == cli.n_seeds - 1)   # open each condition's final brain
             bf, qm = T.train_seed(cfg, X, X_bits, args, seed, open_after)
-            results[name].append((seed, bf, qm))
+            results[name].append((seed, bf, qm, args.operation if not args.mvg else "?"))
 
     print("\n================ PAPER COMPARISON ================")
     for name in conditions:
         qs = [r[2] for r in results[name]]
         fs = [r[1] for r in results[name]]
-        print(f"  {name:12s} | mean Q_m {np.mean(qs):.3f} | mean final-gen fit {np.mean(fs):.3f} "
+        # The goal is named because it is NOT the same across conditions: an MVG
+        # run's final generation is mid-epoch on whichever of AND/OR the schedule
+        # left live (always OR at 25000 gens / switch 20), an FG run's is always
+        # AND. Fitness across conditions here is therefore NOT a like-for-like
+        # comparison -- for that, read `acc_by_op` in each result.json, the saved
+        # champion scored on every goal. Q_m is goal-free and does compare.
+        ops = sorted({r[3] for r in results[name]})
+        print(f"  {name:12s} | mean Q_m {np.mean(qs):.3f} | mean final-gen fit "
+              f"{np.mean(fs):.3f} (on {'/'.join(o.upper() for o in ops)}) "
               f"| Q_m per seed {[f'{q:.3f}' for q in qs]}")
     print("  Expectation (paper): MVG Q_m ~0.35; Fixed Goal Q_m ~0.15.")
 

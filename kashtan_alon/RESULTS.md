@@ -41,6 +41,42 @@ search, only the goal schedule differs.
 > against the live op (they sawtooth, with an `op` column). So every modularity table
 > in this file stands, as does `runs_purity/fg_vs_mvg_purity.png`.
 >
+> **Follow-up sweep, same day — the modularity tables survive a stricter test.** The
+> paragraph above only rules out peak-vs-final. It does not address the fact that the
+> final-generation champion *is an OR brain* for every MVG seed, so the modularity
+> tables put MVG-on-OR beside FG-on-AND. Measured directly
+> (`scratch_audit_final_goal.py`, no re-training — the archived per-generation
+> champions in `<run>_brains.npz` provide the AND-epoch brains):
+>
+> | MVG, 5 seeds | final (OR) champion | last AND-epoch champion |
+> |---|---:|---:|
+> | mean Q_m | +0.259 | **+0.311** |
+> | mean circuit purity | 0.929 | 0.933 |
+>
+> FG is identical either way (every generation is AND). Time-matched — every archived
+> champion in the last 2,000 generations, split by the goal live at the time — AND and
+> OR purity agree to within 0.01 in all five seeds (e.g. seed0 0.8427 vs 0.8423). So
+> the goal of the sampled champion does not move the structural metrics, and where it
+> moves Q_m at all it moves it **against** MVG: the tables understate the effect.
+>
+> **Every other site that mixes goals, audited.** ✅ = verified unaffected, ⚠️ = fixed
+> or flagged 2026-09-10.
+>
+> | Site | Verdict |
+> |---|---|
+> | per-generation CSVs | ✅ carry an `op` column; correct as logged |
+> | `analysis/fg_mvg_purity.py` accuracy panel | ✅ the two goals are equally hard (best constant output 0.750 on **both**; one-eye shortcut 0.750 on both) and MVG's own AND-phase vs OR-phase rows differ by <0.01 in 4/5 seeds |
+> | `analysis/fg_mvg_purity.py` purity panel | ✅ see the time-matched table above |
+> | `analysis/switch_window.py`, `analysis/dense_replay.py` | ✅ per-generation, goal shaded |
+> | `analysis/stage_sheet.py` | ✅ already names the goal in every caption |
+> | `analysis/paper_grid.py` | ⚠️ rewritten to draw the **last AND-epoch champion** (gen 24,970) for both arms, with Q/Q_m/r/purity recomputed for the brain drawn |
+> | `run_paper.py`, `run_ablation_no_fanin.py` | ⚠️ the fitness column printed MVG-on-OR beside FG-on-AND; now names the goal and points at `acc_by_op` |
+> | `highlight_modules.py::_sheet` | ⚠️ still draws final (OR) champions; cost measured above and documented in the docstring |
+> | `visualize.py` net title via `train.py` | ⚠️ "final fit X" now reads "final fit X on OR/AND" |
+> | `experiments/experiment_2/train.py` | ⚠️ **same bug class, not yet fixed**: `best` is an explicit best-EVER across goal switches under `--mvg`, `final` is scored on the last generation's goal |
+> | `experiments/experiment_4/analysis/fg_mvg_quadrant.py` | ⚠️ **same bug class, not yet fixed**: "acc end" and the legend's "final" read the last logged generation, whose goal differs by arm |
+> | `experiments/experiment_4/train.py`, `experiment_5/train.py` | ✅ fixed earlier the same day (per-goal `best_by_goal` / reset at switch) |
+>
 > **The corrected accuracy result — the direction survives.** Re-derived from the
 > existing CSVs, per-goal, over the last 5,000 generations (no re-training):
 >

@@ -396,7 +396,8 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
         import visualize
         png = os.path.join(args.out_dir, f"{run_name}_best.png")
         visualize.visualize_net(final_indiv, cfg, png,
-                                title=f"{mode} seed{seed} - final fit {final_fit:.3f}",
+                                title=f"{mode} seed{seed} - final fit {final_fit:.3f} "
+                                      f"on {final_op.upper()}",
                                 weighted_q=args.weighted_q, open_after=open_after, q_m=q_m)
     return final_fit, q_m
 

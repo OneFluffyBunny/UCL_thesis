@@ -86,20 +86,25 @@ def main():
                     r = json.load(f)
                 qm = r.get("q_m", r.get("q"))
                 fit = r.get("final_fit", r.get("best_fit"))
-                print(f"[seed {seed}] already complete (final-gen fit {fit:.3f} | "
-                      f"Q_m {qm:.3f}) -> skip")
-                results[name].append((seed, fit, qm))
+                op = r.get("final_op", r.get("best_op", "?"))
+                print(f"[seed {seed}] already complete (final-gen fit {fit:.3f} "
+                      f"on {op.upper()} | Q_m {qm:.3f}) -> skip")
+                results[name].append((seed, fit, qm, op))
                 continue
             open_after = args.viz and (i == cli.n_seeds - 1)
             bf, qm = T.train_seed(cfg, X, X_bits, args, seed, open_after)
-            results[name].append((seed, bf, qm))
+            results[name].append((seed, bf, qm, args.operation if not args.mvg else "?"))
 
     print("\n================ ABLATION COMPARISON (no fan-in cap) ================")
     for name in conditions:
         qs = [r[2] for r in results[name]]
         fs = [r[1] for r in results[name]]
-        dens = [None for _ in results[name]]
-        print(f"  {name:12s} | mean Q_m {np.mean(qs):.3f} | mean best fit {np.mean(fs):.3f} "
+        # see run_paper.py: an MVG condition's final generation is scored on OR and
+        # an FG condition's on AND, so this fitness column does NOT compare across
+        # conditions. `acc_by_op` in result.json is the like-for-like number.
+        ops = sorted({r[3] for r in results[name]})
+        print(f"  {name:12s} | mean Q_m {np.mean(qs):.3f} | mean final-gen fit "
+              f"{np.mean(fs):.3f} (on {'/'.join(o.upper() for o in ops)}) "
               f"| Q_m per seed {[f'{q:.3f}' for q in qs]}")
     print("  Constrained baseline (Run 5, RESULTS.md): MVG Q_m 0.245 +/- 0.049; "
           "FG Q_m 0.025 +/- 0.139.")

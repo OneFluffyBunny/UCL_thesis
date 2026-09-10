@@ -87,7 +87,7 @@ def caption(row, gen, with_purity, cfg, wm):
     if not with_purity:
         return head
     pur = float(row["purity"]) if row and "purity" in row else T.purity_of(wm, cfg)
-    return f"{head}\ncircuit purity {pur:.3f}"
+    return f"{head}\ncircuit purity {pur:.2f}"
 
 
 def build_parser():
