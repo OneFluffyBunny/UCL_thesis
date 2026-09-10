@@ -224,7 +224,7 @@ def _spearman(ys: list[float]) -> float:
 
 
 def save_checkpoint(path: pathlib.Path, gen: int, rnd, parent, p_score, p_hits,
-                    best, best_hits, solved_gen, evals, goal,
+                    best_by_goal, solved_gen, evals, goal,
                     recoveries=None, rec_open=None) -> None:
     """Atomically pickle full search state so a run resumes exactly where it stopped.
 
@@ -237,7 +237,7 @@ def save_checkpoint(path: pathlib.Path, gen: int, rnd, parent, p_score, p_hits,
     """
     obj = {"gen": gen, "rng_state": rnd.getstate(),
            "parent": parent, "p_score": p_score, "p_hits": p_hits,
-           "best": best, "best_hits": best_hits, "goal": goal,
+           "best_by_goal": best_by_goal, "goal": goal,
            "solved_gen": solved_gen, "evals": evals,
            "recoveries": recoveries or [], "rec_open": rec_open}
     tmp = str(path) + ".tmp"
@@ -316,7 +316,7 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
         rnd.setstate(c["rng_state"])
         start_gen = c["gen"]
         parent, p_score, p_hits = c["parent"], c["p_score"], c["p_hits"]
-        best_geno, best_hits = c["best"], c["best_hits"]
+        best_by_goal = c["best_by_goal"]
         solved_gen, evals = c["solved_gen"], c["evals"]
         recoveries, rec_open = c.get("recoveries", []), c.get("rec_open")
         goal = c["goal"]                    # the goal p_score/p_hits were scored on
@@ -333,7 +333,7 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
         scored = [score(g, target) for g in pop]
         i = max(range(len(scored)), key=lambda k: scored[k][0])
         parent, (p_score, p_hits) = pop[i], scored[i]
-        best_geno, best_hits = parent.copy(), p_hits
+        best_by_goal = {goal: (p_hits, parent.copy())}
         start_gen, solved_gen, evals = 0, -1, cfg.popsize
         recoveries, rec_open = [], None
         csv_f = csv_path.open("w", newline="", encoding="utf-8")
@@ -550,8 +550,14 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
         if promoted and cfg.ecgp:
             ecgp.prune_modules(parent)
 
-        if p_hits > best_hits:
-            best_geno, best_hits = parent.copy(), p_hits
+        # "Best" is tracked PER GOAL. A single cross-goal maximum is not an accuracy:
+        # under MVG it maximises over two different targets, and mvg-and-or is
+        # asymmetric (OR is true on far more patterns than AND, so it scores high
+        # more easily), so the winner is decided by which goal was live rather than
+        # by the lineage. Under a fixed goal this dict has exactly one key and the
+        # update rule below is character-for-character the old behaviour.
+        if p_hits > best_by_goal.get(goal, (-1, None))[0]:
+            best_by_goal[goal] = (p_hits, parent.copy())
         if solved_gen < 0 and p_hits == n_patterns:
             solved_gen = gen
 
@@ -571,7 +577,7 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
 
         if cfg.checkpoint_interval and (gen + 1) % cfg.checkpoint_interval == 0:
             save_checkpoint(ckpt_path, gen + 1, rnd, parent, p_score, p_hits,
-                            best_geno, best_hits, solved_gen, evals, goal,
+                            best_by_goal, solved_gen, evals, goal,
                             recoveries, rec_open)
 
         # solved_gen is set above the instant p_hits first hits n_patterns, so on
@@ -665,9 +671,27 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
         # Always the FLATTENED circuit: an npz holds arrays, not a module dict, and
         # the inlined graph is what any downstream consumer (--init-from, analysis,
         # a diagram) actually wants. The module structure lives in the log columns.
-        np.savez(out / f"{run}_seed{seed}_best.npz", **asdict(as_cgp(best_geno)))
+        # Under MVG there is no single "best circuit" -- a circuit is only best AT a
+        # goal -- so each goal gets its own file and the goal is in the NAME. A plain
+        # `_best.npz` is deliberately not written for MVG: a consumer that wants "the"
+        # MVG champion has to say which goal it means, and an old ambiguous file must
+        # not be silently mistaken for a corrected one.
+        if cfg.mvg:
+            for g, (_, geno) in sorted(best_by_goal.items()):
+                np.savez(out / f"{run}_seed{seed}_best_{g}.npz",
+                         **asdict(as_cgp(geno)))
+        else:
+            np.savez(out / f"{run}_seed{seed}_best.npz",
+                     **asdict(as_cgp(best_by_goal[goal][1])))
 
     c = pheno.counts()
+    # Scalar "best" for the summary row. Per goal (above), then reduced by taking the
+    # WORST goal: the level this lineage demonstrably reached on EVERY goal it faced,
+    # which no easy goal can inflate. A fixed goal has one key, so this is exactly the
+    # number this always reported.
+    goal_bests = {g: h for g, (h, _) in best_by_goal.items()}
+    floor_goal = min(goal_bests, key=lambda g: (goal_bests[g], g))
+    best_hits = goal_bests[floor_goal]
     result = dict(seed=seed, best_hits=int(best_hits),
                   best_acc=best_hits / n_patterns, final_hits=int(p_hits),
                   solved_gen=int(solved_gen), gens_run=int(gen + 1),
@@ -678,6 +702,13 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
                   gates=" ".join(f"{r['gate']}x{r['count']}"
                                  for r in final_gates if r["count"]),
                   seconds=round(time.time() - t_seed, 2))
+    if cfg.mvg:
+        # Names the goal `best_hits`/`best_acc` above belong to, plus the full
+        # per-goal picture, so an MVG "best" can never again be read as a bare
+        # accuracy. A string, not a dict -- this row also goes into summary.csv.
+        result.update(best_goal=floor_goal,
+                      best_by_goal=" ".join(f"{g}={goal_bests[g]}"
+                                            for g in sorted(goal_bests)))
     if cfg.ecgp:
         # Genotype length is not constant under ECGP -- compress shrinks it and expand
         # grows it -- so it is reported rather than assumed to be `--nodes`.
@@ -807,7 +838,8 @@ def main(argv=None) -> int:
 
     accs = [s["best_acc"] for s in summary]
     solved = [s for s in summary if s["solved_gen"] >= 0]
-    line = (f"\ndone in {wall:.1f}s | best acc {np.mean(accs):.4f} "
+    acc_label = "worst-goal best acc" if cfg.mvg else "best acc"
+    line = (f"\ndone in {wall:.1f}s | {acc_label} {np.mean(accs):.4f} "
             f"+/- {np.std(accs):.4f} (max {max(accs):.4f}) | "
             f"solved {len(solved)}/{cfg.n_seeds}")
     if solved:

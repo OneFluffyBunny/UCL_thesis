@@ -687,6 +687,13 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
             goal, target = new_goal, targets[new_goal][:n_scored]
             p_score, p_hits = score(parent, target)
             evals += 1
+            # Same reasoning as the stage change above: "best" is a claim about a
+            # scoring rule that just changed, so it is RESET rather than carried.
+            # Carried across a switch it becomes a maximum over two different goals,
+            # which is not an accuracy -- mvg-and-or is asymmetric (OR is true on far
+            # more patterns than AND), so the easier goal would win it every time and
+            # the number would describe the schedule instead of the lineage.
+            best_geno, best_hits = parent.copy(), p_hits
 
             # An epoch that ran out before recovering is RIGHT-CENSORED, not dropped
             # and not recorded as "recovered at E". Either shortcut would bias the
@@ -889,6 +896,11 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
                   gates=" ".join(f"{r['gate']}x{r['count']}"
                                  for r in final_gates if r["count"]),
                   seconds=round(time.time() - t_seed, 2))
+    if cfg.mvg:
+        # `best_hits`/`best_acc` are reset at every switch (see the loop), so they
+        # describe the FINAL goal epoch only. Name that goal, so an MVG "best" can
+        # never be read as a goal-free accuracy.
+        result.update(best_goal=goal)
     if cfg.ecgp:
         # Genotype length is not constant under ECGP -- compress shrinks it and expand
         # grows it -- so it is reported rather than assumed to be `--nodes`.

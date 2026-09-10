@@ -11,6 +11,36 @@ run by Claude Code on its own initiative (2026-08-21, branch `spec-modularity`) 
 not been reviewed by a human. Its claims are quarantined in that file on purpose and
 must not be cited from here.
 
+> 🐛 **Cross-goal-maximum bug, found and fixed 2026-09-10 — hygiene only: no result
+> in this file, in `CALIBRATION.md` or in `ENTRENCHMENT.md` is affected.**
+>
+> **What was wrong.** `train.py:754-755` carried a single `best_geno`/`best_hits`
+> maximum across generations while the goal alternates under `--mvg`. That makes the
+> scalar a maximum over two different targets rather than an accuracy, and
+> `mvg-and-or` is asymmetric (OR is true on far more patterns than AND, so it reaches
+> a high count more easily), so the easier goal would win the record every time.
+> Found while auditing after the same bug turned up in `kashtan_alon/`; the identical
+> defect in `experiment_4` is documented in its own `RESULTS.md`.
+>
+> Notably this file's own logic already contained the argument against it: the
+> **stage** change at `train.py:662-679` explicitly *resets* `best_geno`/`best_hits`,
+> commenting that "best" is a claim about a denominator that just changed. The same
+> reasoning applies to a goal change three lines later, and had not been applied.
+>
+> **Why nothing here is affected.** The selection loop was already correct (the
+> parent is re-scored against the new target at every switch, `train.py:682-689`), so
+> the search never used a stale fitness and no run needs repeating. Beyond that,
+> nothing currently published reads an MVG `best_acc`: `_spec_columns(view)` computes
+> SPEC on the **final parent**, not on `best_geno`, so `CALIBRATION.md` (fixed-goal
+> only) and `ENTRENCHMENT.md` (a single switch) never touched the contaminated value.
+> This fix is therefore pre-emptive — it matters for any *future* MVG result here.
+>
+> **The fix.** `best_geno`/`best_hits` are now reset on a goal change, exactly as they
+> already were on a stage change, so they always describe the current goal epoch. A
+> new `best_goal` field in `result.json` names the goal they belong to under MVG, so
+> an MVG "best" can never be read as a goal-free accuracy. Fixed-goal output is
+> unchanged.
+
 ---
 
 ## 2026-08-18 — §1 the fork, the PyPy port, and where PyPy stops helping
