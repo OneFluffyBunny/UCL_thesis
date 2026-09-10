@@ -43,13 +43,13 @@ from qmetrics import open_file
 
 ARMS = {                       # label -> (train.py overrides, colour)
     "MVG (AND <-> OR, every 20 gens)": (dict(mvg=True, operation="and"), "#dc2626"),
-    "FG (L AND R, fixed)": (dict(mvg=False, operation="and"), "#2563eb"),
+    "FG (L AND R)": (dict(mvg=False, operation="and"), "#2563eb"),
 }
 
-PANELS = [("purity", "circuit purity of the champion brain",
-           "Left/right circuit purity", (0.0, 1.0)),
-          ("best_fit", "accuracy of the champion brain (fraction of 256 patterns)",
-           "Accuracy on the current goal", (0.4, 1.02))]
+PANELS = [("best_fit", "champion accuracy",
+           "Accuracy on the current goal", (0.4, 1.02)),
+          ("purity", "champion circuit purity",
+           "Left/right circuit purity", (0.0, 1.0))]
 
 
 def paper_preset(cli):
@@ -87,13 +87,18 @@ def train_arm(cli, args):
         if os.path.exists(done):
             with open(done) as f:
                 r = json.load(f)
-            print(f"[seed {seed}] already complete (best {r['best_fit']:.3f}) -> skip")
+            fit = r.get("final_fit", r.get("best_fit"))
+            print(f"[seed {seed}] already complete (final-gen fit {fit:.3f}) -> skip")
             continue
         T.train_seed(cfg, X_bits, X_bits, args, seed, open_after=False)
 
 
 def read_columns(out_dir, args, n_seeds, seed0, cols):
-    """-> (gens, {col: matrix [seed, gen]}). Seeds truncated to a common grid."""
+    """-> (gens, {col: matrix [seed, gen]}, ops). Seeds truncated to a common grid.
+
+    `ops` is the goal live at each logged generation. It is needed because under
+    MVG a single accuracy curve silently interleaves two DIFFERENT goals, and
+    reading its endpoint against a fixed-goal run compares different tasks."""
     per_seed = []
     for i in range(n_seeds):
         path = os.path.join(out_dir, f"{T.run_name_for(args, seed0 + i)}_log.csv")
@@ -106,12 +111,14 @@ def read_columns(out_dir, args, n_seeds, seed0, cols):
             continue
         per_seed.append(rows)
     if not per_seed:
-        return np.array([]), {c: np.zeros((0, 0)) for c in cols}
+        return np.array([]), {c: np.zeros((0, 0)) for c in cols}, np.array([])
     n = min(len(s) for s in per_seed)
     gens = np.array([int(r["gen"]) for r in per_seed[0][:n]])
     mats = {c: np.array([[float(r[c]) for r in s[:n]] for s in per_seed])
             for c in cols}
-    return gens, mats
+    # the goal schedule is deterministic in `gen`, so seed 0's ops apply to all
+    ops = np.array([r["op"] for r in per_seed[0][:n]])
+    return gens, mats, ops
 
 
 def smooth(y, w):
@@ -129,13 +136,19 @@ def plot(cli, curves):
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(1, len(PANELS), figsize=(9.0 * len(PANELS), 6.0))
-    n_seeds = {len(m["purity"]) for _, _, m in curves.values() if len(m["purity"])}
+    n_seeds = {len(m["purity"]) for _, _, m, _ in curves.values() if len(m["purity"])}
     for ax, (col, ylab, ptitle, ylim) in zip(axes, PANELS):
-        for label, (colour, gens, mats) in curves.items():
+        for label, (colour, gens, mats, ops) in curves.items():
             mat = mats[col]
             if not len(mat):
                 continue
             mean = mat.mean(axis=0)
+            # `best_fit` is the champion scored on whatever goal is live at that
+            # generation, so under MVG this single curve already IS "champion on
+            # the current task" -- it was previously split into one series per
+            # goal, but the two coincided: the population keeps AND-perfect and
+            # OR-perfect individuals side by side, so a max over it is the same
+            # number either way.
             if len(mat) > 1:
                 sd = mat.std(axis=0, ddof=1)
                 ax.fill_between(gens, smooth(mean - sd, cli.smooth),
@@ -143,7 +156,7 @@ def plot(cli, curves):
                                 alpha=0.15, lw=0)
             ax.plot(gens, mean, color=colour, lw=0.6, alpha=0.25)
             ax.plot(gens, smooth(mean, cli.smooth), color=colour, lw=2.0,
-                    label=f"{label}   (final {mean[-1]:.3f})")
+                    label=label)
         if col == "purity":
             ax.axhline(0.5, color="#9ca3af", lw=1.0, ls=":")
         ax.set_xlabel("generation")
@@ -153,12 +166,10 @@ def plot(cli, curves):
         ax.grid(alpha=0.25)
         ax.legend(loc="lower right", fontsize=10, framealpha=0.95)
 
-    seeds = f"{min(n_seeds)} seeds per arm" if n_seeds else "no data"
-    fig.suptitle("Kashtan-Alon retina 8-8-4-2-1 (+-1 weights, threshold units): "
-                 "MVG vs Fixed Goal across evolution\n"
-                 f"mean over {seeds}, shaded +- 1 SD across seeds  ·  "
-                 f"bold line smoothed over {cli.smooth} log points "
-                 f"(= {cli.smooth * cli.log_interval} generations), faint line raw",
+    seeds = f"{min(n_seeds)}" if n_seeds else "no"
+    fig.suptitle("Kashtan-Alon retina paper-faithful reproduction\n"
+                 f"{seeds} seed mean, shaded +- 1 SD, "
+                 f"bold smoothed over {cli.smooth * cli.log_interval} generations",
                  fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.93))
     os.makedirs(cli.out_dir, exist_ok=True)
@@ -177,7 +188,9 @@ def build_parser():
     ap.add_argument("--generations", type=int, default=0, help="0 = paper's 25000")
     ap.add_argument("--pop", type=int, default=0, help="0 = paper's 600")
     ap.add_argument("--log-interval", type=int, default=10)
-    ap.add_argument("--smooth", type=int, default=51, help="moving average, log points")
+    ap.add_argument("--smooth", type=int, default=50,
+                    help="moving average width in LOG POINTS; x --log-interval "
+                         "gives the window in generations (50 x 10 = 500)")
     ap.add_argument("--out-dir", default=str(_HERE.parents[1] / "runs_purity"))
     ap.add_argument("--smoke", action="store_true", help="pop 60 / 400 gens")
     ap.add_argument("--plot-only", action="store_true", help="skip training, redraw")
@@ -202,11 +215,11 @@ def main():
         print(f"\n========== {label} ==========")
         if not cli.plot_only:
             train_arm(cli, args)
-        gens, mats = read_columns(cli.out_dir, args, cli.n_seeds, cli.seed, cols)
-        curves[label] = (colour, gens, mats)
+        gens, mats, ops = read_columns(cli.out_dir, args, cli.n_seeds, cli.seed, cols)
+        curves[label] = (colour, gens, mats, ops)
 
     print("\n================ SUMMARY (0/25/50/75/100% of the run) ================")
-    for label, (_, _, mats) in curves.items():
+    for label, (_, _, mats, _) in curves.items():
         for col in cols:
             mat = mats[col]
             if not len(mat):

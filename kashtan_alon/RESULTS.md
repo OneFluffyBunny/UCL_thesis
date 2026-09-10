@@ -19,6 +19,56 @@ search, only the goal schedule differs.
 > reproduction lacks entirely, on top of the mutation-symmetry argument already in
 > Run 6's write-up. Not yet added to the code or re-run.
 
+> 🐛 **REPORTING BUG found 2026-09-10 — every MVG "accuracy"/"best fit" number in
+> this file is invalid; the modularity numbers are NOT affected. Fixed in code the
+> same day; no re-training required.**
+>
+> **What was wrong.** `train.py` tracked `best_fit`/`best_op` as an all-time maximum
+> over the whole run, against *whichever goal was live in that generation*. Under MVG
+> the goal alternates AND↔OR, so this maximises across **two different tasks** and is
+> not an accuracy at all. Worse, it is systematically biased: OR is true on 192/256
+> patterns (75%) vs AND's 64/256, so OR is far easier to nearly-ace — and
+> `generations=25000 / switch_interval=20` = 1,250 blocks means the final block is
+> always odd-indexed = **OR**, for every seed. Result: **all 5 MVG runs report
+> `best_op=or`, none `and`** — MVG's headline accuracy was always measured on the easy
+> goal while FG's was always measured on the hard one. The "MVG 0.975 vs FG 0.904"
+> comparison was therefore meaningless as stated.
+>
+> **What is NOT affected.** `Q`, `Q_m`, `circuit_purity` and `left_right_q`/`r` are all
+> computed on `final_indiv` — the *final generation's* champion (`train.py`, the
+> `_save_best_npz(npz_path, final_indiv, cfg)` call), **not** the peak-fitness genome.
+> The per-generation CSVs are also correct: they log the true per-generation champion
+> against the live op (they sawtooth, with an `op` column). So every modularity table
+> in this file stands, as does `runs_purity/fg_vs_mvg_purity.png`.
+>
+> **The corrected accuracy result — the direction survives.** Re-derived from the
+> existing CSVs, per-goal, over the last 5,000 generations (no re-training):
+>
+> | arm | on AND | on OR |
+> |---|---:|---:|
+> | Run 5 FG, capped (5 seeds) | **0.904** | n/a |
+> | Run 5 MVG, capped (5 seeds) | **0.952** | 0.965 |
+> | Run 6 FG, no fan-in (5 seeds) | **0.970** | n/a |
+> | Run 6 MVG, no fan-in (5 seeds) | **0.998** | 0.996 |
+>
+> MVG beats FG *on AND, the matched task*, in both run sets, and is equally good on
+> OR — i.e. KA's
+> evolvability claim, correctly measured. Note a single saved MVG champion scores
+> ~0.50 on AND: that is not failure, it is an OR-phase snapshot, and the population
+> re-solves AND within a few generations of each switch.
+>
+> **The fix (2026-09-10).** `best_fit`/`best_op` renamed to `peak_fit_any_op`/`peak_op`
+> and documented as not-an-accuracy; `final_indiv` no longer initialised from the peak
+> genome; mid-run checkpoints now save the current champion so the npz means one thing
+> throughout; and **`result.json` now carries `acc_by_op`** — the saved champion scored
+> against *every* goal the run could face, which is the only FG-comparable figure and
+> makes this class of mistake impossible to repeat silently. Readers updated:
+> `run_paper.py`, `run_ablation_no_fanin.py`, `analysis/fg_mvg_purity.py`.
+> **No re-training needed** — the GA search is untouched, so every saved genome is
+> exactly what the fixed code produces; all corrections are re-analysis of existing
+> artifacts. Existing `result.json` files predate `acc_by_op` and still carry the old
+> `best_fit` key; recompute per-goal accuracy from the saved `_best.npz` instead.
+
 ---
 
 ## Run 7 — Run 6 ablation extended to 5 seeds/condition + purity/left_right_q scored on all 20 runs (2026-09-10, rough notes) → **direction survives at full power on all 4 metrics**
@@ -75,10 +125,14 @@ previous layer instead of being capped at 3 (hidden layers) / 2 (output).
 - **Where:** laptop (CPU) · 3 seeds/condition (fewer than Run 5's 5, for runtime —
   see caveat below).
 
-| condition | mean Q_m (no cap) | per seed | mean best fit | mean density | Run 5 (capped) Q_m | Run 5 density |
+| condition | mean Q_m (no cap) | per seed | acc AND / OR | mean density | Run 5 (capped) Q_m | Run 5 density |
 |---|---|---|---|---|---|---|
-| **MVG** | **0.119 ± 0.140** | 0.084, −0.000, 0.272 | 1.000 | 56.0% | 0.245 ± 0.049 | 33.4% |
-| **FG (L AND R)** | **−0.100 ± 0.113** | −0.197, −0.127, 0.025 | 0.975 | 66.7% | 0.025 ± 0.139 | 37.7% |
+| **MVG** | **0.119 ± 0.140** | 0.084, −0.000, 0.272 | 0.998 / 0.996 | 56.0% | 0.245 ± 0.049 | 33.4% |
+| **FG (L AND R)** | **−0.100 ± 0.113** | −0.197, −0.127, 0.025 | 0.970 / n.a. | 66.7% | 0.025 ± 0.139 | 37.7% |
+
+> Accuracy column **corrected 2026-09-10** (n=5 seeds; per-goal, last 5,000 gens —
+> see the reporting-bug note at the top). Replaces "mean best fit MVG 1.000 / FG
+> 0.975", where MVG's figure was a cross-goal maximum taken during an OR phase.
 
 - **Not significant at n=3:** Welch t = 2.11 (p ≈ 0.11), Mann–Whitney U = 8 (p ≈
   0.10). Underpowered — treat magnitudes as suggestive only.
@@ -92,8 +146,9 @@ previous layer instead of being capped at 3 (hidden layers) / 2 (output).
   to 100% the way `experiment_1`'s no-budget arms did (see note 3 below). ⚠️ See
   note 5 below — a chunk of this density jump is an init-seeding artifact, not
   purely evolution's doing.
-- **FG solves the task *better* without the cap** (mean best fit 0.975 vs Run 5's
-  0.904) while MVG stays saturated at 1.0 either way — unlimited fan-in gives FG
+- **FG solves the task *better* without the cap** (0.970 on AND vs Run 5's
+  0.904) while MVG stays near-saturated either way (0.998 on AND, 0.996 on OR,
+  vs Run 5's 0.952/0.965) — unlimited fan-in gives FG
   more raw capacity to just solve the task, which is the mechanism the
   hypothesis predicts, but it doesn't push FG's Q_m low enough to erase the gap.
 
@@ -168,10 +223,17 @@ been (they ran Clune's reimplementation; see Run 4 / [[reference_ka_retina_algo]
 - **Command:** `conda run -n lndp python run_paper.py --n-seeds 5 --viz --fresh`
 - **Where:** laptop (CPU, pure-numpy, 0 VRAM) · ~0.015–0.024 s/gen · full run ≈ 50 min.
 
-| condition | mean Q_m | per seed | mean best fit |
-|---|---|---|---|
-| **MVG** | **0.245 ± 0.049** | 0.186, 0.316, 0.266, 0.240, 0.217 | 0.975 |
-| **FG (L AND R)** | **0.025 ± 0.139** | −0.143, 0.228, −0.007, −0.036, 0.083 | 0.904 |
+| condition | mean Q_m | per seed | acc on AND | acc on OR |
+|---|---|---|---|---|
+| **MVG** | **0.245 ± 0.049** | 0.186, 0.316, 0.266, 0.240, 0.217 | **0.952** | 0.965 |
+| **FG (L AND R)** | **0.025 ± 0.139** | −0.143, 0.228, −0.007, −0.036, 0.083 | **0.904** | n/a |
+
+> Accuracy columns **corrected 2026-09-10** (see the reporting-bug note at the top).
+> They are the true per-generation champion fitness from the CSVs, split by the live
+> goal, averaged over the last 5,000 generations — so both arms are compared on the
+> *same* task. They replace a previously-tabled "mean best fit MVG 0.975 vs FG 0.904",
+> where MVG's figure was a cross-goal maximum recorded during an OR phase.
+> Re-derived from existing logs by `scratch_metrics_table.py`; no re-training.
 
 - **Separation +0.22, significant:** Welch t ≈ 3.3 (p ≈ 0.02); Mann–Whitney U = 2
   (p ≈ 0.03). The gap matches KA's own (0.35 − 0.15 = 0.20).

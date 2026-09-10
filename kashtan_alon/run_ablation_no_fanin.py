@@ -85,9 +85,10 @@ def main():
                 with open(result_path) as f:
                     r = json.load(f)
                 qm = r.get("q_m", r.get("q"))
-                print(f"[seed {seed}] already complete (best {r['best_fit']:.3f} | "
+                fit = r.get("final_fit", r.get("best_fit"))
+                print(f"[seed {seed}] already complete (final-gen fit {fit:.3f} | "
                       f"Q_m {qm:.3f}) -> skip")
-                results[name].append((seed, r["best_fit"], qm))
+                results[name].append((seed, fit, qm))
                 continue
             open_after = args.viz and (i == cli.n_seeds - 1)
             bf, qm = T.train_seed(cfg, X, X_bits, args, seed, open_after)

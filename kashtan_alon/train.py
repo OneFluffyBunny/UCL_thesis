@@ -105,6 +105,12 @@ def build_parser():
     p.add_argument("--qm-nrand", type=int, default=1000,
                    help="randomizations for the final normalized Q_m (KA used 1000)")
     p.add_argument("--log-interval", type=int, default=10, help="generations between log lines / CSV rows")
+    p.add_argument("--dense-log", default="",
+                   help="extra generation windows logged EVERY generation, "
+                        "'lo:hi,lo:hi'. --log-interval 10 vs a 20-generation goal "
+                        "switch gives only 2 points per phase, which cannot resolve "
+                        "the post-switch recovery curve; this can. Coarse rows are "
+                        "still emitted, so the CSV stays comparable to a normal run.")
     p.add_argument("--out-dir", default="./runs")
     p.add_argument("--viz", dest="viz", action="store_true", default=True,
                    help="render the best network, K-A-style, coloured by module [default: on]")
@@ -128,8 +134,8 @@ def run_name_for(args, seed):
     return f"{args.task}_{'mvg' if args.mvg else 'fg'}_{args.fitness}_seed{seed}"
 
 
-def _save_best_npz(path, best_indiv, cfg):
-    wm, bm = best_indiv
+def _save_best_npz(path, indiv, cfg):
+    wm, bm = indiv
     save = {f"w{l}": wm[l] for l in range(cfg.n_blocks)}
     save.update({f"b{l}": bm[l] for l in range(cfg.n_blocks)})
     np.savez(path, **save)
@@ -196,12 +202,29 @@ class BrainArchive:
         return gens, ws, bs
 
 
-def save_checkpoint(path, gen, rng, weights, biases, best_fit, best_indiv, best_op):
+def acc_by_op(indiv, cfg, X, X_bits, args, ops):
+    """Accuracy of ONE genome against EVERY goal the run could face.
+
+    The only fair way to report an MVG champion. An MVG champion is always a
+    single-phase snapshot (it is whatever the goal was in its own generation),
+    so a lone scalar invites exactly the mistake of comparing it against a
+    fixed-goal champion measured on a different goal."""
+    wm, bm = indiv
+    w = [np.asarray(m)[None, ...] for m in wm]
+    b = [np.asarray(v)[None, ...] for v in bm]
+    out = {}
+    for op in ops:
+        y = np.asarray(tasks.targets(args.task, op, X_bits))
+        out[op] = float(M.fitness(w, b, X, y, cfg, args.fitness)[0])
+    return out
+
+
+def save_checkpoint(path, gen, rng, weights, biases, peak_fit, peak_indiv, peak_op):
     """Atomically pickle full GA state so a run can resume exactly where it stopped."""
     obj = {"gen": gen, "rng_state": rng.bit_generator.state,
            "weights": weights, "biases": biases,
-           "best_fit": best_fit, "best_weights": best_indiv[0],
-           "best_biases": best_indiv[1], "best_op": best_op}
+           "peak_fit": peak_fit, "best_weights": peak_indiv[0],
+           "best_biases": peak_indiv[1], "peak_op": peak_op}
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
         pickle.dump(obj, f)
@@ -211,6 +234,10 @@ def save_checkpoint(path, gen, rng, weights, biases, best_fit, best_indiv, best_
 def train_seed(cfg, X, X_bits, args, seed, open_after=False):
     rng = np.random.default_rng(seed)
     mvg_ops = tuple(o.strip() for o in args.mvg_ops.split(","))
+    # Extra per-generation logging windows. Logging draws no randomness, so a run
+    # with --dense-log is the SAME run as one without: same seed -> same stream.
+    dense_windows = [tuple(int(v) for v in w.split(":"))
+                     for w in getattr(args, "dense_log", "").split(",") if w.strip()]
 
     def goal_op(gen):
         if not args.mvg:
@@ -233,16 +260,16 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
             c = pickle.load(f)
         rng.bit_generator.state = c["rng_state"]
         weights, biases = c["weights"], c["biases"]
-        start_gen, best_fit, best_op = c["gen"], c["best_fit"], c["best_op"]
-        best_indiv = (c["best_weights"], c["best_biases"])
+        start_gen, peak_fit, peak_op = c["gen"], c["peak_fit"], c["peak_op"]
+        peak_indiv = (c["best_weights"], c["best_biases"])
         csv_f = open(csv_path, "a", newline="")
         writer = csv.writer(csv_f)
         brains.trim_from(start_gen)   # a post-checkpoint tail would be re-recorded
         print(f"[seed {seed}] RESUME {mode} from gen {start_gen}/{args.generations} "
-              f"(best {best_fit:.3f}, {len(brains.gens)} brains kept)")
+              f"(peak {peak_fit:.3f}, {len(brains.gens)} brains kept)")
     else:
         weights, biases = M.init_population(rng, cfg, args.pop, args.init_density)
-        start_gen, best_fit, best_indiv, best_op = 0, -1.0, None, None
+        start_gen, peak_fit, peak_indiv, peak_op = 0, -1.0, None, None
         csv_f = open(csv_path, "w", newline="")
         writer = csv.writer(csv_f)
         writer.writerow(["gen", "op", "best_fit", "mean_fit", "Q", "purity",
@@ -255,10 +282,11 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
     cur_op, y = None, None
     stopped_gen = args.generations - 1
     # The network we report/save/visualise is the LAST generation's champion (the
-    # evolved topology), not `best_indiv` (the first net to hit peak fitness, which
-    # under a fixed goal freezes very early and is un-evolved). `best_*` is kept only
-    # to report peak performance ("did it ever solve the task?").
-    final_indiv, final_fit, final_op = best_indiv, best_fit, best_op
+    # evolved topology, always scored against the goal ACTIVE IN ITS OWN GENERATION).
+    # `peak_*` is a cross-generation maximum kept only to answer "did it ever solve
+    # the task?" -- under MVG it maximises over TWO DIFFERENT GOALS, so it is not an
+    # accuracy and must never be compared against a fixed-goal number.
+    final_indiv, final_fit, final_op = None, -1.0, None
     t0 = time.time()
     for gen in range(start_gen, args.generations):
         op = goal_op(gen)
@@ -268,15 +296,17 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
         fit = M.fitness(weights, biases, X, y, cfg, args.fitness)
         gi = int(fit.argmax())
         gen_best = float(fit[gi])
-        if gen_best > best_fit:
-            best_fit, best_op = gen_best, cur_op
-            best_indiv = M.individual(weights, biases, gi)
+        if gen_best > peak_fit:
+            peak_fit, peak_op = gen_best, cur_op
+            peak_indiv = M.individual(weights, biases, gi)
         # overwrite every gen -> after the loop this holds the last generation's champion
         final_indiv, final_fit, final_op = M.individual(weights, biases, gi), gen_best, cur_op
 
-        if gen % args.log_interval == 0 or gen == args.generations - 1:
+        coarse = gen % args.log_interval == 0 or gen == args.generations - 1
+        if coarse or any(lo <= gen <= hi for lo, hi in dense_windows):
             wm, bm = M.individual(weights, biases, gi)
-            brains.append(gen, wm, bm)      # the brain itself, not just its metrics
+            if coarse:
+                brains.append(gen, wm, bm)  # the brain itself, not just its metrics
             q, _ = newman_q(wm, cfg, weighted=args.weighted_q)
             pur = purity_of(wm, cfg)
             dens = density(wm, cfg)
@@ -289,8 +319,8 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
                   f" | Q: {q:.3f} | Purity: {pur:.3f} | Density: {dens:.1f}%{op_str}"
                   f" | {sps:.3f}s/gen")
 
-        if args.early_stop and (not args.mvg) and best_fit >= args.target:
-            print(f"  early stop: best {best_fit:.3f} >= target {args.target:.3f} at gen {gen}")
+        if args.early_stop and (not args.mvg) and peak_fit >= args.target:
+            print(f"  early stop: best {peak_fit:.3f} >= target {args.target:.3f} at gen {gen}")
             stopped_gen = gen
             break
 
@@ -300,39 +330,62 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
 
         # --- periodic checkpoint (full state) + best-so-far snapshot ---
         if args.checkpoint_interval and (gen + 1) % args.checkpoint_interval == 0 \
-                and best_indiv is not None:
-            save_checkpoint(ckpt_path, gen + 1, rng, weights, biases, best_fit, best_indiv, best_op)
-            _save_best_npz(npz_path, best_indiv, cfg)
+                and peak_indiv is not None:
+            save_checkpoint(ckpt_path, gen + 1, rng, weights, biases, peak_fit, peak_indiv, peak_op)
+            # save the CURRENT champion, so the npz means the same thing mid-run as
+            # it does at completion (the final generation's task-matched champion)
+            _save_best_npz(npz_path, final_indiv, cfg)
             brains.save()   # crash-safe: the trajectory survives an interrupted run
             print(f"  [checkpoint @ gen {gen + 1}] -> {os.path.basename(ckpt_path)} | "
-                  f"best {best_fit:.3f} -> {os.path.basename(npz_path)} | "
+                  f"peak {peak_fit:.3f} -> {os.path.basename(npz_path)} | "
                   f"{len(brains.gens)} brains -> {os.path.basename(brains_path)}")
 
     csv_f.close()
     brains.save()
+    if final_indiv is None:
+        # resumed at/after the generation cap, so the loop never ran: score the
+        # restored population once under the final goal to get its champion.
+        # (Never fall back to `peak_indiv` -- under MVG that is a cross-goal max.)
+        final_op = goal_op(args.generations - 1)
+        y = np.asarray(tasks.targets(args.task, final_op, X_bits))
+        fit = M.fitness(weights, biases, X, y, cfg, args.fitness)
+        gi = int(fit.argmax())
+        final_indiv, final_fit = M.individual(weights, biases, gi), float(fit[gi])
     # Modularity is reported for the FINAL generation's champion (evolved topology).
     # Headline metric is KA's NORMALIZED Q_m (raw Newman Q is density-confounded and
     # only kept for the live per-gen trace); q is reported alongside for continuity.
     wm, _ = final_indiv
     q, comm = newman_q(wm, cfg, weighted=args.weighted_q)
     q_m, qm_parts = normalized_qm(wm, cfg, n_rand=args.qm_nrand, seed=seed)
+    # The saved champion scored against EVERY goal, not just the one live in its own
+    # generation. Under MVG the final generation is always mid-epoch on one goal, so
+    # `final_fit` alone is a single-goal number and is NOT comparable to an FG run's.
+    run_ops = mvg_ops if args.mvg else (args.operation,)
+    accs = acc_by_op(final_indiv, cfg, X, X_bits, args, run_ops)
+    acc_str = "  ".join(f"{o}={v:.3f}" for o, v in accs.items())
     print(f"[seed {seed}] final-gen fit {final_fit:.3f} (op={final_op}) | "
+          f"champion by goal: {acc_str} | "
           f"Q_m {q_m:.3f} (q_real {qm_parts['q_real']:.3f}, q_rand {qm_parts['q_rand']:.3f}, "
           f"q_max {qm_parts['q_max']:.3f}) | raw Q {q:.3f} | "
           f"density {density(wm, cfg):.1f}% | edges {n_edges(wm)} | modules {len(comm)} "
-          f"| peak fit {best_fit:.3f} (op={best_op})")
+          f"| peak-any-op {peak_fit:.3f} (op={peak_op})")
 
     _save_best_npz(npz_path, final_indiv, cfg)
     print(f"[seed {seed}] final network -> {npz_path}")
 
     # completion marker: lets a rerun (and run_paper.py) skip finished seeds.
-    # `best_fit`/`best_op` = peak performance; `q` is now the FINAL-gen net's modularity.
+    # `acc_by_op` is the headline accuracy -- the saved champion on every goal, the
+    # only figure comparable across FG and MVG. `final_fit`/`final_op` = that same
+    # champion on the goal live in its own generation. `peak_fit_any_op` maximises
+    # across goals under MVG and is NOT an accuracy -- never compare it to an FG run.
+    # `q`/`q_m` describe the FINAL-gen champion's topology.
     with open(result_path, "w") as f:
         json.dump({"run_name": run_name, "mode": mode, "seed": seed,
                    "q_m": q_m, "q_real": qm_parts["q_real"], "q_rand": qm_parts["q_rand"],
                    "q_max": qm_parts["q_max"], "q": q,
+                   "acc_by_op": accs,
                    "final_fit": final_fit, "final_op": final_op,
-                   "best_fit": best_fit, "best_op": best_op,
+                   "peak_fit_any_op": peak_fit, "peak_op": peak_op,
                    "density": density(wm, cfg), "edges": n_edges(wm),
                    "modules": len(comm), "gen_reached": stopped_gen}, f, indent=2)
     if os.path.exists(ckpt_path):
@@ -345,7 +398,7 @@ def train_seed(cfg, X, X_bits, args, seed, open_after=False):
         visualize.visualize_net(final_indiv, cfg, png,
                                 title=f"{mode} seed{seed} - final fit {final_fit:.3f}",
                                 weighted_q=args.weighted_q, open_after=open_after, q_m=q_m)
-    return best_fit, q_m
+    return final_fit, q_m
 
 
 def main():
@@ -367,8 +420,9 @@ def main():
             with open(result_path) as f:
                 r = json.load(f)
             qm = r.get("q_m", r.get("q"))
-            print(f"[seed {seed}] already complete (best {r['best_fit']:.3f} | Q_m {qm:.3f}) -> skip")
-            results.append((seed, r["best_fit"], qm))
+            fit = r.get("final_fit", r.get("best_fit"))
+            print(f"[seed {seed}] already complete (final-gen fit {fit:.3f} | Q_m {qm:.3f}) -> skip")
+            results.append((seed, fit, qm))
             continue
         open_after = args.viz and args.open_img and (i == args.n_seeds - 1)
         results.append((seed, *train_seed(cfg, X, X_bits, args, seed, open_after)))

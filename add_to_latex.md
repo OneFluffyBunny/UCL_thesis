@@ -899,7 +899,9 @@ it." That's a real complication for the strong form of the hypothesis stated
 above: in this specific model, goal-switching itself appears to be doing most
 of the work of separating MVG from FG, independent of whether wiring is scarce.
 The scarcity story still explains why FG solves the task *better* without the
-cap (mean best fit 0.975 vs. 0.904 — more raw capacity means FG no longer
+cap (0.970 vs. 0.904 accuracy on AND, both arms measured on the same goal —
+corrected 2026-09-10, see the bug note in the Kashtan-Alon section below;
+more raw capacity means FG no longer
 needs to economize), but not why MVG stays ahead of FG regardless. Caveat:
 n=3/condition, not statistically significant (Welch p ≈ 0.11) — a 5+-seed
 rerun matching Run 5 is the next step before trusting the magnitude of either
@@ -923,6 +925,328 @@ overturn the Q_m/gap finding, but it does mean the density comparison,
 and the "wiring is no longer scarce" framing built on it, needs a rerun with
 a matched starting density before it can be trusted. See Run 6, note 5 in
 `kashtan_alon/RESULTS.md` for the full trajectory data.
+
+---
+
+## Kashtan-Alon reproduction (`kashtan_alon/`) — task, fitness, exact commands, and deviations from the paper
+
+> 🐛 **Reporting bug found 2026-09-10 — do not quote any MVG accuracy number from
+> an older draft of this section. Modularity numbers are unaffected. Fixed in code
+> the same day; no re-training needed.**
+>
+> `train.py` reported `best_fit` as an all-time maximum across the run, scored
+> against *whichever goal was live that generation*. Under MVG the goal alternates
+> AND↔OR every 20 generations, so that scalar maximises over **two different
+> tasks** — it is not an accuracy. It is also systematically biased toward OR (true
+> on 192/256 patterns vs AND's 64/256, hence far easier to nearly-ace) and, because
+> `25000/20 = 1250` blocks makes the final block always odd-indexed, every MVG seed
+> ends mid-OR: **all 5 MVG runs recorded `best_op=or`, none `and`.** So the
+> previously-drafted "MVG 0.975 vs FG 0.904" compared MVG-on-the-easy-goal against
+> FG-on-the-hard-goal.
+>
+> **Unaffected:** `Q`, `Q_m`, `circuit_purity`, `left_right_q`/`r` — all computed on
+> the *final generation's* champion, not the peak-fitness genome — and the
+> per-generation CSVs, which log the true per-generation champion with an `op`
+> column. The `r`/purity tables below and `runs_purity/fg_vs_mvg_purity.png` stand.
+>
+> **Corrected accuracy (re-derived from existing logs, per goal, last 5,000
+> generations, `scratch_metrics_table.py`; no re-training):**
+>
+> | arm | acc on AND | acc on OR |
+> |---|---:|---:|
+> | Run 5 FG, capped fan-in | **0.904** | n/a |
+> | Run 5 MVG, capped fan-in | **0.952** | 0.965 |
+> | Run 6 FG, no fan-in | **0.970** | n/a |
+> | Run 6 MVG, no fan-in | **0.998** | 0.996 |
+>
+> The MVG>FG direction survives in both run sets when measured on the matched task —
+> this is KA's evolvability claim, not a new one. A single saved MVG champion scores
+> ~0.50 on AND; that is an OR-phase snapshot, not a failure, since the population
+> re-solves AND within a few generations of each switch.
+>
+> **Fix:** `best_fit`→`peak_fit_any_op` (documented as not-an-accuracy), and
+> `result.json` now records `acc_by_op` — the saved champion against *every* goal,
+> the only FG-comparable figure. See `kashtan_alon/RESULTS.md` for the full note.
+
+Detail for the "our own experiments" part of the Kashtan-Alon writeup — the raw
+reproduction (`kashtan_alon/`), distinct from the NDP port covered above. Covers
+all 20 saved runs: `runs/` (paper-spec fan-in, 5 FG + 5 MVG) and
+`runs_no_fanin/` (fan-in-cap-removed ablation, 5 FG + 5 MVG).
+
+**Exact commands run.**
+- Initial 10 (paper-spec fan-in), 2026-08-03:
+  `conda run -n lndp python run_paper.py --n-seeds 5 --viz --fresh`
+- Ablation 10 (fan-in cap removed): `conda run -n lndp python run_ablation_no_fanin.py --n-seeds 5`.
+  Originally run 2026-08-20 at `--n-seeds 3`, extended to 5 on 2026-09-10 by
+  re-running the same command (resume logic skipped the 3 already-complete
+  seeds/condition and trained only the 2 missing ones). Every GA parameter is
+  identical to `run_paper.py`'s — the only code difference is
+  `NetConfig(fan_in=())` in place of the default `(3,3,3,2)`, plus a separate
+  `--out-dir ./runs_no_fanin`. Verified by diffing the two scripts directly,
+  not just their docstrings.
+
+**Genome representation and how it's evolved (`model.py`, `ga.py`).** The
+paper's genome is *"a fixed size of 15 genes each encoding a neuron"* — one
+gene per non-retina neuron (8+4+2+1 = 15 neurons; the 8 retina pixels are
+inputs, not genome). Our genome is the same unit of heredity in a different
+storage layout: instead of an explicit gene list, each neuron's gene is *its
+column of incoming weights plus its own threshold*, stored as one slice of a
+per-block weight tensor (`weights[l]`, shape `(pop, layer_l, layer_{l+1})`,
+`int8 ∈ {−1,0,+1}`, `0` = no edge) and one slice of a per-block bias vector
+(`biases[l]`, shape `(pop, layer_{l+1})`, `int8` = `−threshold`). Both are
+vectorised across the whole population on axis 0 (no per-individual Python
+loop during the forward pass). Weight *magnitude* is fixed at 1 (KA: *"each
+connection had weight −1 or 1"*), so there is no "weight mutation" in the
+gradient-descent sense — only sign flips and edge add/remove.
+
+- **Initialization.** Every destination neuron starts with `k = round(0.5 ×
+  cap)` incoming edges (its fan-in cap, or the full previous layer if
+  unconstrained), each drawn to a random source with a random `±1` weight;
+  all thresholds start at 0. `init_density=0.5` is our own choice — not
+  paper-stated.
+- **Elitism.** The top `L=150` of `S=600` genomes (by raw fitness) are copied
+  to the next generation **unchanged**. `S`, `L` are paper-verified for the
+  *circuit* experiment (main text); reused here for the neural-net experiment
+  by analogy, since the paper doesn't restate them there (flagged deviation).
+- **Crossover (`Pc=0.5` per offspring).** Two parents are drawn from the
+  elite pool. With probability `Pc` the offspring is built by, **for every
+  destination neuron independently**, inheriting that neuron's *entire gene*
+  (its full incoming-weight column **and** its threshold, together) from one
+  parent or the other, chosen with 50/50 odds per neuron. This is exactly the
+  paper's *"neuron-level"* recombination — crossover swaps whole genes, never
+  splits a single neuron's incoming connections across both parents. An
+  offspring that skips crossover just clones parent A outright.
+- **Mutation (`Pm=0.5` per genome).** A genome selected for mutation gets
+  **exactly one** random edit, drawn uniformly from four operators: add one
+  edge (into a destination neuron under its fan-in cap, random source, random
+  `±1` weight), remove one existing edge, flip one existing edge's sign
+  (`+1↔−1`, magnitude never changes), or nudge one neuron's threshold by `±1`
+  (clamped to `[−3,+3]`). `Pm`, the elite strategy, and `±1` weights are
+  paper-verified; **the specific 4-operator mutation set and the `[−3,+3]`
+  threshold range are our own reconstruction** — the paper's Supporting
+  Information (where these would be specified) is not available to us (see
+  `PAPER_SPEC.md`). `[−3,+3]` is chosen as the full non-trivial range: with
+  `{0,1}` activations, `±1` weights and fan-in ≤3, the raw weighted sum lies
+  in `[−3,3]`, so a threshold outside that band would just pin the neuron
+  permanently on or off.
+
+**GA hyperparameters (`run_paper.py`'s "paper-locked" preset, identical for
+every one of the 20 runs — only `fan_in` and the FG/MVG combiner differ):**
+
+| parameter | value | note |
+|---|---|---|
+| population size | 600 | matches paper exactly |
+| generations | 25,000 | matches paper exactly |
+| architecture | retina(8)→8→4→2→1, weights ∈ {−1,+1}, threshold units | matches paper exactly |
+| fan-in cap | (3,3,3,2) — capped runs; unbounded — ablation | capped matches paper; ablation is our own test |
+| initial edge density | 0.5 (fraction of the fan-in cap, per node) | our choice — not stated in paper |
+| elite count | 150 of 600 | reconstruction by analogy — **not** paper-stated for the neural-net experiment (deviation 4 below) |
+| crossover probability `Pc` | 0.5 | reconstruction — Supporting Info unavailable (deviation 5) |
+| mutation probability `Pm` | 0.5 | reconstruction — Supporting Info unavailable (deviation 5) |
+| fitness measure | raw fraction-correct over all 256 patterns | KA's own measure; see deviation 1 below (paper samples 100 patterns/gen, we use all 256 every gen) |
+| MVG goal-switch interval `E` | 20 generations | matches paper exactly |
+| `Q_m` randomizations | 1,000 | matches paper exactly (`--qm-nrand`) |
+| `Q_m` estimation method | degree-preserving hill-climb, 6 restarts × 250 steps | **not** the paper's method (deviation 2 below: paper re-evolves 100 populations toward Q) |
+| per-generation log interval | every 10 generations | our own choice, for the CSV trajectory |
+| seeds per condition | 5 (both the capped runs and the ablation) | |
+
+**The task (identical for all 20 runs; only the top-level combiner differs by
+condition).** Architecture: retina(8) → 8 → 4 → 2 → 1, hard-threshold neurons,
+weights ∈ {−1,+1}, fan-in ≤3/≤3/≤3/≤2 (capped runs) or unbounded (ablation).
+Evaluated **exhaustively over all 2⁸ = 256 input patterns** (not a sample).
+Pixels 0-3 are the left 2×2 retina block (0,1 = outer/left column; 2,3 = inner
+column), pixels 4-7 the right block (mirrored: 6,7 = outer/right column; 4,5 =
+inner column).
+
+```
+LEFT(x)  = 1  iff  (x0+x1+x2+x3 ≥ 3)  OR  (x2=0 AND x3=0 AND x0+x1 ≥ 1)
+RIGHT(x) = 1  iff  (x4+x5+x6+x7 ≥ 3)  OR  (x4=0 AND x5=0 AND x6+x7 ≥ 1)
+```
+(the right rule mirrors the left rule over its own outer column x6,x7 and
+inner column x4,x5). Each half-rule is true for exactly 8 of 16 half-patterns.
+
+- **FG**: `y = LEFT(x) AND RIGHT(x)`, fixed for all 25,000 generations
+  (true for 64/256 patterns — 25%).
+- **MVG**: alternates every 20 generations — `y = LEFT AND RIGHT` for 20 gens,
+  then `y = LEFT OR RIGHT` for 20 gens, repeating (OR true for 192/256 — 75%).
+
+**Fitness: raw fraction-correct, not balanced accuracy.** `model.py`'s
+`raw_accuracy` = `(pred == y).mean()` over all 256 patterns, no class
+weighting — this is Kashtan-Alon's own measure, locked into `run_paper.py`'s
+preset (`fitness="raw"`) and confirmed by every result filename
+(`retina_fg_raw_seed*`, `retina_mvg_raw_seed*`). **Not shortcut-safe**: since
+AND is only true 25% of the time, "always predict 0" already scores 0.75 for
+free — a known trap (see the CLAUDE.md shortcut warning). `train.py` also
+implements `--fitness balanced` (chance = 0.5 regardless of class imbalance,
+the thesis's own shortcut-aware convention used elsewhere) but it was **never
+invoked** for any of these 20 runs — `raw` only, matching the paper.
+
+**Where our implementation differs from the paper (applies to all 20 runs,
+not only the ablation):**
+
+1. **Fitness evaluation set.** Paper: *"The environment contained 100
+   different randomly chosen retina patterns"* — fitness is fraction-correct
+   over a 100-pattern sample, redrawn (or not — unstated) each generation.
+   Ours: exhaustive over all 256 patterns, every generation. Removes the
+   paper's sampling noise entirely; an easier optimisation problem than the
+   one KA actually ran.
+2. **Q_max estimator.** Paper: Q_max is obtained by **re-evolving** the
+   population with Q itself as the fitness, then averaging the best network's
+   Q over 100 such simulations. Ours (`modularity.py:normalized_qm`): a
+   **degree-preserving hill-climb** (6 restarts × 250 steps) directly on the
+   already-evolved network — a cheap proxy for the paper's method, not a
+   reproduction of it, and a likely direct contributor to the absolute-Q_m
+   gap below (a hill-climb from a real network is not guaranteed to reach the
+   same optimum as 100 independent re-evolutions toward Q).
+3. **Missing neuron-count penalty.** Paper: *"A penalty of 0.01 was applied
+   for every additional neuron above ... 13 neurons"* (applies to both MVG
+   and FG). Absent from `model.py`'s `fitness()`, which is pure accuracy with
+   no complexity term. Confirmed fidelity gap (see `kashtan_alon/PAPER_SPEC.md`
+   §5), present in every run.
+4. **Elite count L = 150/600.** Not stated in the paper's main text for the
+   neural-network experiment (only the separate circuit experiment states
+   300/1000); ours is a reconstruction by analogy.
+5. **Mutation operator set, crossover mechanism, and threshold/bias range.**
+   None of these appear in the paper's main text — they live in the
+   Supporting Information, which is not available to us (see
+   `kashtan_alon/PAPER_SPEC.md`). `ga.py`'s implementations are documented
+   reconstructions, not verified against the source.
+
+**Q_m: paper vs. ours.**
+
+| | Q_rand: n randomizations | Q_max method | n seeds | Q_m |
+|---|---|---|---|---|
+| Paper, MVG | 1,000 | re-evolution, avg of 100 sims | not stated | **0.35 ± 0.02** |
+| Paper, FG | 1,000 | same | not stated | **0.15 ± 0.02** |
+| Ours, MVG (`runs/`) | 1,000 | degree-preserving hill-climb | 5 | **0.245 ± 0.049** |
+| Ours, FG (`runs/`) | 1,000 | degree-preserving hill-climb | 5 | **0.025 ± 0.139** |
+
+`--qm-nrand` (1,000) matches the paper exactly. Direction and significance
+reproduce (Welch t≈3.34, p≈0.02; Mann-Whitney p≈0.03; gap ≈0.22 vs. paper's
+0.20), but absolute magnitude sits below the paper on both arms — consistent
+with deviations 1-3 above all pushing the same way (easier fitness signal,
+different Q_max method, no complexity penalty). FG's variance is also much
+higher than the paper's ±0.02 (one FG seed, 0.228, is as modular as MVG).
+
+**`left_right_q`'s `r` (planted left/right partition, no KA-paper equivalent —
+scored 2026-09-10, `scratch_metrics_table.py`/`RESULTS.md` Run 7, `n_rand=200`,
+analysis-only on the saved final genomes, no re-evolution):**
+
+| run | condition | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 | mean |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Run 5 (capped fan-in) | FG | 0.064 | 0.777 | 0.674 | 0.645 | 0.570 | **0.546** |
+| Run 5 (capped fan-in) | MVG | 0.765 | 1.000 | 0.815 | 1.000 | 1.000 | **0.916** |
+| Run 6 (no fan-in, n=5) | FG | 0.516 | 1.000 | −0.119 | 1.000 | 0.287 | **0.537** |
+| Run 6 (no fan-in, n=5) | MVG | 0.743 | 0.695 | 1.000 | 1.000 | 0.394 | **0.766** |
+
+Direction (MVG > FG) survives on `r`, capped and uncapped, the same as it does
+on `Q_m` (Run 7 above) and on `circuit_purity` (table below) — all four
+metrics agree on direction even though they disagree on absolute scale and,
+in the no-budget `experiment_1` side-study above, occasionally on
+significance. `r` has no direct paper equivalent to compare magnitude
+against — KA never computed a planted-bipartition score, only Newman `Q_m`
+with a greedy-detected partition.
+
+**`circuit_purity` (same runs, same table source), for completeness:**
+
+| run | condition | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 | mean |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Run 5 (capped fan-in) | FG | 0.344 | 0.656 | 0.571 | 0.635 | 0.598 | **0.561** |
+| Run 5 (capped fan-in) | MVG | 0.857 | 1.000 | 0.833 | 1.000 | 0.952 | **0.929** |
+
+Two of the five Run 5 MVG seeds (1 and 3) score **exactly 1.000** — verified
+node-by-node (`scratch_purity_audit.py`) to be a genuine complete left/right
+split (every hidden neuron's live parents, including 2- and 3-way
+convergences, trace back to only one retina side), not a degenerate/trivial
+score from single-input pass-through wiring. This is a literal instantiation
+of the paper's own qualitative Fig. 5e description — *"Two distinct
+(nonidentical) modules evolved spontaneously in the network, each monitoring
+a different side of the retina"* — but `circuit_purity` itself is a metric
+built for this project's exp_4 Boolean-circuit work and applied here as a
+diagnostic; KA never computed it, so there is no paper number to compare
+the magnitude against, only the qualitative match.
+
+**Per-generation progress is logged, not just the final state.** Every run
+writes `<run_name>_log.csv`, sampled every 10 generations
+(`gen,op,best_fit,mean_fit,Q,density,edges`; 2502 rows, gen 0→24990) — so raw
+Newman **Q** (not Q_m, which is only computed once, at the end) has a full
+trajectory for every one of the 20 runs, in both `runs/` and
+`runs_no_fanin/`. **Purity per-generation** only exists for the separate
+`runs_purity/` archive (`analysis/fg_mvg_purity.py`, its CSVs add a `purity`
+column) — a deterministic duplicate of Run 5's 10 genomes, built specifically
+to add live purity/accuracy/champion-brain logging on top of the paper
+preset. No equivalent per-generation archive exists for the ablation runs.
+Already plotted: `runs_purity/fg_vs_mvg_purity.png` — champion-brain circuit
+purity (left panel) beside champion-brain accuracy (right panel), mean ± 1 SD
+across 5 seeds/arm, generation 0→25,000, MVG vs FG overlaid on both panels
+(figure-ready for the thesis appendix as-is).
+`left_right_q` has never been logged per-generation anywhere — only computed
+post-hoc on saved final genomes (`kashtan_alon/scratch_lr_table.py`,
+`scratch_metrics_table.py`).
+
+### `left_right_q`'s own chain of numbers (`qmetrics/metrics.py:596-700`)
+
+It is not one number — every call produces this whole sequence, in the order
+computed:
+
+| step | quantity | formula / how it's obtained | what it tells you |
+|---|---|---|---|
+| 1 | `q` | plain Newman Q, evaluated **at the fixed left/right partition** you hand it (no search) | raw fraction-internal-edges minus expected — exact, no simulation |
+| 2 | `r` | `q / ceiling`, `ceiling = 1 − Σaᵢ²` (`aᵢ` = fraction of total degree in group *i*) | rescales `q` by the best it could **structurally** ever be if every edge were internal, given these group sizes — deterministic, no null needed. 1 = perfectly split, 0 = chance, <0 = anti-associated |
+| 3 | `crosstalk` | `(actual cross-group edge fraction) / ceiling` | same information as `r` in a different dress — `ceiling` is also the *expected* cross-edge fraction under the null, so this reads as "how much crosstalk relative to chance." **Identity: `r = 1 − crosstalk`** (checked by the test suite) |
+| 4 | `q_rand` | mean `q` over 200 degree-preserving rewirings, scored **at the same fixed partition** (not re-detected) | Monte Carlo null — KA's own "control 1," done at a planted rather than searched partition |
+| 5 | `q_max` | `q` of a rewiring that greedily maximizes within-group edges, floored at `≥ q` | the **achievable** ceiling given the real degree sequence/edge mask — tighter than step 2's `ceiling`, which assumes every edge *could* be internal even when the topology can't reach that |
+| 6 | `score` (the function's actual return value) | `(q − q_rand) / (q_max − q_rand)` | a Kashtan-Alon-style **normalized** modularity, evaluated at the planted partition instead of a searched one — distinct from `r`, don't conflate the two |
+| 7 | `z`, `p` | `z = (q − q_rand)/sd(nulls)`; `p` = fraction of null samples `≥ q` | significance only — is `q` distinguishable from the null *distribution*? Biased by graph size (bigger `m` → smaller null SD → bigger `z` for the same effect) — never use for cross-network magnitude comparisons, only within one network |
+
+*⭐ `r` (equivalently `crosstalk`) is probably the easiest of these to actually
+use: it's a closed-form ratio with no Monte-Carlo noise, needs no
+random-seed-dependent null, and has a clean plain-English reading ("X% fewer
+left-right crossings than chance"). `score` is the one to reach for when a
+KA-comparable normalized number is wanted instead (built the same way as
+`Q_m`), but it inherits sampling noise from `q_rand`/`q_max` that `r` doesn't
+have. `z`/`p` answer a different question (significance, not magnitude) and
+should not be reported as if they were effect sizes.*
+
+### Does any of this actually respect the network's real structure?
+
+Checked directly in the code, per metric — the answer is not the same for
+all four:
+
+- **Raw Newman `Q`** (`modularity.py:newman_q`): no null model at all, so the
+  question doesn't apply — it only ever measures the real evolved graph.
+- **`Q_m`, the version actually used everywhere in `RESULTS.md`/`result.json`/
+  the picture above** (`kashtan_alon/modularity.py:normalized_qm`, imported by
+  `train.py`): its null (`_degree_preserving_random`) calls plain
+  `nx.double_edge_swap` with **no mask at all** — it does not know layers are
+  adjacent-only, let alone that fan-in is capped at 3/3/3/2. This is the exact
+  gap the "Constraints on the null model" section above already measured
+  (54.9% of unconstrained-null edges illegal on this architecture) — but that
+  fix lives only in `qmetrics`'s own `normalized_qm`/`_q_max_planted`, used
+  for a one-off correctness check, and was **never ported into
+  `kashtan_alon/modularity.py`**. So **every officially reported Q_m number
+  for all 20 runs — Run 5 through 7, and the brain-grid figure's subtitles —
+  is computed against a structurally-invalid null**, and per that section's
+  own finding this makes them **understate** true modularity (the corrected
+  numbers came out higher, several roughly doubled).
+- **`left_right_q`**: its null (`_rewire`/`_lr_null`) *does* honour
+  `G.graph['allowed']` — but only because `qm.from_blocks(..., constrain=True)`
+  (the default, used by every `left_right_q` call in this repo) auto-attaches
+  a `layered_mask` (adjacent-layers-only). So `q_rand`/`q_max`/`score`/`z`/`p`
+  correctly refuse to invent retina-to-retina or layer-skipping edges. It
+  still does **not** know about the fan-in cap (≤3/≤3/≤3/≤2) — that's a
+  per-node degree limit, not a pairwise mask, and per-node counters in the
+  rewirer are "not yet implemented" anywhere in this codebase (same caveat as
+  `Q_m`). `r`/`crosstalk` are unaffected either way — they use no null at all.
+- **`circuit_purity`**: no null model, no random comparison network, so the
+  layer/fan-in question doesn't arise — it's one deterministic pass over the
+  *actual* DAG's real parent edges. It **deliberately** excludes the pinned
+  inputs and the program output from the averaged score (`drop = exclude |
+  pinned` in the code) — not an oversight: inputs are trivially "pure" by
+  definition (they *are* the label), and a single output node must see both
+  halves by construction, so scoring it would charge a fixed penalty
+  unrelated to modularity, exactly mirroring `left_right_q`'s own `exclude`
+  argument for the same reason.
 
 ---
 

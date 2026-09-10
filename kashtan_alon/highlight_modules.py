@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import matplotlib
 matplotlib.use("Agg")
@@ -29,6 +30,9 @@ import numpy as np
 
 from model import NetConfig
 from modularity import newman_q
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import qmetrics as qm
 
 RUNS = os.path.join(os.path.dirname(__file__), "runs")
 MODULE_PALETTE = ["#3498DB", "#E67E22", "#9B59B6", "#1ABC9C", "#F1C40F",
@@ -181,6 +185,91 @@ def draw_net_lineage(ax, weight_mats, cfg, res, title, subtitle=None):
     ax.set_title(f"{title}\n{subtitle}", fontsize=9)
     ax.set_xlim(-4.2, 4.2)
     ax.set_ylim(-0.7, cfg.n_blocks + 0.4)
+    ax.axis("off")
+
+
+# ---------------------------------------------------------------------------
+# Purity-flow view: colour every node by qmetrics.circuit_purity's own backward
+# random-walk value (retina left pixels = 0/blue, right pixels = 1/red; every
+# other node is the mean of its parents' values), and lay out each layer in
+# ascending order of that same value so the blue->red sweep reads as a sweep.
+# ---------------------------------------------------------------------------
+def purity_and_flow(weight_mats, cfg):
+    """circuit_purity's score plus its full per-node `flow` (backward-random-walk
+    landing probability on the RIGHT side, 0..1). A node missing from `flow` is
+    an orphan (no live input) -- draw it dead/grey, not on the blue-red scale.
+    """
+    blocks = [np.asarray(w, dtype=float) for w in weight_mats]
+    G = qm.from_blocks(blocks, offsets=cfg.offsets, directed=True)
+    if G.number_of_edges() == 0:
+        return float("nan"), {}
+    n_in = cfg.layers[0]
+    pinned = {i: (0 if i < n_in // 2 else 1) for i in range(n_in)}
+    purity, info = qm.circuit_purity(G, pinned, exclude=[cfg.offsets[-1]])
+    return purity, info["flow"]
+
+
+def _positions_by_value(cfg, flow):
+    """Like `_positions`, but within each layer nodes are placed in ascending
+    order of their purity-flow value instead of raw index -- blue (0) on one
+    side, red (1) on the other. A node with no flow value (dead) sorts as 0.5
+    (the middle). The input layer's own values are already monotonic in index
+    (0,0,0,0,1,1,1,1), so this naturally reproduces the plain 0..7 order there.
+    """
+    pos = {}
+    off = cfg.offsets
+    for l, n in enumerate(cfg.layers):
+        nodes = [off[l] + i for i in range(n)]
+        ordered = sorted(nodes, key=lambda node: (flow.get(node, 0.5), node))
+        for slot, node in enumerate(ordered):
+            x = slot - (n - 1) / 2.0
+            if l == 0 and n == 8:
+                x += -INPUT_SPLIT_GAP / 2 if slot < 4 else INPUT_SPLIT_GAP / 2
+            pos[node] = (x, float(l))
+    return pos
+
+
+def draw_net_purity(ax, weight_mats, cfg, result, title, subtitle=None,
+                     show_values=False, node_scale=1.0):
+    """Node colour = purity flow (blue=0 left-only .. red=1 right-only, via
+    `matplotlib`'s diverging `bwr` colormap); node order within each layer
+    follows that same value. `show_values` prints the numeric flow value inside
+    every node marker (default False -- off by default, pass True to check it).
+    `node_scale` multiplies the marker area, for figures printed small.
+    """
+    purity, flow = purity_and_flow(weight_mats, cfg)
+    off, pos = cfg.offsets, _positions_by_value(cfg, flow)
+    cmap = plt.cm.bwr
+
+    for l, W in enumerate(weight_mats):
+        W = np.asarray(W)
+        for i, j in zip(*np.nonzero(W)):
+            s, d = off[l] + i, off[l + 1] + j
+            x0, y0 = pos[s]; x1, y1 = pos[d]
+            ax.plot([x0, x1], [y0, y1], color="#999999", lw=1.0, alpha=0.4, zorder=1)
+
+    for l, n in enumerate(cfg.layers):
+        marker = "s" if l == 0 else "o"
+        for i in range(n):
+            node = off[l] + i
+            x, y = pos[node]
+            v = flow.get(node)
+            color = DEAD_COL if v is None else cmap(v)
+            ax.scatter([x], [y], s=(150 if l == 0 else 170) * node_scale,
+                       marker=marker, zorder=3,
+                       edgecolors="black", linewidths=0.6, color=color)
+            if show_values:
+                label = "-" if v is None else f"{v:.2f}"
+                ax.text(x, y, label, ha="center", va="center", fontsize=6, zorder=5)
+
+    if subtitle is None:
+        subtitle = (f"Q_m={result.get('q_m', float('nan')):+.3f}  |  "
+                    f"circuit purity={purity:.3f}")
+    ax.set_title(f"{title}\n{subtitle}", fontsize=9)
+    # the outermost retina pixels sit at +-4.1, so the margin has to clear a node
+    # RADIUS too -- at node_scale > 1 a tighter limit slices the end pixels in half
+    ax.set_xlim(-4.7, 4.7)
+    ax.set_ylim(-0.8, cfg.n_blocks + 0.4)
     ax.axis("off")
 
 

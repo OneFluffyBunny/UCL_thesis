@@ -104,9 +104,10 @@ def main():
                 with open(result_path) as f:
                     r = json.load(f)
                 qm = r.get("q_m", r.get("q"))
-                print(f"[seed {seed}] already complete (best {r['best_fit']:.3f} | "
+                fit = r.get("final_fit", r.get("best_fit"))
+                print(f"[seed {seed}] already complete (final-gen fit {fit:.3f} | "
                       f"Q_m {qm:.3f}) -> skip")
-                results[name].append((seed, r["best_fit"], qm))
+                results[name].append((seed, fit, qm))
                 continue
             open_after = args.viz and (i == cli.n_seeds - 1)   # open each condition's final brain
             bf, qm = T.train_seed(cfg, X, X_bits, args, seed, open_after)
@@ -116,7 +117,7 @@ def main():
     for name in conditions:
         qs = [r[2] for r in results[name]]
         fs = [r[1] for r in results[name]]
-        print(f"  {name:12s} | mean Q_m {np.mean(qs):.3f} | mean best fit {np.mean(fs):.3f} "
+        print(f"  {name:12s} | mean Q_m {np.mean(qs):.3f} | mean final-gen fit {np.mean(fs):.3f} "
               f"| Q_m per seed {[f'{q:.3f}' for q in qs]}")
     print("  Expectation (paper): MVG Q_m ~0.35; Fixed Goal Q_m ~0.15.")
 

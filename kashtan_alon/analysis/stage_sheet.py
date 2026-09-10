@@ -128,7 +128,7 @@ def main():
         sub = caption(log.get(gen), gen, cli.purity, cfg, wm)
         draw_fn(ax, wm, cfg, {"q_m": float("nan")}, "", subtitle=sub)
 
-    arm = "MVG (AND <-> OR every 20 gens)" if "_mvg_" in run else "FG (L AND R, fixed)"
+    arm = "MVG (AND <-> OR every 20 gens)" if "_mvg_" in run else "FG (L AND R)"
     style_line = ("each neuron coloured by the eye it watches (KA's left-detector / "
                   "right-detector / integrator)" if cli.style == "lineage" else
                   "greedy Newman-Q modules shaded, cross-module edges in RED")
