@@ -83,6 +83,53 @@ MVG ahead on every seed under both metrics. See `kashtan_alon/RESULTS.md`.
 Approved 2026-09-10. The copy in this folder came from
 `kashtan_alon/runs_purity/fg_vs_mvg_purity.png`.
 
+### `newman_communities_mvg_seed1.png` — why the planted-partition metrics
+
+| | |
+|---|---|
+| **Shows** | One capped MVG brain (seed 1, last AND-epoch champion, generation 24,970) drawn with the **old Newman-Q community colouring**: a translucent blob per greedy community, within-community edges in the community colour, between-community edges thick and red. Nodes are laid out by side (left-reading left, right-reading right) so the true split is visible; only the colouring is Q's. |
+| **Point it makes** | The brain is a literal two-module network — circuit purity and `r` are both exactly 1.00, and no left–right edge exists anywhere below the output neuron. Greedy Newman Q, on the same graph, returns **four** communities: it cuts the left module in two and makes the integrator spine a module of its own, flagging 7 of 33 edges as "between-module" when almost all of them stay on one side. Its Q_m (+0.26) is also *lower* than seed 0's (+0.46), whose purity is only 0.81 — the metric ranks the perfectly split brain below the imperfect one. The case is not "Q is wrong"; it is that Q must **search** for a partition (NP-hard, budget-limited, and not aimed at the task's split), whereas the task already names the partition. |
+| **Source data** | `kashtan_alon/runs_purity/` |
+| **Generator** | `kashtan_alon/analysis/newman_vs_binary.py`, drawing via `highlight_modules.draw_net()` |
+
+```bash
+conda run -n lndp python kashtan_alon/analysis/newman_vs_binary.py           # seed 1
+conda run -n lndp python kashtan_alon/analysis/newman_vs_binary.py --seed 3  # another
+```
+
+The caption's numbers come from the generator's own stdout, which for the
+approved figure reads:
+
+```
+retina_mvg_raw_seed1: gen 24970 acc 0.9688 Q=0.502 Q_m=+0.260
+  (q_rand=0.442 q_max=0.674) purity=1.000 r=+1.000 4 communities, 7/33 cross edges
+  community 1: [4, 5, 6, 7, 11, 12, 13, 14, 17]
+  community 2: [2, 3, 8, 10, 18, 19]
+  community 3: [0, 1, 9, 15]
+  community 4: [16, 20, 21, 22]
+```
+
+Nodes 0–7 are the retina (0–3 left, 4–7 right), 22 is the output. Community 1 is
+the whole right half plus the output's parent; communities 2 and 3 are the left
+half **cut in two**; community 4 is the integrator spine. That is the figure's
+entire argument in four lines.
+
+Notes:
+* `draw_net()` gained an optional `pos=` argument for this figure; its default
+  is unchanged, so every other caller draws exactly as before.
+* The figure is deliberately bare — title `Newman Q decomposition`, the legend,
+  and the two retina-half labels, nothing else. Every number it is *about* (Q,
+  Q_m, purity, `r`, cross-edge count, where the halves meet, the community
+  memberships) is **printed to stdout** by the generator and belongs in the
+  caption prose. An earlier version put all of it in the title; it was
+  unreadable, and the numbers are the caption's job.
+* The left/right divider is drawn only as far up as it is **measured** to hold
+  (the first block containing a left↔right edge), so the figure stays honest on
+  a seed whose split is not perfect.
+
+Approved 2026-09-11. The copy in this folder came from
+`kashtan_alon/runs_purity/newman_communities_mvg_seed1.png`.
+
 ---
 
 ## The fan-in ablation — the same three figures, cap removed
@@ -185,29 +232,3 @@ Notes:
   `result.json` (which describes the final-generation champion — mid-OR-epoch
   for every MVG seed). See the goal-matching note in the ablation section above.
 
-### `newman_communities_mvg_seed1.png` — why the planted-partition metrics
-
-| | |
-|---|---|
-| **Shows** | One capped MVG brain (seed 1, last AND-epoch champion, generation 24,970) drawn with the **old Newman-Q community colouring**: a translucent blob per greedy community, within-community edges in the community colour, between-community edges thick and red. Nodes are laid out by side (left-reading left, right-reading right) so the true split is visible; only the colouring is Q's. |
-| **Point it makes** | The brain is a literal two-module network — circuit purity and `r` are both exactly 1.00, and no left–right edge exists anywhere below the output neuron. Greedy Newman Q, on the same graph, returns **four** communities: it cuts the left module in two and makes the integrator spine a module of its own, flagging 7 of 33 edges as "between-module" when almost all of them stay on one side. Its Q_m (+0.26) is also *lower* than seed 0's (+0.46), whose purity is only 0.81 — the metric ranks the perfectly split brain below the imperfect one. The case is not "Q is wrong"; it is that Q must **search** for a partition (NP-hard, budget-limited, and not aimed at the task's split), whereas the task already names the partition. |
-| **Source data** | `kashtan_alon/runs_purity/` |
-| **Generator** | `kashtan_alon/analysis/newman_vs_binary.py`, drawing via `highlight_modules.draw_net()` |
-
-```bash
-conda run -n lndp python kashtan_alon/analysis/newman_vs_binary.py           # seed 1
-conda run -n lndp python kashtan_alon/analysis/newman_vs_binary.py --seed 3  # another
-```
-
-Notes:
-* `draw_net()` gained an optional `pos=` argument for this figure; its default
-  is unchanged, so every other caller draws exactly as before.
-* The figure is deliberately bare — title `Newman Q decomposition`, the legend,
-  and the two retina-half labels, nothing else. Every number it is *about* (Q,
-  Q_m, purity, `r`, cross-edge count, where the halves meet, the community
-  memberships) is **printed to stdout** by the generator and belongs in the
-  caption prose. An earlier version put all of it in the title; it was
-  unreadable, and the numbers are the caption's job.
-* The left/right divider is drawn only as far up as it is **measured** to hold
-  (the first block containing a left↔right edge), so the figure stays honest on
-  a seed whose split is not perfect.
