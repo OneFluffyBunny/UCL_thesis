@@ -49,13 +49,21 @@ as untested until backed by a controlled comparison. More to add.
   modular one (consistent with the `qmetrics` density-confound note — a dense
   graph makes Q ≈ 0 nearly unavoidable regardless of wiring). Not yet isolated
   as a controlled variable across all three.
-- **Worth testing: does constraining also make search converge faster**, not
-  just sparser/more modular? Open question, not yet run as its own comparison.
-- **Hunch for *why*, if the speed effect holds**: constraints shrink the
-  search space, and the solution happens to sit inside the constrained
-  subspace — so a constrained search is effectively searching a smaller
-  haystack containing the same needle, while an unconstrained search wastes
-  budget covering the larger space outside it.
+- ~~**Worth testing: does constraining also make search converge faster**~~
+  **ANSWERED, and the answer is the other way round** (2026-09-11, KA fan-in
+  ablation, 5 seeds/arm). Constraining makes search **much slower**: uncapped MVG
+  reaches a perfect score on all five seeds inside 400 generations, capped MVG
+  manages it twice in 25,000, and capped FG never passes 0.95. See "KA with the
+  fan-in cap removed" below for the full threshold table.
+- ~~**Hunch for *why*, if the speed effect holds**: constraints shrink the search
+  space, and the solution happens to sit inside the constrained subspace~~ —
+  **the measurement contradicts this too.** The unconstrained search is not
+  wasting budget covering a larger space; it finds a dense, entangled,
+  high-accuracy solution almost immediately. What the constraint does is *remove
+  the easy needles*, leaving only solutions that have to economise on wiring — and
+  those are the modular ones. Restated: **scarcity buys modularity and pays for it
+  in both accuracy and search time.** That is a cost the thesis should state
+  openly rather than a free lunch.
 
 ---
 
@@ -604,6 +612,40 @@ a right module?**" That is a much easier question, and worth stating why.
   This is a general lesson for any planted-partition statistic, not a detail of
   this implementation.
 
+### The empirical case for the planted partition — one picture
+
+*(Figure: `latex_figures/Kashtan-Alon/newman_communities_mvg_seed1.png`, generator
+`kashtan_alon/analysis/newman_vs_binary.py`.)*
+
+The argument above is conceptual. Here it is as a measurement, on one real brain:
+the capped **MVG seed 1** last-AND-epoch champion (generation 24,970, accuracy
+0.97 on AND).
+
+- That network is a **literal two-module network**. Circuit purity and `r` are both
+  exactly **1.00**, and no left–right edge exists anywhere below the output neuron
+  — every hidden neuron's live ancestry traces to one retina side only (audited
+  node-by-node, `scratch_purity_audit.py`). It is a direct instantiation of KA's
+  own Fig. 5e prose, *"two distinct modules ... each monitoring a different side of
+  the retina"*.
+- Greedy Newman Q, handed the same graph, returns **four communities**: it cuts the
+  left module in two and makes the integrator spine a module of its own. It flags
+  **7 of 33 edges as "between-module"** when almost all of them stay on one side.
+- And `Q_m` **ranks it below a less modular brain**: seed 1 (purity 1.00) scores
+  Q_m +0.26, while seed 0 (purity 0.81) scores +0.46.
+
+The point is not that Newman Q is wrong — Q is *defined* for any partition, and
+the greedy split it found is a perfectly good one by its own objective. The point
+is that **Q has to search for a partition**: the search is NP-hard, budget-limited,
+subject to the resolution limit, and — decisively — has no reason to aim at the
+split the *task* is about. These graphs are also small enough to sit near
+Fortunato's resolution limit (~√(2m) ≈ 8 edges at this brain's m=33), which is the
+scale of the sub-communities Q actually returned. Under MVG we already know the
+partition the experiment is about, so
+handing it to Q removes the optimiser entirely, along with its budget, its seed
+dependence and its instability. That is the whole justification for `r` and circuit
+purity, and it is why they are the **primary** metrics for every left/right result
+in this thesis, with `Q_m` reported second for comparability with the paper.
+
 ### Circuit purity — a left/right measure built for logic circuits
 
 The three metrics above were designed for weighted neural graphs. A Boolean
@@ -717,10 +759,16 @@ saved genotypes.
 | exp_4 ECGP | MVG 50n (rerun, `--save-best`) | 4 | 0.793 | 12.0 active | acc 0.924 | cone-frac 0.528 |
 | exp_4 CGP | MVG 400n (rerun, `--save-best`) | 4 | 0.597 | 39.5 active | acc 0.984 | cone-frac 0.291 |
 | exp_4 ECGP | MVG 400n (rerun, `--save-best`) | 4 | 0.676 | 28.5 active | acc 0.932 | cone-frac 0.521 |
-| KA paper-faithful | FG | 5 | 0.598 | 41.0 edges | best_fit 0.891 | Q_m −0.007 |
-| KA paper-faithful | MVG | 5 | **0.952** | 34.0 edges | best_fit 0.969 | Q_m **0.240** |
-| KA no-fanin ablation | FG | 3 | 0.242 | 71.0 edges | best_fit 0.977 | Q_m −0.127 |
-| KA no-fanin ablation | MVG | 3 | **0.528** | 59.0 edges | best_fit 1.000 | Q_m **0.084** |
+| KA paper-faithful | FG | 5 | 0.598 | 40 edges (mean) | acc on AND 0.891 | Q_m −0.007 |
+| KA paper-faithful | MVG | 5 | **1.000** | 36 edges (mean) | acc on AND 0.969 | Q_m **0.260** |
+| KA no-fanin ablation | FG | 5 | 0.287 | 69 edges (mean) | acc on AND 0.977 | Q_m −0.076 |
+| KA no-fanin ablation | MVG | 5 | **0.530** | 55 edges (mean) | acc on AND 1.000 | Q_m **0.016** |
+
+*(The four KA rows were re-scored 2026-09-11 on **goal-matched** brains — the last
+champion archived during an AND epoch, all four groups on AND — at n=5. They
+previously read final-generation champions, which for MVG are OR-phase brains, and
+the ablation rows were n=3. Means for all four groups, with SDs, are in the
+ablation section below and in `kashtan_alon/RESULTS.md` Run 8.)*
 | exp_3 (GD, margin loss) | retina/xor | 5 | N/A — cyclic graph | ~470/560 edges | acc 1.000 | raw Q ~0.019 (undirected) |
 
 **The metric has real explanatory power, despite every caveat above** — but
@@ -872,59 +920,181 @@ of it is yet a direct ablation of KA's own constraint.
   constraint switched on. **No one, including this project, has run it with the
   cap removed.**
 
-**KA with the fan-in cap removed, under MVG — tested 2026-08-20
-(`kashtan_alon/RESULTS.md`, Run 6).** The prediction was that modularity would
-collapse toward the FG level or below, by the same mechanism the
-`experiment_1` no-budget arms demonstrate: unlimited fan-in removes the trade-off
-that forces reuse over duplication when the goal switches. **That's not quite
-what happened.** Same task, same GA hyperparameters as the constrained
-baseline (Run 5), only `NetConfig(fan_in=())` differs (3 seeds/condition):
+### KA with the fan-in cap removed — the direct ablation of KA's own constraint
 
-| condition | Q_m, no cap | Q_m, capped (Run 5) |
-|---|---|---|
-| MVG | 0.119 ± 0.140 | 0.245 ± 0.049 |
-| FG | −0.100 ± 0.113 | 0.025 ± 0.139 |
+**The ablation is one line.** `NetConfig(fan_in=())` in place of the default
+`(3,3,3,2)`; `model.py:_fan_in()` then falls back to "the whole previous layer",
+so every neuron may read every neuron below it. Same task, same seeds, same GA
+hyperparameters, same 25,000 generations. One honest qualifier on "only": the cap
+is read in two places and removing it changes both — `model.py:91` sets the
+initial fan-in (`k = round(0.5 × cap)`, 2 edges/neuron capped vs 4 uncapped) and
+`ga.py:95` is the ceiling the add-edge mutation may not exceed. So it is "the cap
+is gone wherever it acted", not "the cap is gone at selection time only".
 
-Both conditions' absolute Q_m drop by almost the same amount (~0.12–0.13) when
-the cap is removed — but the **MVG−FG gap itself barely moves** (0.219 without
-the cap vs. 0.220 with it). MVG still beats FG by essentially the same margin;
-it just does so at a lower absolute level, because density roughly doubles in
-both conditions (33%→56% MVG, 38%→67% FG) without ever saturating to a
-complete graph the way `experiment_1`'s no-budget arms did.
+**Result (n=5/arm/condition, 2026-09-11, `kashtan_alon/RESULTS.md` Run 8).** Every
+brain below is the **last champion archived during an AND epoch** and is scored on
+**AND**, so all four groups are goal-matched (this matters: `25000/20 = 1250`
+blocks leaves generation 24,999 inside an *OR* epoch for every MVG seed, so a
+final-generation MVG champion is an OR specialist — a different brain, not just a
+differently-scored one).
 
-So the honest reading is **not** "the constraint is necessary for MVG > FG" —
-it's closer to "the constraint sets the *absolute level* of modularity KA's
-network can reach, but the *relative* MVG-over-FG advantage survives removing
-it." That's a real complication for the strong form of the hypothesis stated
-above: in this specific model, goal-switching itself appears to be doing most
-of the work of separating MVG from FG, independent of whether wiring is scarce.
-The scarcity story still explains why FG solves the task *better* without the
-cap (0.970 vs. 0.904 accuracy on AND, both arms measured on the same goal —
-corrected 2026-09-10, see the bug note in the Kashtan-Alon section below;
-more raw capacity means FG no longer
-needs to economize), but not why MVG stays ahead of FG regardless. Caveat:
-n=3/condition, not statistically significant (Welch p ≈ 0.11) — a 5+-seed
-rerun matching Run 5 is the next step before trusting the magnitude of either
-effect.
+| condition | arm | accuracy (AND) | Q | Q_m | r | purity | edges | density |
+|---|---|---|---|---|---|---|---|---|
+| capped (paper) | FG | 0.90 ± 0.03 | 0.38 ± 0.04 | +0.02 ± 0.14 | +0.60 ± 0.14 | 0.56 ± 0.13 | 40 | 38% |
+| capped (paper) | **MVG** | 0.97 ± 0.03 | **0.49** ± 0.03 | **+0.31** ± 0.09 | **+0.94** ± 0.09 | **0.93** ± 0.09 | 36 | 34% |
+| no fan-in cap | FG | 0.97 ± 0.02 | 0.22 ± 0.03 | −0.07 ± 0.10 | +0.30 ± 0.07 | 0.31 ± 0.11 | 69 | 65% |
+| no fan-in cap | MVG | **1.00** ± 0.00 | 0.29 ± 0.04 | +0.02 ± 0.03 | +0.51 ± 0.08 | 0.56 ± 0.11 | 55 | 52% |
 
-⚠️ **Confound found 2026-08-20, after this was first written: the density
-comparison above is partly an artifact, not purely a result.**
-`kashtan_alon/model.py`'s `init_population()` seeds every genome's starting
-edge count as `k = round(init_density * cap)` — and `cap` is whatever the
-*current* fan-in limit is. With the cap removed, `cap` silently becomes "the
-full previous layer," so `init_density=0.5` (unchanged, paper default) seeds
-every genome at **exactly 50.0% density on generation 0**, vs. 27.4% for the
-capped baseline (Run 5) where `cap`=3 or 2. Checking the per-generation log:
-FG genuinely climbs from that 50% seed to a ~65–67% attractor within ~500
-generations and holds — real evolutionary movement. MVG mostly random-walks
-around its 50% start (41–54% the whole run) with little net drift. So part of
-the "density roughly doubles" claim above is just the init-density formula
-being reinterpreted against a much wider cap, not evolution converging
-anywhere — the two runs did not start from a comparable point. This doesn't
-overturn the Q_m/gap finding, but it does mean the density comparison,
-and the "wiring is no longer scarce" framing built on it, needs a rerun with
-a matched starting density before it can be trusted. See Run 6, note 5 in
-`kashtan_alon/RESULTS.md` for the full trajectory data.
+**⚠️ This revises what an earlier draft of this section said.** At n=3, scored on
+final-generation champions, the MVG−FG gap looked unchanged by the ablation
+(0.219 vs 0.220) and the write-up concluded "goal-switching is doing most of the
+work, independent of whether wiring is scarce". At n=5 and goal-matched, the gap
+**shrinks on every metric**: Q_m 0.28 → 0.09, r 0.34 → 0.21, purity 0.37 → 0.25.
+Do not cite the old reading.
+
+Three things to say about this table:
+
+1. **The cap is not a performance constraint; it is a modularity constraint.**
+   Removing it makes the task *easier* — uncapped MVG is perfect on all five
+   seeds, uncapped FG reaches 0.97 vs capped FG's 0.90. So the ablated networks
+   are not less modular because they are worse solutions. They are better
+   solutions that happen to be non-modular, which is the strongest form this
+   result could take.
+2. **MVG is not sufficient — the constraint does a lot of the work.** Uncapped MVG
+   (purity 0.56) lands exactly where *capped FG* sits (0.56): removing the cap
+   costs MVG about as much modularity as removing MVG itself did. Capped-FG and
+   uncapped-MVG arrive at the same number from opposite directions, and only
+   capped-MVG (0.93) is qualitatively different. That is a **2×2 interaction**,
+   not a main effect of MVG — and it is a better story than "MVG causes
+   modularity": MVG causes modularity *when wiring is scarce enough that the
+   monolithic solution is not reachable*.
+3. **The MVG > FG direction still survives the ablation**, on purity (0.56 vs
+   0.31) and r (+0.51 vs +0.30) with non-overlapping ±1 SD. So "necessary" is too
+   strong; "does most of the work at this network size" is the defensible claim.
+
+**Removing the cap also finds solutions far faster.** First generation at which
+the champion reaches a given accuracy *during an AND epoch*:
+
+| threshold | capped FG | capped MVG | no-cap FG | no-cap MVG |
+|---|---|---|---|---|
+| 0.90 | 2/5 seeds ever | median 890 | median **60** | median **90** |
+| 0.99 | never | 2/5 seeds ever | 1/5 seeds ever | median **290** |
+| 1.00 | never | 2/5 (gen 6,890 and 23,930) | never | **all 5 seeds**, gen 240–400 |
+
+Uncapped MVG is perfect on every seed inside 400 generations; capped MVG manages
+it twice in 25,000 and capped FG never passes 0.95. This is the first direct
+evidence for the "**does constraining also make search converge faster?**"
+question raised under *High-level hypotheses* above — and the answer here is the
+**opposite** of the hunch recorded there. The hunch was that a constraint shrinks
+the haystack around the same needle; what actually happens is that the constraint
+*removes* the easy needles. Unconstrained search is not wasting its budget on a
+larger space — it is finding a dense, entangled, high-accuracy solution almost
+immediately, and that solution is simply not available under the cap. Scarcity
+buys modularity and **pays for it in both accuracy and search time**.
+
+**MVG runs sparser than FG in both conditions — but "parsimony" is the wrong
+word.** Mean density (% of the 107 possible feedforward edges):
+
+| group | gen 0 | 500 | 2,000 | 24,990 |
+|---|---|---|---|---|
+| capped FG | 27.4 | 34.3 | 37.0 | 37.5 |
+| capped MVG | 27.4 | 31.7 | 34.3 | 33.8 |
+| no-cap FG | 50.0 | 63.0 | 64.3 | **64.3** |
+| no-cap MVG | 50.0 | 50.9 | 49.4 | **53.4** |
+
+The mechanism is not MVG *removing* edges — it is FG *adding* them while MVG does
+not. Our fitness has no complexity term at all (the paper's 0.01/neuron penalty is
+a known missing piece, deviation 3 below), so nothing rewards fewer edges and
+"task switching forces a parsimonious net" cannot be literally true. The likelier
+reading: **under MVG a newly added edge has to pay off on *both* goals to survive
+a switch**, so goal-specific wiring is repeatedly de-selected and new edges fix
+more slowly. Non-stationarity acting as an implicit regulariser — the same shape
+of argument as noise or dropout — rather than a parsimony pressure. Testable: put
+the paper's neuron penalty back and see whether the FG/MVG density gap widens
+(real parsimony pressure should hit FG harder) or stays put.
+
+Two caveats that have to travel with the density numbers:
+- *Capped-vs-uncapped density is partly an artefact.* `init_population()` seeds
+  `k = round(init_density × cap)`, and `cap` is whatever the current fan-in limit
+  is, so `init_density=0.5` means 27.4% under the cap and exactly **50.0%**
+  without it. The two conditions did not start from a comparable point. The
+  **FG-vs-MVG comparison inside one condition is clean**, though — both arms start
+  identically — which is the comparison the paragraph above rests on.
+- *MVG is always the sparser arm, and every metric here favours sparsity.* So some
+  of the MVG advantage could in principle be density. It cannot be all of it:
+  capped MVG (34%) vs capped FG (38%) is a 4-point density difference carrying a
+  0.37 purity difference, and the *denser* uncapped MVG (52%) ties the *sparser*
+  capped FG (38%) at purity 0.56 — density alone does not order these groups.
+
+**Q_m stops discriminating once the cap is removed, and that is a metric result
+worth reporting in its own right.**
+
+| condition | arm | Q_real | Q_rand | Q_max | Q_max − Q_rand | Q_real − Q_rand | Q_m |
+|---|---|---|---|---|---|---|---|
+| capped | FG | 0.380 | 0.374 | 0.607 | 0.233 | +0.007 | +0.03 |
+| capped | MVG | 0.486 | 0.413 | 0.653 | 0.240 | **+0.073** | +0.31 |
+| no cap | FG | 0.216 | 0.229 | 0.417 | 0.188 | −0.013 | −0.07 |
+| no cap | MVG | 0.287 | 0.285 | 0.478 | 0.194 | **+0.002** | +0.02 |
+
+In the ablation `Q_real` and `Q_rand` collapse *together* (0.287 vs 0.285): the
+numerator is +0.002, smaller than the greedy partitioner's own noise, which is why
+the across-seed SD (±0.03) spans zero. Three causes, all consequences of density:
+(i) **no headroom** — at 52–65% density almost every possible edge exists, so every
+partition has many crossing edges and everything scores low; `Q_max` itself falls
+0.65 → 0.48; (ii) **the null is handed the answer through the degree sequence** —
+`Q_m` holds degrees fixed and rewires, and under the cap degrees are near-uniform
+(~3 everywhere) so the modularity lives in *which* pairs are wired and rewiring
+destroys it, whereas uncapped the degrees are heterogeneous and dense and a random
+graph with those degrees already looks clustered for free; (iii) **Q is
+label-blind** — purity and `r` know the left/right labelling and still separate
+the uncapped arms cleanly, Q's greedy partition cannot.
+
+The correct statement is therefore **not** "Q_m says modularity vanished". It is:
+modularity genuinely fell (purity 0.93 → 0.56) **and, separately, Q_m lost its
+resolution.** `Q_m` is calibrated for the sparse regime KA's own runs occupy
+(34–38% density); pushed to 52–65% it is a ratio of two converged quantities.
+Ironically it was introduced precisely to remove the density confound from raw Q —
+and it removes it by subtracting a null that gets *closer* to the real value as
+density rises and dividing by a range that *shrinks*. Read purity and `r` as
+primary in the ablation, `Q_m` with this caveat, and note that the degradation
+tracking density is a caution for every other arm of this thesis that leans on
+`Q_m` (experiment_1's dense brains above all).
+
+### The task's own 0.75 shortcut — why MVG cannot punish a one-module solution
+
+On the KA-faithful retina, raw fraction-correct over all 256 patterns:
+
+| predictor | on AND | on OR | mean over the MVG schedule |
+|---|---|---|---|
+| constant 0 | 0.750 | 0.250 | 0.500 |
+| constant 1 | 0.250 | 0.750 | 0.500 |
+| **LEFT only** (equivalently RIGHT only) | **0.750** | **0.750** | **0.750** |
+
+`LEFT` and `RIGHT` are each true on exactly 128/256 patterns; AND on 64, OR on
+192. So a detector that solves **one half of the retina and ignores the other**
+scores 0.75 under *both* goals, strictly dominates a constant output under MVG
+(0.75 vs 0.50 across the schedule), and pays **zero re-adaptation cost at every
+switch**. The one-module solution is exactly the thing MVG's mechanism cannot
+punish — which is why MVG only starts producing modularity once a network already
+computes both halves, and why the interesting evolutionary action is all above
+0.75. This is the KA-faithful task's version of the "one-module compromise" fact
+already recorded for the `retina_ka2005` stand-in under Experiment 1 (0.8333 under
+both goals there); same phenomenon, different number, and it is a property of
+**KA's task**, not of any encoding we built.
+
+### Methodology note to carry into the writeup
+
+Our reproduction **deviates from the paper in five documented ways** — exhaustive
+256-pattern fitness instead of a 100-pattern sample; a hill-climb `Q_max` instead
+of re-evolving 100 populations toward Q; no complexity penalty; elite 150/600
+reused by analogy from the circuit experiment; and a reconstructed mutation
+operator set / crossover mechanism / threshold range (the Supporting Information
+is unavailable to us). All five are listed with their evidence in the
+Kashtan-Alon section below and in `kashtan_alon/PAPER_SPEC.md`, and deviations 1–3
+all push the same way, which is consistent with our absolute `Q_m` (0.31 MVG /
+0.02 FG) sitting below the paper's (0.35 / 0.15) while the **gap** (0.29 vs 0.20)
+and its direction reproduce. Every KA number in this thesis must be introduced as
+a *reproduction of the effect*, never as a replication of the magnitudes.
 
 ---
 

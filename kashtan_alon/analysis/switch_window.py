@@ -32,7 +32,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _HERE = pathlib.Path(__file__).resolve()
+# --no-fanin switches both to the ablation's directories; see main()
 RUNS = str(_HERE.parents[1] / "runs_dense")
+TITLE = "Kashtan-Alon retina task seed 0"
 OUT = os.path.join(RUNS, "switch_window_seed0.png")
 SWITCH = 20
 WINDOWS = [(100, 300, "very early"), (1000, 1200, "early"), (10000, 10200, "late")]
@@ -79,6 +81,11 @@ def phase_stats(d):
 
 
 def main():
+    global RUNS, OUT, TITLE
+    if "--no-fanin" in sys.argv:
+        RUNS = str(_HERE.parents[1] / "runs_dense_no_fanin")
+        OUT = os.path.join(RUNS, "switch_window_seed0_no_fanin.png")
+        TITLE = "Kashtan-Alon retina task seed 0 - ABLATION: no fan-in cap"
     if not os.path.exists(os.path.join(RUNS, f"{ARMS[0][0]}_log.csv")):
         sys.exit(f"no dense logs in {RUNS} -- run dense_replay.py first")
 
@@ -130,7 +137,7 @@ def main():
         print("MVG " + lines[-1])
         print(f"     per-switch recovery generations: {t.tolist()}")
 
-    fig.suptitle("Kashtan-Alon retina task seed 0", fontsize=15)
+    fig.suptitle(TITLE, fontsize=15)
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(OUT, dpi=150, bbox_inches="tight")
     plt.close()

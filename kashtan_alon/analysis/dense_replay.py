@@ -97,7 +97,11 @@ def verify(ablation=False):
         old = {int(r["gen"]): r for r in rows(os.path.join(archive, name))
                if int(r["gen"]) <= LAST_GEN}
         shared = sorted(set(new) & set(old))
-        cols = ["op", "best_fit", "mean_fit", "Q", "purity", "density", "edges"]
+        # only columns BOTH files carry: older archives predate `purity`, and a
+        # column one side never logged is not a mismatch, just absent
+        cols = [c for c in ("op", "best_fit", "mean_fit", "Q", "purity",
+                            "density", "edges")
+                if shared and c in new[shared[0]] and c in old[shared[0]]]
         bad = [g for g in shared if any(new[g][c] != old[g][c] for c in cols)]
         extra = len(new) - len(shared)
         print(f"\n{arm.upper()}: {len(shared)} generations logged by both, "

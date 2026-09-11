@@ -19,10 +19,12 @@ Needs `<run>_brains.npz`, so it reads runs_purity/ (runs/ predates archiving).
 They are the same 10 runs: identical seeds, identical parameters, identical logs.
 
 Usage: conda run -n lndp python kashtan_alon/analysis/paper_grid.py
+       ... --no-fanin     # the same grid for the fan-in ablation's runs
 Runs from any working directory.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import os
 import pathlib
@@ -45,8 +47,10 @@ import tasks
 import train as T
 import qmetrics as qm
 
+# --no-fanin switches all three to the ablation's; see main()
 RUNS_DIR = str(_HERE.parents[1] / "runs_purity")
 OUT = str(_HERE.parents[1] / "runs" / "paper_10runs_grid.png")
+TITLE = "Kashtan-Alon paper-faithful repoduction"
 GOAL = "and"         # the single goal every panel is scored on
 PINNED_LR = {i: i // 4 for i in range(8)}          # 0=left retina, 1=right retina
 PINNED_PURITY = {i: (0 if i < 4 else 1) for i in range(8)}
@@ -98,6 +102,17 @@ def extra_metrics(wm, cfg):
 
 
 def main():
+    global RUNS_DIR, OUT, TITLE
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--no-fanin", action="store_true",
+                    help="draw the fan-in ablation's runs (runs_no_fanin/) instead")
+    if ap.parse_args().no_fanin:
+        RUNS_DIR = str(_HERE.parents[1] / "runs_no_fanin")
+        OUT = str(_HERE.parents[1] / "runs" / "paper_10runs_grid_no_fanin.png")
+        # one line, not two: suptitle is anchored near the top of the figure, so a
+        # second line would be pushed off it
+        TITLE += " - ABLATION: no fan-in cap"
+
     rows = [("fg", "FG"), ("mvg", "MVG")]
     cfg = NetConfig()
     X = np.asarray(tasks.all_binary_inputs(cfg.layers[0]))
@@ -120,7 +135,7 @@ def main():
             print(f"{name}: last {GOAL.upper()}-epoch champion, gen {gen}, acc {acc:.4f} "
                   f"| Q={parts['q_real']:.3f} Q_m={q_m:+.3f} "
                   f"r={r:+.3f} purity={purity:.3f}")
-    fig.suptitle("Kashtan-Alon paper-faithful repoduction", fontsize=15, y=0.995)
+    fig.suptitle(TITLE, fontsize=15, y=0.995)
     plt.tight_layout(rect=(0, 0.05, 1, 0.96))
 
     # Colour is continuous (a node is the mean of its parents), so a gradient bar

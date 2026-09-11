@@ -63,11 +63,17 @@ def _positions(cfg):
     return pos
 
 
-def draw_net(ax, weight_mats, cfg, result, title, subtitle=None):
-    """`subtitle` replaces the default Q_m/modules/cross-edge second line."""
+def draw_net(ax, weight_mats, cfg, result, title, subtitle=None, pos=None):
+    """`subtitle` replaces the default Q_m/modules/cross-edge second line.
+
+    `pos` overrides the layout -- pass `_positions_by_value(cfg, flow)` to keep
+    the Q-community COLOURING while laying nodes out by left/right side, which is
+    what makes a mismatch between the two readable (analysis/newman_vs_binary.py).
+    """
     q, communities = newman_q(weight_mats, cfg)
     node_comm = {n: ci for ci, comm in enumerate(communities) for n in comm}
-    off, pos = cfg.offsets, _positions(cfg)
+    off = cfg.offsets
+    pos = _positions(cfg) if pos is None else pos
 
     # --- module blobs: a translucent halo behind every node in a module -------
     for node, (x, y) in pos.items():

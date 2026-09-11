@@ -18,6 +18,7 @@ once everything is done it just redraws.
     ... --arm mvg          # one arm only; the two share no state, so two processes
     ... --plot-only        # redraw from existing CSVs, no training
     ... --smoke            # pop 60 / 400 gens, checks the pipeline
+    ... --no-fanin --plot-only   # redraw the fan-in ablation's runs instead
 
 Runs from any working directory. Training is ~10.5 min per seed per arm.
 """
@@ -167,13 +168,17 @@ def plot(cli, curves):
         ax.legend(loc="lower right", fontsize=10, framealpha=0.95)
 
     seeds = f"{min(n_seeds)}" if n_seeds else "no"
-    fig.suptitle("Kashtan-Alon retina paper-faithful reproduction\n"
+    head = "Kashtan-Alon retina paper-faithful reproduction"
+    if cli.no_fanin:
+        head += " - ABLATION: no fan-in cap"
+    fig.suptitle(head + "\n"
                  f"{seeds} seed mean, shaded +- 1 SD, "
                  f"bold smoothed over {cli.smooth * cli.log_interval} generations",
                  fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.93))
     os.makedirs(cli.out_dir, exist_ok=True)
-    out = os.path.join(cli.out_dir, "fg_vs_mvg_purity.png")
+    out = os.path.join(cli.out_dir, "fg_vs_mvg_purity"
+                       + ("_no_fanin" if cli.no_fanin else "") + ".png")
     fig.savefig(out, dpi=170)
     print(f"\nwrote {out}")
     if cli.open:
@@ -199,11 +204,23 @@ def build_parser():
                          "them as two processes halves wall-clock")
     ap.add_argument("--no-open", dest="open", action="store_false", default=True,
                     help="do not launch the finished picture")
+    ap.add_argument("--no-fanin", action="store_true",
+                    help="read/write the fan-in ablation's directory "
+                         "(runs_no_fanin/) and label the title accordingly; "
+                         "overrides --out-dir")
     return ap
 
 
 def main():
     cli = build_parser().parse_args()
+    if cli.no_fanin:
+        # plotting only: this script's preset builds a DEFAULT NetConfig, so
+        # training under --no-fanin would silently produce fan-in-capped runs in
+        # the ablation's directory. run_ablation_no_fanin.py owns the training.
+        if not cli.plot_only:
+            sys.exit("--no-fanin only redraws; train with run_ablation_no_fanin.py "
+                     "(add --plot-only)")
+        cli.out_dir = str(_HERE.parents[1] / "runs_no_fanin")
     os.makedirs(cli.out_dir, exist_ok=True)
     preset = paper_preset(cli)
     cols = [c for c, _, _, _ in PANELS]

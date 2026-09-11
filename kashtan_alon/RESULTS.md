@@ -107,6 +107,188 @@ search, only the goal schedule differs.
 
 ---
 
+## Run 8 — all four groups re-scored goal-matched, n=5 (2026-09-11) → **the cap does a lot of the work; Q_m stops resolving once the cap is gone**
+
+No new training. Every number below is the **last champion archived during an AND
+epoch** — generation 24,999 (FG) / 24,970 (MVG) — scored on **AND**, i.e. exactly
+the brain each panel of `paper_10runs_grid*.png` draws. This supersedes Run 7's
+table, which read `result.json`, i.e. the *final-generation* champion: an OR-phase
+brain for every MVG seed. Structural metrics are goal-blind, but the brain itself
+is not the same brain, so Run 7's MVG rows described OR-tuned structures beside
+FG's AND-tuned ones.
+
+Reproduce: `four_group_table.py` logic is `analysis/paper_grid.py`'s
+`last_on_goal()` + `modularity.normalized_qm(n_rand=1000, seed=<seed>)` +
+`qmetrics.circuit_purity` / `left_right_q(n_rand=200, seed=0)`.
+
+### The four groups (mean ± SD over seeds 0–4)
+
+| condition | arm | accuracy (AND) | Q | Q_m | r | purity | edges | density |
+|---|---|---|---|---|---|---|---|---|
+| capped (paper) | FG | 0.90 ± 0.03 | 0.38 ± 0.04 | +0.02 ± 0.14 | +0.60 ± 0.14 | 0.56 ± 0.13 | 40 | 38% |
+| capped (paper) | **MVG** | 0.97 ± 0.03 | **0.49** ± 0.03 | **+0.31** ± 0.09 | **+0.94** ± 0.09 | **0.93** ± 0.09 | 36 | 34% |
+| no fan-in cap | FG | 0.97 ± 0.02 | 0.22 ± 0.03 | −0.07 ± 0.10 | +0.30 ± 0.07 | 0.31 ± 0.11 | 69 | 65% |
+| no fan-in cap | MVG | **1.00** ± 0.00 | 0.29 ± 0.04 | +0.02 ± 0.03 | +0.51 ± 0.08 | 0.56 ± 0.11 | 55 | 52% |
+
+Three readings:
+
+1. **The cap is not a performance constraint, it is a modularity constraint.**
+   Removing it makes the task *easier* — uncapped MVG is perfect on all five
+   seeds, uncapped FG 0.97 vs capped FG's 0.90. So "the ablated nets are less
+   modular because they are worse solutions" is not available as an explanation.
+2. **MVG still beats FG without the cap, but by less.** The MVG−FG gap shrinks on
+   every metric: Q_m 0.28 → 0.09, r 0.34 → 0.21, purity 0.37 → 0.25. Uncapped MVG
+   (purity 0.56) lands where *capped FG* sits (0.56) — removing the cap costs MVG
+   roughly as much modularity as removing MVG itself did. This **revises Run 6's
+   headline** ("the MVG−FG gap barely moves"), which was n=3 and read
+   final-generation champions.
+3. **MVG is not sufficient; scarcity is the other ingredient.** Capped-FG and
+   uncapped-MVG reach the same purity from opposite directions, and only
+   capped-MVG is qualitatively different. That is a 2×2 interaction, not a main
+   effect of MVG.
+
+### Why Q_m stops discriminating once the cap is removed
+
+| condition | arm | Q_real | Q_rand | Q_max | Q_max − Q_rand | Q_real − Q_rand | Q_m |
+|---|---|---|---|---|---|---|---|
+| capped | FG | 0.380 | 0.374 | 0.607 | 0.233 | +0.007 | +0.03 |
+| capped | MVG | 0.486 | 0.413 | 0.653 | 0.240 | **+0.073** | +0.31 |
+| no cap | FG | 0.216 | 0.229 | 0.417 | 0.188 | −0.013 | −0.07 |
+| no cap | MVG | 0.287 | 0.285 | 0.478 | 0.194 | **+0.002** | +0.02 |
+
+In the ablation `Q_real` and `Q_rand` collapse *together* (0.287 vs 0.285). The
+numerator is +0.002 — smaller than the greedy partitioner's own noise, which is
+why the SD across seeds (±0.03) spans zero. Three causes:
+
+- **Density removes Q's headroom.** At 52–65% density almost every possible edge
+  exists, so every partition has many crossing edges and everything scores low:
+  `Q_max` itself falls 0.65 → 0.48.
+- **The null is handed the answer through the degree sequence.** `Q_m`'s null
+  holds degrees fixed and rewires. Under the cap degrees are near-uniform (~3
+  everywhere), so degrees encode nothing and the modularity lives in *which*
+  pairs are wired — rewiring destroys it. Uncapped, degrees become heterogeneous
+  and dense, and "a random graph with these degrees" already looks clustered for
+  free.
+- **Q is label-blind; purity and r are not.** The uncapped MVG nets genuinely are
+  more side-segregated than the uncapped FG nets (purity 0.56 vs 0.31, r +0.51 vs
+  +0.30, non-overlapping ±1 SD) — Q's greedy partition at 52% density simply
+  cannot resolve it.
+
+**So: modularity really did fall (purity 0.93 → 0.56) AND Q_m separately lost its
+resolution.** `Q_m` is calibrated for the sparse regime KA's own runs occupy
+(34–38%); at 52–65% it becomes a ratio of two converged quantities. Report purity
+and `r` as primary for the ablation, `Q_m` with this caveat. The degradation
+tracking density is itself a finding — it is a caution for every other experiment
+in this repo that plans to lean on `Q_m`.
+
+### Three claims checked against the logs (`--` = measured, not asserted)
+
+1. **Removing the cap finds solutions much faster — confirmed, and it is not
+   close.** First generation at which the champion reaches a given accuracy
+   *during an AND epoch*, per seed:
+
+   | threshold | capped FG | capped MVG | no-cap FG | no-cap MVG |
+   |---|---|---|---|---|
+   | 0.90 | 2/5 seeds ever (340, 17030) | median **890** | median **60** | median **90** |
+   | 0.95 | 1/5 ever (2570) | 4/5, median ~6900 | 4/5, median ~110 | median **170** |
+   | 0.99 | never | 2/5 (2250, 6890) | 1/5 (440) | median **290** |
+   | 1.00 | never | 2/5 (6890, 23930) | never | **all 5**, 240–400 |
+
+   Uncapped MVG reaches a *perfect* score on every seed inside 400 generations;
+   capped MVG manages it twice in 25,000 and capped FG never gets past 0.95.
+   That is ~10× on the easy thresholds and a difference in kind on the hard ones.
+
+2. **MVG runs sparser than FG in both conditions — but "parsimony" is the wrong
+   word; nothing in the fitness prices an edge.** Mean density (% of the 107
+   possible feedforward edges):
+
+   | group | gen 0 | 100 | 500 | 2000 | 10000 | 24990 |
+   |---|---|---|---|---|---|---|
+   | capped FG | 27.4 | 28.9 | 34.3 | 37.0 | 37.4 | 37.5 |
+   | capped MVG | 27.4 | 28.5 | 31.7 | 34.3 | 35.1 | 33.8 |
+   | no-cap FG | 50.0 | 53.8 | 63.0 | 64.3 | 63.6 | **64.3** |
+   | no-cap MVG | 50.0 | 51.7 | 50.9 | 49.4 | 51.7 | **53.4** |
+
+   The mechanism is not MVG *removing* edges — it is FG *adding* them while MVG
+   does not. Both ablation arms start at exactly 50.0% (the init formula
+   `k = round(0.5 × cap)` is anchored to the cap, so the *capped-vs-uncapped*
+   density comparison is confounded, per Run 6 note 5 — but the FG-vs-MVG
+   comparison *within* a condition is clean, both arms starting at the same
+   point). Our fitness has no complexity term at all (the missing 0.01/neuron
+   penalty, top of this file), so nothing rewards fewer edges. The likelier
+   reading: under MVG a newly added edge must help on **both** goals to keep
+   paying off across a switch, so goal-specific edges are repeatedly de-selected
+   and fixation of new wiring is slower. Non-stationarity acting as a
+   regulariser, not parsimony pressure.
+3. **A one-side detector scores 0.75 — on BOTH goals.** Raw fraction-correct over
+   all 256 patterns:
+
+   | predictor | on AND | on OR | mean over the MVG schedule |
+   |---|---|---|---|
+   | constant 0 | 0.750 | 0.250 | 0.500 |
+   | constant 1 | 0.250 | 0.750 | 0.500 |
+   | **LEFT only** (or RIGHT only) | **0.750** | **0.750** | **0.750** |
+
+   LEFT and RIGHT are each true on exactly 128/256 patterns, AND on 64, OR on
+   192. So the one-module solution is the unique 0.75-everywhere plateau: under
+   MVG it strictly dominates a constant output (0.75 vs 0.50 averaged over the
+   schedule) and pays **zero re-adaptation cost at every switch**. MVG cannot
+   punish it — which is why MVG's mechanism only engages once a network already
+   computes both halves. (The `retina_ka2005` stand-in used by experiments 1–3
+   has the same property at 0.8333; this is the KA-faithful task's version of it.)
+
+### Exact parameters — both conditions, for replication
+
+Commands (repo root; `conda run` because the terminal does not persist conda):
+
+```bash
+# capped, paper-faithful: 5 FG + 5 MVG -> kashtan_alon/runs/
+conda run -n lndp python kashtan_alon/run_paper.py --n-seeds 5 --viz --fresh
+
+# the deterministic duplicate that also archives per-generation purity and the
+# champion brain at every log point -> kashtan_alon/runs_purity/
+# (same seeds, same parameters, bit-identical trajectory; the brains archive is
+#  what makes goal-matched re-analysis possible with no re-training)
+conda run -n lndp python kashtan_alon/analysis/fg_mvg_purity.py --n-seeds 5
+
+# ABLATION: 5 FG + 5 MVG -> kashtan_alon/runs_no_fanin/
+conda run -n lndp python kashtan_alon/run_ablation_no_fanin.py --n-seeds 5
+```
+
+**The ablation is one line**: `M.NetConfig(layers=layers, fan_in=())` instead of
+`M.NetConfig(layers=layers)`. `model.py:_fan_in()` then returns the full previous
+layer. It is read in **two** places, so both change: `model.py:91` (initial
+fan-in, `k = round(init_density × cap)` → 2 edges/neuron capped vs 4 uncapped)
+and `ga.py:95` (the ceiling the add-edge mutation may not exceed). Every other
+parameter is identical between conditions:
+
+| parameter | value | provenance |
+|---|---|---|
+| architecture | retina(8) → 8 → 4 → 2 → 1 | paper, verbatim |
+| weights | ∈ {−1, +1}, magnitude never mutates | paper, verbatim |
+| units | hard threshold, fires iff (Σw·x + bias) > 0; bias = −threshold | paper, verbatim |
+| fan-in cap | `(3,3,3,2)` capped / `()` = unbounded ablation | capped = paper; ablation = ours |
+| population | 600 | paper (circuit experiment; reused by analogy) |
+| generations | 25,000 | paper, verbatim |
+| elite | 150 of 600, copied unchanged | reconstruction by analogy |
+| crossover `Pc` | 0.5, **per destination neuron** — a neuron's whole incoming column + its threshold is inherited from one parent | paper says "neuron-level"; the mechanism is our reconstruction |
+| mutation `Pm` | 0.5 per genome, **exactly one** edit from {add edge, remove edge, flip sign, nudge threshold ±1 clamped to [−3,+3]} | `Pm` is paper; the operator set is our reconstruction (Supporting Info unavailable) |
+| initial density | 0.5 (as a fraction of the fan-in cap, per node) | ours — not paper-stated |
+| fitness | `raw` = fraction correct over **all 256** patterns, every generation | KA's measure; paper samples 100/gen (deviation 1) |
+| goals | FG: `LEFT AND RIGHT` throughout. MVG: AND↔OR, switch every `E = 20` generations | paper, verbatim |
+| `Q_m` randomisations | 1,000 | paper, verbatim |
+| `Q_m` estimator | degree-preserving hill-climb, 6 restarts × 250 steps | **not** the paper's (it re-evolves 100 populations toward Q) — deviation 2 |
+| complexity penalty | **absent** | paper has 0.01/neuron above 13 — deviation 3, known gap |
+| log interval | every 10 generations (`purity` column only in `runs_purity/`, `runs_no_fanin/`) | ours |
+| seeds | 0–4 per arm per condition, `np.random.default_rng(seed)` | ours |
+
+Seeded and side-effect-free: re-running a seed retraces the identical
+trajectory, which `analysis/dense_replay.py --verify [--no-fanin]` proves rather
+than assumes (it re-runs seed 0 with per-generation logging and diffs every
+shared generation against the archive).
+
+---
+
 ## Run 7 — Run 6 ablation extended to 5 seeds/condition + purity/left_right_q scored on all 20 runs (2026-09-10, rough notes) → **direction survives at full power on all 4 metrics**
 
 Two things, both analysis/completion of existing work, no code changes:
