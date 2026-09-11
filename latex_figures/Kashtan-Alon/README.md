@@ -130,6 +130,53 @@ Notes:
 Approved 2026-09-11. The copy in this folder came from
 `kashtan_alon/runs_purity/newman_communities_mvg_seed1.png`.
 
+### `paper_10runs_grid.png` — the 10 final champion circuits
+
+| | |
+|---|---|
+| **Shows** | Last-AND-epoch champion of all 10 paper runs (5 FG top, 5 MVG bottom), nodes coloured by purity flow (blue = reads left retina, red = right) and ordered within each layer by that value. Per-panel caption: arm, seed, accuracy on AND; then Q, Q_m, r, purity. Legend is a blue→red gradient bar. |
+| **Point it makes** | The MVG row is visibly two-coloured and the FG row is visibly mixed, seed by seed, with no metric needed to see it. Three of five MVG seeds reach `r = +1.00, purity = 1.00` — no left↔right edge anywhere below the output. This is the **direct counterpart of `paper_10runs_grid_no_fanin.png`**: same layout, same generator, cap removed, and there the MVG row loses the colour separation. |
+| **Source data** | `kashtan_alon/runs_purity/` (needs `_brains.npz`; `runs/` predates archiving — same 10 runs, same seeds and parameters) |
+| **Generator** | `kashtan_alon/analysis/paper_grid.py`, drawing via `highlight_modules.draw_net_purity()` |
+
+```bash
+conda run -n lndp python kashtan_alon/run_paper.py            # the 10 runs, hours
+conda run -n lndp python kashtan_alon/analysis/paper_grid.py  # the grid
+```
+
+The per-panel numbers come from the generator's own stdout, which for the
+approved figure reads:
+
+```
+retina_fg_raw_seed0:  gen 24999 acc 0.8711 | Q=0.315 Q_m=-0.143 r=+0.394 purity=0.344
+retina_fg_raw_seed1:  gen 24999 acc 0.9570 | Q=0.415 Q_m=+0.228 r=+0.749 purity=0.656
+retina_fg_raw_seed2:  gen 24999 acc 0.8906 | Q=0.380 Q_m=-0.007 r=+0.560 purity=0.571
+retina_fg_raw_seed3:  gen 24999 acc 0.8867 | Q=0.401 Q_m=-0.036 r=+0.680 purity=0.635
+retina_fg_raw_seed4:  gen 24999 acc 0.9141 | Q=0.391 Q_m=+0.083 r=+0.640 purity=0.598
+retina_mvg_raw_seed0: gen 24970 acc 1.0000 | Q=0.501 Q_m=+0.459 r=+0.828 purity=0.810
+retina_mvg_raw_seed1: gen 24970 acc 0.9688 | Q=0.502 Q_m=+0.260 r=+1.000 purity=1.000
+retina_mvg_raw_seed2: gen 24970 acc 1.0000 | Q=0.434 Q_m=+0.333 r=+0.850 purity=0.857
+retina_mvg_raw_seed3: gen 24970 acc 0.9688 | Q=0.508 Q_m=+0.240 r=+1.000 purity=1.000
+retina_mvg_raw_seed4: gen 24970 acc 0.9375 | Q=0.484 Q_m=+0.237 r=+1.000 purity=1.000
+```
+
+Every FG panel is generation 24,999 and every MVG panel 24,970: that is the last
+generation each arm had AND as its live goal, not a different cut for each arm.
+
+Notes:
+* `SHOW_VALUES` in `paper_grid.py` prints each node's flow value inside the node
+  — off for the figure, turn on to verify the colouring.
+* `NODE_SCALE` multiplies marker area; it is passed to
+  `highlight_modules.draw_net_purity(node_scale=...)`, whose default of 1.0
+  keeps every other caller unchanged. `draw_net_purity`'s x-limits must clear a
+  node *radius* past the outermost retina pixel (±4.1) or large nodes are sliced.
+* Accuracy is recomputed for the brain actually drawn, not read from
+  `result.json` (which describes the final-generation champion — mid-OR-epoch
+  for every MVG seed). See the goal-matching note in the ablation section below.
+
+Approved 2026-09-11. The copy in this folder came from
+`kashtan_alon/runs/paper_10runs_grid.png`.
+
 ---
 
 ## The fan-in ablation — the same three figures, cap removed
@@ -206,29 +253,5 @@ Approved 2026-09-11. Copies came from
 
 ## Pending review
 
-These are built and open for review but **not yet copied into this folder**.
-
-### `paper_10runs_grid.png` — the 10 final champion circuits
-
-| | |
-|---|---|
-| **Shows** | Last-AND-epoch champion of all 10 paper runs (5 FG top, 5 MVG bottom), nodes coloured by purity flow (blue = reads left retina, red = right) and ordered within each layer by that value. Per-panel caption: arm, seed, accuracy on AND; then Q, Q_m, r, purity. Legend is a blue→red gradient bar. |
-| **Source data** | `kashtan_alon/runs_purity/` (needs `_brains.npz`; `runs/` predates archiving — same 10 runs, same seeds and parameters) |
-| **Generator** | `kashtan_alon/analysis/paper_grid.py`, drawing via `highlight_modules.draw_net_purity()` |
-
-```bash
-conda run -n lndp python kashtan_alon/run_paper.py            # the 10 runs, hours
-conda run -n lndp python kashtan_alon/analysis/paper_grid.py  # the grid
-```
-
-Notes:
-* `SHOW_VALUES` in `paper_grid.py` prints each node's flow value inside the node
-  — off for the figure, turn on to verify the colouring.
-* `NODE_SCALE` multiplies marker area; it is passed to
-  `highlight_modules.draw_net_purity(node_scale=...)`, whose default of 1.0
-  keeps every other caller unchanged. `draw_net_purity`'s x-limits must clear a
-  node *radius* past the outermost retina pixel (±4.1) or large nodes are sliced.
-* Accuracy is recomputed for the brain actually drawn, not read from
-  `result.json` (which describes the final-generation champion — mid-OR-epoch
-  for every MVG seed). See the goal-matching note in the ablation section above.
+Nothing pending. All seven figures above are approved and filed here.
 
