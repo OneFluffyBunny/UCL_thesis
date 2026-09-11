@@ -50,7 +50,7 @@ import qmetrics as qm
 # --no-fanin switches all three to the ablation's; see main()
 RUNS_DIR = str(_HERE.parents[1] / "runs_purity")
 OUT = str(_HERE.parents[1] / "runs" / "paper_10runs_grid.png")
-TITLE = "Kashtan-Alon paper-faithful repoduction"
+TITLE = "Kashtan-Alon paper-faithful reproduction"
 GOAL = "and"         # the single goal every panel is scored on
 PINNED_LR = {i: i // 4 for i in range(8)}          # 0=left retina, 1=right retina
 PINNED_PURITY = {i: (0 if i < 4 else 1) for i in range(8)}
