@@ -124,14 +124,13 @@ def main():
             else f"the two halves first meet in layer {first_cross + 1}")
 
     fig, ax = plt.subplots(figsize=(8.0, 8.4))
-    title = (f"MVG seed {cli.seed}, last AND-epoch champion (generation {gen}), "
-             f"accuracy {acc:.2f} on AND")
-    subtitle = (f"greedy Newman Q = {q:.2f},  Q_m = {q_m:+.2f}  ->  "
-                f"{len(comms)} communities, {cross} of {n_edges(wm)} edges cross\n"
-                f"the task's own left/right split:  circuit purity = {purity:.2f},  "
-                f"r = {info['r']:+.2f}  --  {meet}")
-    draw_net(ax, wm, cfg, {}, title, subtitle=subtitle,
+    # Deliberately bare: one title, the legend, and the two retina-half labels.
+    # Every number this figure is about (Q, Q_m, purity, r, cross edges, where the
+    # halves meet) is printed to stdout below and goes into the caption prose
+    # instead -- an earlier version put it all in the title and was unreadable.
+    draw_net(ax, wm, cfg, {}, "", subtitle="",
              pos=_positions_by_value(cfg, flow))
+    ax.set_title("Newman Q decomposition", fontsize=14)
 
     # the retina's two halves are already drawn with a gap; name them, because the
     # whole point is whether the communities line up with THIS split
@@ -149,9 +148,7 @@ def main():
                                  label="edge BETWEEN two communities"))
     ax.legend(handles=handles, loc="upper left", fontsize=9, framealpha=0.95)
 
-    fig.suptitle("Newman Q has to guess the partition; the task already knows it",
-                 fontsize=14)
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.tight_layout()
     out = os.path.join(OUT_DIR, f"newman_communities_mvg_seed{cli.seed}.png")
     fig.savefig(out, dpi=160, bbox_inches="tight")
     plt.close()

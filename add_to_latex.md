@@ -992,6 +992,40 @@ larger space — it is finding a dense, entangled, high-accuracy solution almost
 immediately, and that solution is simply not available under the cap. Scarcity
 buys modularity and **pays for it in both accuracy and search time**.
 
+**But re-adaptation speed is a null — the cap changes what evolution builds, not
+how fast it recovers from a switch.** This is the one comparison the
+per-generation dense replay (`switch_window_seed0.png` and its ablation twin) was
+built to make, and it comes out flat. Measured on the *population* mean of 600
+individuals, not the champion — `max()` reaches past the collapse, see the caveat
+in the figure's provenance — over the 9 complete goal phases in each 200-generation
+window, with recovery defined as reaching 90% of the way from the trough at the
+switch to that phase's own peak:
+
+| window | condition | population mean at the switch | peak inside the phase | generations to 90% recovery |
+|---|---|---|---|---|
+| gens 100–300 | capped | 0.403 | 0.815 | 9.2 ± 2.4 |
+| gens 100–300 | no cap | 0.481 | 0.920 | 8.8 ± 1.8 |
+| gens 1,000–1,200 | capped | 0.486 | 0.888 | **4.2 ± 0.4** |
+| gens 1,000–1,200 | no cap | 0.502 | 0.966 | **4.1 ± 0.6** |
+| gens 10,000–10,200 | capped | 0.499 | 0.962 | **4.6 ± 1.0** |
+| gens 10,000–10,200 | no cap | 0.502 | 0.967 | **4.4 ± 0.5** |
+
+(MVG seed 0 only; the FG arm has no switches, and its "recovery" numbers are drift
+inside a flat curve — trough 0.845 to peak 0.851 — so they are not comparable and
+are excluded.) The recovery *times* are indistinguishable, within a fraction of a
+generation in every window. What the extra wiring buys is the recovery **level**
+(0.89 → 0.97 in the early window, 0.96 → 0.97 late), not the recovery **rate**.
+Two things follow. First, the switch cost itself is a property of the *task pair*,
+not of the architecture's connectivity — every switch still craters the population
+to ~0.50 regardless of cap, which is the 0.75 shortcut's mirror image: the
+population has specialised, and specialists die at a switch whatever their fan-in.
+Second, the mechanism by which the cap produces modularity is **not** "the capped
+network is slower to re-adapt and is therefore pushed to reuse parts". Both
+conditions re-adapt at the same speed; only the capped one becomes modular. Any
+account of why constraint matters has to be about the *reachable set of solutions*,
+not about switching dynamics. Reporting this negative is worth the space precisely
+because the switching-dynamics story is the intuitive one.
+
 **MVG runs sparser than FG in both conditions — but "parsimony" is the wrong
 word.** Mean density (% of the 107 possible feedforward edges):
 

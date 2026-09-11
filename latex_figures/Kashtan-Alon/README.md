@@ -202,6 +202,12 @@ conda run -n lndp python kashtan_alon/analysis/newman_vs_binary.py --seed 3  # a
 Notes:
 * `draw_net()` gained an optional `pos=` argument for this figure; its default
   is unchanged, so every other caller draws exactly as before.
+* The figure is deliberately bare — title `Newman Q decomposition`, the legend,
+  and the two retina-half labels, nothing else. Every number it is *about* (Q,
+  Q_m, purity, `r`, cross-edge count, where the halves meet, the community
+  memberships) is **printed to stdout** by the generator and belongs in the
+  caption prose. An earlier version put all of it in the title; it was
+  unreadable, and the numbers are the caption's job.
 * The left/right divider is drawn only as far up as it is **measured** to hold
   (the first block containing a left↔right edge), so the figure stays honest on
   a seed whose split is not perfect.

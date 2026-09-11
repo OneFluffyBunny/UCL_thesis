@@ -187,16 +187,38 @@ in this repo that plans to lean on `Q_m`.
    close.** First generation at which the champion reaches a given accuracy
    *during an AND epoch*, per seed:
 
-   | threshold | capped FG | capped MVG | no-cap FG | no-cap MVG |
-   |---|---|---|---|---|
-   | 0.90 | 2/5 seeds ever (340, 17030) | median **890** | median **60** | median **90** |
-   | 0.95 | 1/5 ever (2570) | 4/5, median ~6900 | 4/5, median ~110 | median **170** |
-   | 0.99 | never | 2/5 (2250, 6890) | 1/5 (440) | median **290** |
-   | 1.00 | never | 2/5 (6890, 23930) | never | **all 5**, 240–400 |
+   Full table, so it is checkable seed by seed. `never` = not reached in any AND
+   epoch of the 25,000 generations. Read off `best_fit` at rows with `op == and`
+   in `<run>_log.csv` (log interval 10, so every figure is a multiple of 10);
+   the summary column gives the median when all 5 seeds reached the threshold and
+   a hit count otherwise, because a median over the survivors only is censored.
+
+   | threshold | group | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 | summary |
+   |---|---|---|---|---|---|---|---|
+   | 0.90 | capped FG | never | 340 | never | never | 17030 | 2/5 reached |
+   | 0.90 | capped MVG | 690 | 890 | 1490 | 730 | 1410 | median **890** |
+   | 0.90 | no-cap FG | 60 | 30 | 70 | 40 | 230 | median **60** |
+   | 0.90 | no-cap MVG | 130 | 50 | 90 | 170 | 90 | median **90** |
+   | 0.95 | capped FG | never | 2570 | never | never | never | 1/5 reached |
+   | 0.95 | capped MVG | 1970 | 14090 | 1930 | 11760 | never | 4/5 reached |
+   | 0.95 | no-cap FG | 1030 | 50 | 160 | 60 | never | 4/5 reached |
+   | 0.95 | no-cap MVG | 290 | 80 | 130 | 210 | 170 | median **170** |
+   | 0.99 | capped FG | never | never | never | never | never | 0/5 reached |
+   | 0.99 | capped MVG | 6890 | never | 2250 | never | never | 2/5 reached |
+   | 0.99 | no-cap FG | never | 440 | never | never | never | 1/5 reached |
+   | 0.99 | no-cap MVG | 290 | 90 | 250 | 360 | 320 | median **290** |
+   | 1.00 | capped FG | never | never | never | never | never | 0/5 reached |
+   | 1.00 | capped MVG | 6890 | never | 23930 | never | never | 2/5 reached |
+   | 1.00 | no-cap FG | never | never | never | never | never | 0/5 reached |
+   | 1.00 | no-cap MVG | 400 | 240 | 250 | 360 | 320 | median **320** |
 
    Uncapped MVG reaches a *perfect* score on every seed inside 400 generations;
    capped MVG manages it twice in 25,000 and capped FG never gets past 0.95.
    That is ~10× on the easy thresholds and a difference in kind on the hard ones.
+   Note the 0.99/1.00 rows also invert the FG/MVG ordering *within* the ablation:
+   uncapped FG, which ends up the denser arm (note 2), solves AND perfectly on no
+   seed while uncapped MVG does on all five — so "more edges" is not by itself
+   what buys the speed.
 
 2. **MVG runs sparser than FG in both conditions — but "parsimony" is the wrong
    word; nothing in the fitness prices an edge.** Mean density (% of the 107
