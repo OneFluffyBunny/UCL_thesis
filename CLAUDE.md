@@ -88,8 +88,17 @@ touching this. Run with `conda run -n lndp python kashtan_alon/run_paper.py` (th
 - Curriculum-vs-cold experiments so far are **nulls** (no speed or modularity gain).
 - When a run stalls below the task we cannot yet separate *representability*
   (encoding can't express it) from *reachability* (search didn't find it).
-- **The #1 missing tool is a modularity METRIC** (Newman Q / Infomap on the grown
-  adjacency) — build it before any new architecture; it's the thing we can't yet measure.
+- ~~The #1 missing tool is a modularity METRIC~~ — **BUILT.** `qmetrics/` (Newman Q,
+  KA's normalized Q_m, planted left/right split, circuit purity, Infomap) plus
+  `experiments/shared_brain_metrics.py`, which wraps the four of them for a
+  RECURRENT (N,N) brain and adds `recurrent_purity` — `qmetrics.circuit_purity`
+  raises on a cycle, so it cannot run on any brain in `experiments/`. Score a study
+  with `experiments/analysis/run_all.py --root <runs dir>`.
+- **Read density before reading any modularity number.** An unconstrained arm
+  converges to 94-100% density, where a complete graph has no communities to find
+  and no sparser null to compare against: Q_m and the left/right score come back
+  `nan` and purity is 0.000 by construction. That is *unanswerable*, not
+  *unmodular*. The synaptic budget is what makes the question askable.
 
 ## Conventions
 - Stack: JAX, Equinox, Optax, evosax (CMA_ES). Balanced accuracy (chance = 0.5),
