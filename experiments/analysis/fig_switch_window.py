@@ -121,6 +121,10 @@ def main():
         data[arm] = trajectory(runs[arm], gens, thr)[0]
         print(f"  {arm}: {len(data[arm])} generations scored")
 
+    # one Q scale for every column, computed before drawing
+    q_all = [r.get("q", np.nan) for rows in data.values() for r in rows]
+    q_top = float(np.nanmax(q_all)) * 1.1 if np.isfinite(np.nanmax(q_all)) else 1.0
+
     fig, axes = plt.subplots(3, len(have), figsize=(7.2 * len(have), 8.4),
                              sharex=True, squeeze=False)
     for col, arm in enumerate(have):
@@ -139,7 +143,12 @@ def main():
             ax.plot(x, [r[f"acc_{op}"] for r in rows], lw=1.2,
                     color=OP_COLOR.get(op, None), label=f"accuracy on {op.upper()}")
         ax.axhline(0.75, color="0.4", lw=0.8, ls="--")
-        ax.text(x[0], 0.753, "0.750 = one-eye cap", fontsize=7.5, color="0.35")
+        ax.text(x[0], 0.757, "0.750 = one-eye cap", fontsize=7.5, color="0.35")
+        # FIXED range across columns. Autoscaling made the converged FG panel
+        # span 0.76-0.86 and the MVG panel 0.3-0.85, so the same vertical
+        # distance meant different things in the two columns and the one-eye
+        # cap fell off the FG axis entirely.
+        ax.set_ylim(0.25, 1.02)
         ax.set_ylabel("accuracy (raw)")
         ax.set_title(f"{ref.encoding} encoding — {arm.replace('_', ' ')} — seed {args.seed}",
                      fontsize=11)
@@ -157,6 +166,7 @@ def main():
                  alpha=0.85, label="Newman Q (secondary)")
         ax2.set_ylabel("Newman Q", color="#ff7f0e")
         ax2.tick_params(axis="y", labelcolor="#ff7f0e")
+        ax2.set_ylim(0, q_top)          # shared across columns, same reason
         h1, l1 = ax.get_legend_handles_labels()
         h2, l2 = ax2.get_legend_handles_labels()
         ax.legend(h1 + h2, l1 + l2, fontsize=8, loc="upper left", framealpha=0.9)

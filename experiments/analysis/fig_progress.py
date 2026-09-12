@@ -8,14 +8,19 @@ The `kashtan_alon/analysis/fg_mvg_purity.py` equivalent. Where
 trajectory with the seeds pooled: median across seeds, with the full seed range
 as a band, because 5 seeds is too few for a standard error to mean much.
 
-Accuracy comes from the archive scored ON THE REFERENCE GOAL at every sampled
-generation — NOT from log.csv's `best_acc`, which under --mvg is the accuracy on
-whichever goal happened to be active in that row and therefore alternates between
-two different tasks. That distinction is the whole reason `acc_by_op` exists.
+Accuracy comes from the archive scored ON THE REFERENCE GOAL — NOT from
+log.csv's `best_acc`, which under --mvg is the accuracy on whichever goal was
+active in that row and therefore alternates between two different tasks. That
+distinction is the whole reason `acc_by_op` exists.
 
-Modularity is sampled at --n-points generations rather than every one: the point
-here is the long-run trend, and the per-generation detail is the other figure's
-job.
+Every sample is taken at the END OF A REFERENCE-GOAL EPOCH, not at evenly spaced
+generations -- see `reference_epoch_ends`. Even spacing aliases against the
+20-generation switch cycle and draws a sawtooth that is an artifact of the
+sampling rate.
+
+Modularity is sampled at --n-points points rather than every generation: the
+point here is the long-run trend, and the per-generation detail is the other
+figure's job.
 """
 
 from __future__ import annotations
@@ -48,12 +53,42 @@ PANELS = [("acc", "accuracy on the reference goal (raw)"),
           ("density", "density (%)")]
 
 
+def reference_epoch_ends(arc):
+    """Indices of the LAST generation of each epoch that ran the reference goal.
+
+    Sampling an MVG run at evenly spaced generations ALIASES: a goal epoch is 20
+    generations long, so points 200 apart land at arbitrary phases and the plot
+    grows a sawtooth whose period is an artifact of the sampling rate, not of the
+    run. Worse, half those points are scored mid-OR and are not comparable to the
+    fixed-goal arm at all.
+
+    Sampling the last generation of each AND epoch fixes both: every point is the
+    same kind of state (a goal the population has had a full epoch to adapt to),
+    and it is the same state `matched` reports at the end, so the trajectory
+    actually leads to the number in the table. For a fixed-goal run every
+    generation qualifies and this reduces to "all of them".
+    """
+    op, ref = arc["op"], arc["reference_op"]
+    is_ref = op == ref
+    if is_ref.all():
+        # Fixed goal: the whole run is one contiguous reference block, so asking
+        # for "epoch ends" would return exactly one index and the arm would plot
+        # as a single invisible point. Every generation is already comparable.
+        return np.arange(len(op), dtype=int)
+    # last index of each contiguous run of reference-goal generations
+    ends = [i for i in range(len(op)) if is_ref[i] and (i + 1 == len(op) or not is_ref[i + 1])]
+    return np.asarray(ends, dtype=int)
+
+
 def sample_run(run, n_points, threshold):
     arc = run.archive()
     if arc is None:
         return None
     gens = arc["gen"]
-    idx = np.unique(np.linspace(0, len(gens) - 1, n_points).astype(int))
+    cand = reference_epoch_ends(arc)
+    if len(cand) == 0:                       # no reference-goal epoch (should not happen)
+        cand = np.arange(len(gens))
+    idx = cand[np.unique(np.linspace(0, len(cand) - 1, n_points).astype(int))]
     n_in, n_hid, n_out = run.shape
     ref = arc["reference_op"]
     out = {k: [] for k, _ in PANELS}

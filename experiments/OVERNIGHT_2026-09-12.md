@@ -234,7 +234,57 @@ answered low — it is unanswerable. The budget is what makes it askable.
 
 ## 6. Run ledger
 
-(filled in as runs complete; each row = one seed dir under experiments/*/runs/)
+Everything is driven by one script. **To see what is done:**
+
+```
+conda run -n lndp python experiments/run_fgmvg_study.py --status
+```
+
+**To run / resume everything** (skips any seed whose `result.json` says
+`"complete": true`, so this is also the crash-recovery command):
+
+```
+cd experiments
+python run_fgmvg_study.py --experiment 1 --lanes 10
+python run_fgmvg_study.py --experiment 2 --lanes 10
+```
+
+Note `python` there must be the env interpreter directly
+(`C:\Users\raduc\miniconda3\envs\lndp\python.exe`), NOT `conda run` — see the
+gotchas in section 5. The runner already does this for the children it spawns.
+
+40 runs total = 2 experiments x 4 arms x 5 seeds. Output lands in
+`experiments/experiment_{1,2}/runs/fgmvg/<arm>/<run_name>_seed<N>/`.
+
+| experiment | arm | gens | status |
+|---|---|---|---|
+| 1 (compressed) | nobudget_fg | 10,000 | **5/5 done** |
+| 1 | nobudget_mvg | 10,000 | **5/5 done** |
+| 1 | budget_fg (S=6, tau=0.9) | 10,000 | **5/5 done** |
+| 1 | budget_mvg (S=6, tau=0.9) | 10,000 | **5/5 done** |
+| 2 (direct) | nobudget_fg | 5,000 | running |
+| 2 | nobudget_mvg | 5,000 | running |
+| 2 | budget_fg (S=4, tau=0.9) | 5,000 | queued |
+| 2 | budget_mvg (S=4, tau=0.9) | 5,000 | queued |
+
+### Analysis
+
+```
+cd experiments
+python analysis/run_all.py --root experiment_1/runs/fgmvg
+python analysis/run_all.py --root experiment_2/runs/fgmvg
+```
+
+Produces, next to the runs: `metrics_per_seed.csv`, `metrics_summary.json`,
+`progress_fg_vs_mvg.png`, `switch_window_*.png`, `brains_grid_*.png`.
+Individual pieces: `score_table.py`, `fig_progress.py`, `fig_switch_window.py`,
+`fig_brains.py`. Add `--quick` while iterating.
+
+**Timing, so a slow pass is not mistaken for a hang:** a 20-run scoring pass at
+`--n-rand 200` takes ~13 minutes. `normalized_qm` costs ~10-15s per brain and is
+INDEPENDENT of `n_rand` (the cost is the fixed Q_max hill-climb); `left_right_q`
+is cheap but DOES scale with `n_rand`; purity and Newman Q are near-free.
+Keep `--n-jobs 1` whenever training is also running.
 
 ---
 

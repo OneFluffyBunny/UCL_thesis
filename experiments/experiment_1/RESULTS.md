@@ -643,3 +643,141 @@ plateau — so single-sign weights do not explain that plateau.
 - **Wire `qmetrics` into exp 1** — still not connected; `Q` is not computed at any
   point in the training loop. Cheap raw `Q` per log interval + normalised `Q_m`
   once at the end (the kashtan_alon split).
+
+---
+
+## FG vs MVG x constraint, 4 arms x 5 seeds, 10k generations (2026-09-12)
+
+The `kashtan_alon/` 4-group design, run on this encoding. Preregistration, exact
+commands, preflight evidence and recovery notes: `../OVERNIGHT_2026-09-12.md`.
+Reproduce the analysis with `python analysis/run_all.py --root
+experiment_1/runs/fgmvg`.
+
+```
+cd experiments
+python run_fgmvg_study.py --experiment 1 --lanes 10      # 20 runs, resumable
+```
+
+`retina_ka2005`/AND, **raw** accuracy (`--no-balanced`), margin fitness, K=8,
+n_hidden=24, popsize 64, 10,000 generations, `--no-early-stop`, seeds 0-4.
+Constrained arm `--synaptic-budget 6 --shrink 0.9`; MVG arm AND<->OR every 20
+generations. Every number below is the **goal-matched** champion (`matched`: the
+last champion selected under AND), so FG and MVG are the same measurement --
+see the goal-matching note further down.
+
+| condition | arm | n | acc (AND) | acc (OR) | density % | LR (primary) | purity (primary) | Q | Q_m |
+|---|---|---|---|---|---|---|---|---|---|
+| budget (S=6, tau=0.9) | FG | 5 | 0.895+-0.017 | n/a | 43.0+-5.3 | -0.569+-1.322 | **0.114+-0.088** | 0.169+-0.096 | 0.403+-0.324 |
+| budget | MVG | 5 | 0.853+-0.016 | 0.423+-0.034 | 34.0+-7.6 | -0.090+-0.744 | 0.066+-0.106 | **0.208+-0.154** | 0.587+-0.588 |
+| no budget (ablation) | FG | 5 | **0.978+-0.022** | n/a | 93.7+-6.4 | -2.738+-6.474 (3/5) | 0.021+-0.008 | 0.048+-0.024 | -0.178 (1/5) |
+| no budget | MVG | 5 | 0.867+-0.042 | 0.467+-0.080 | 96.9+-5.1 | 1.538 (1/5) | 0.004+-0.008 | 0.010+-0.014 | 1.000 (1/5) |
+
+Seeds beating their own degree-preserving null at the planted split (p < 0.05):
+**budget MVG 2/5; every other arm 0/5.**
+
+### 1. `retina_ka2005` is solvable under the g-encoding — the old ceiling was wrong
+
+The unconstrained fixed-goal arm reaches **0.978 +- 0.022, with seed 3 at exactly
+1.000**. This supersedes this notebook's standing claim that experiment 1 tops
+out around 0.885 and the planning estimate of "0.85-0.89, not a solve". The 0.891
+figure quoted as a ceiling is the *monotone-representability* bound; the
+g-encoding is not monotone, so it never applied. What was weak was the earlier
+task/metric/K combinations, not the encoding. For reference KA's own network gets
+0.90+-0.03 on this task, so the unconstrained arm is now above the reference
+reproduction.
+
+### 2. The CONSTRAINT produces the modularity. Goal-switching does not.
+
+This is the finding, and it is the same one `kashtan_alon/` reports for its
+fan-in cap:
+
+* purity 0.114 / 0.066 (constrained) vs 0.021 / 0.004 (ablation) — 5x to 16x.
+* Q 0.169 / 0.208 vs 0.048 / 0.010.
+* density 34-43% vs 94-97%.
+
+**Removing the budget does not answer the modularity question low; it makes the
+question unanswerable.** Three of the five `nobudget_mvg` seeds converge to
+*exactly* 100.0% density: a complete graph has no communities to find and no
+sparser degree-preserving null to compare against, so LR and Q_m come back `nan`
+and purity is 0.000 by construction (every neuron is fed by every input). Say
+"undefined", not "unmodular". This replicates the 2x2 in `add_to_latex.md`.
+
+MVG, meanwhile, does **not** beat FG:
+
+| metric | direction | constrained | ablation |
+|---|---|---|---|
+| accuracy | **FG > MVG** | 0.895 vs 0.853 | 0.978 vs 0.867 |
+| purity (primary) | **FG > MVG** | 0.114 vs 0.066 | 0.021 vs 0.004 |
+| Q (secondary) | MVG > FG | 0.169 vs 0.208 | 0.048 vs 0.010 |
+| LR seeds significant | **MVG > FG** | 0/5 vs 2/5 | 0/5 vs 0/5 |
+
+Two of the four cut for MVG, two against, and the two that favour MVG disagree
+with each other about the ablation. The single cleanest pro-MVG fact is that
+`budget_mvg` is the ONLY arm with any seed beating its null at the planted split
+(seeds 1 and 2, p = 0.005 each, LR +0.616 and +0.573, Q 0.195 and 0.462) — but
+3/5 of its seeds do not, and seed 0 is at LR -1.138. Report the split, do not
+average it away.
+
+### 3. MVG never holds both goals — it swaps between them every epoch
+
+The AND-matched champion of an MVG run scores **0.423 +- 0.034 (constrained) and
+0.467 +- 0.080 (ablation) on OR** — not merely worse than AND, but far below the
+0.750 cap that any one-eye solution already achieves, and below chance-level
+performance on the goal it is not currently being selected for.
+
+`runs/fgmvg/switch_window_budget_seed0.png` shows the mechanism generation by
+generation: AND and OR accuracy alternate in near-perfect antiphase, each rising
+to ~0.83 while it is the active goal and collapsing to ~0.40-0.50 the moment the
+goal switches. Over 10,000 generations and 500 switches there is no sign of the
+oscillation narrowing.
+
+So MVG here is not building a network that solves both sub-goals with a shared
+modular decomposition — the mechanism Kashtan-Alon propose. It is building one
+that re-specialises every 20 generations. That is a substantive negative result
+about MVG in this framework, and it is invisible to any measurement that reports
+only the active goal.
+
+### 4. The goal-matching bug was NOT cosmetic here
+
+`train.py` previously reported `final` (the last generation's champion) under
+`--mvg`. The switch schedule is deterministic and 10,000/20 is even, so every MVG
+run ends mid-OR and `final` is an OR-selected network being compared against the
+FG arm's AND-selected one. Measured on an 80-generation self-test the two differ
+by **4x in density** (AND epoch 23.2%, OR epoch 91.0%), and the best-EVER
+champion reported 0.840 which `acc_by_op` reveals to be 0.840 on OR and **0.512
+on AND**. Fixed 2026-09-12: `matched` is the last champion selected under
+`--operation`, it is now the headline under `--mvg`, and every saved champion is
+scored against every goal into `result.json`'s `acc_by_op`.
+
+### 5. Caveats
+
+* **LR is degenerate at high density.** Its spread is +-1.322 to +-6.474, with
+  single-seed values of -10.214 and +1.538 and 2/5 to 4/5 seeds undefined in the
+  ablation arms. It is a normalised score whose denominator collapses when the
+  graph approaches complete. Trust its **p-values and its sign on sparse graphs**;
+  do not average its magnitude across arms of different density. Purity does not
+  have this failure mode and is the metric to lead with here.
+* **Q_m likewise** (+-0.324 to +-0.588, several arms with one usable seed).
+  Consistent with KA's own observation that Q_m stops discriminating above ~50%
+  density.
+* **The budget costs ~8 points of accuracy** (0.978 -> 0.895 under FG), so
+  constrained and unconstrained arms are different competence regimes and any
+  constrained-vs-unconstrained modularity difference is confounded with that.
+  The FG-vs-MVG contrast *within* a constraint level is the clean comparison.
+* 5 seeds. Every mean here has a spread that overlaps its neighbour on at least
+  one metric.
+* **purity is 0.000 in 3 of 5 `budget_mvg` seeds**, which drags that mean down
+  and is why its SD (+-0.106) exceeds its mean. A zero there means no hidden
+  neuron had one-sided ancestry, not that the metric failed.
+
+### Figures (in `runs/fgmvg/`, NOT yet promoted to `latex_figures/`)
+
+* `switch_window_budget_seed0.png` — accuracy + purity + Q + density, every
+  generation, across ~20 goal switches. The antiphase result above.
+* `progress_fg_vs_mvg.png` — all four arms over 10,000 generations, median and
+  full seed range. Sampled at the END of each reference-goal epoch, never at
+  even spacing: even spacing aliases against the 20-generation switch cycle and
+  draws a sawtooth that is an artifact of the sampling rate.
+* `brains_grid_purity.png` / `_community.png` — every run's goal-matched
+  champion, hidden neurons coloured by left/right ancestry.
+* `metrics_per_seed.csv`, `metrics_summary.json` — the numbers above.
