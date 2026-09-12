@@ -258,10 +258,10 @@ gotchas in section 5. The runner already does this for the children it spawns.
 
 | experiment | arm | gens | status |
 |---|---|---|---|
-| 1 (compressed) | nobudget_fg | 10,000 | **5/5 done** |
-| 1 | nobudget_mvg | 10,000 | **5/5 done** |
-| 1 | budget_fg (S=6, tau=0.9) | 10,000 | **5/5 done** |
-| 1 | budget_mvg (S=6, tau=0.9) | 10,000 | **5/5 done** |
+| 1 (compressed) | nobudget_fg | 10,000 | **5/5 done, scored, figured** |
+| 1 | nobudget_mvg | 10,000 | **5/5 done, scored, figured** |
+| 1 | budget_fg (S=6, tau=0.9) | 10,000 | **5/5 done, scored, figured** |
+| 1 | budget_mvg (S=6, tau=0.9) | 10,000 | **5/5 done, scored, figured** |
 | 2 (direct) | nobudget_fg | 5,000 | running |
 | 2 | nobudget_mvg | 5,000 | running |
 | 2 | budget_fg (S=4, tau=0.9) | 5,000 | queued |
@@ -296,3 +296,64 @@ Keep `--n-jobs 1` whenever training is also running.
   so re-running the same command resumes rather than restarts.
 - To see what is running: check section 6 above, then `ls experiments/*/runs/`.
 - To resume everything: re-run the commands in section 6 verbatim.
+
+
+---
+
+## 8. Results so far (read this first in the morning)
+
+Full write-up: `experiment_1/RESULTS.md`, new section at the bottom. Numbers:
+`experiment_1/runs/fgmvg/metrics_summary.json` + `metrics_per_seed.csv`.
+
+### Experiment 1 — done, 20/20
+
+| condition | arm | acc (AND) | acc (OR) | density % | LR | purity | Q | Q_m |
+|---|---|---|---|---|---|---|---|---|
+| budget | FG | 0.895+-0.017 | n/a | 43.0+-5.3 | -0.569+-1.322 | **0.114+-0.088** | 0.169+-0.096 | 0.403+-0.324 |
+| budget | MVG | 0.853+-0.016 | 0.423+-0.034 | 34.0+-7.6 | -0.090+-0.744 | 0.066+-0.106 | **0.208+-0.154** | 0.587+-0.588 |
+| ablation | FG | **0.978+-0.022** | n/a | 93.7+-6.4 | undefined (3/5) | 0.021+-0.008 | 0.048+-0.024 | undefined (1/5) |
+| ablation | MVG | 0.867+-0.042 | 0.467+-0.080 | 96.9+-5.1 | undefined (1/5) | 0.004+-0.008 | 0.010+-0.014 | undefined (1/5) |
+
+Seeds beating their own null at the planted split: **budget MVG 2/5, all others 0/5.**
+
+Three things to take to the thesis:
+
+1. **`retina_ka2005` is solvable under the g-encoding — 0.978, one seed at
+   1.000.** This kills the "experiment 1 tops out at 0.885" line that is
+   currently in RESULTS.md, and beats KA's own 0.90+-0.03.
+2. **The CONSTRAINT makes the modularity, goal-switching does not.** 5-16x on
+   purity, 4-20x on Q, density halved. Removing it sends 3 of 5 MVG seeds to
+   *exactly* 100.0% density, where the metrics are undefined rather than low.
+   MVG does not beat FG: accuracy and purity favour FG, Q and LR-significance
+   favour MVG — two of four each way, reported as a split.
+3. **MVG never holds both goals.** The AND-matched champion scores 0.42-0.47 on
+   OR, below the 0.750 one-eye cap. `switch_window_budget_seed0.png` shows AND
+   and OR alternating in near-perfect antiphase across all 500 switches with no
+   narrowing. MVG is re-specialising every epoch, not building a shared modular
+   decomposition.
+
+### Experiment 2 — the budget analogue you asked me to propose
+
+Already built and running, so there is nothing to decide in the morning unless
+you dislike it. `shared_direct_model.py` gained the SAME synaptic budget as
+experiment 1: each neuron gets a fixed total incoming |weight| `S`, shared out
+over its synapses, with `--shrink tau` zeroing anything below tau x that
+neuron's own mean before the share-out.
+
+It is an exact analogue rather than an approximation, and simpler than
+experiment 1's, for one reason: experiment 1 evaluates `g` per *signature* and so
+must weight each pair by how many clone neurons it stands for
+(`_source_multiplicity`); in the direct encoding every matrix entry IS one
+synapse, so that correction collapses to the role mask. Same guarantee in both:
+`sum_i |w[i,v]| = S` for every non-input neuron.
+
+Default 0.0 leaves experiment 3 byte-identical (regression-checked). Measured on
+a 150-generation probe: **38.7% density at 0.883 accuracy**, the same band as
+KA's capped arm (34-38%). Running at S=4, tau=0.9.
+
+### What is NOT done
+- No figure has been copied into `latex_figures/` — that needs your eyes first.
+- `add_to_latex.md` has not been updated with the new 4-group table.
+- The earlier 2x2 in `add_to_latex.md` (3 seeds, n_hidden=24, K=6, S=4 tau=0.9,
+  2000 gens) is now SUPERSEDED by this 5-seed 10k-generation study, but the old
+  entry has not been marked as such.
