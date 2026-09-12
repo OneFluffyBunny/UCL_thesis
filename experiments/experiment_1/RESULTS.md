@@ -729,7 +729,14 @@ performance on the goal it is not currently being selected for.
 generation: AND and OR accuracy alternate in near-perfect antiphase, each rising
 to ~0.83 while it is the active goal and collapsing to ~0.40-0.50 the moment the
 goal switches. Over 10,000 generations and 500 switches there is no sign of the
-oscillation narrowing.
+oscillation narrowing. Seed 2 (`..._budget_seed2.png`) is the cleanest case: two
+near-perfect square waves in exact antiphase.
+
+**And it is not an artifact of the budget.** `switch_window_nobudget_seed0.png`
+shows the same antiphase in the unconstrained arm — AND and OR alternating
+0.90 / 0.40-0.60 — at 85-100% density with Newman Q pinned under 0.01. So the
+trade-off is what goal-switching does in this framework, in both constraint
+conditions, and (see experiment 2) under the direct encoding as well.
 
 So MVG here is not building a network that solves both sub-goals with a shared
 modular decomposition — the mechanism Kashtan-Alon propose. It is building one
