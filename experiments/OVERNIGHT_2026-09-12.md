@@ -377,12 +377,60 @@ constraint; a 443-parameter compressed one cannot.
 constrained arms land at MATCHED density (exp 2 at 37-39%, exp 1 at 34-43%), so
 density is controlled for free. The direct encoding is ahead on accuracy
 (1.000 vs 0.895). Whether the genomic bottleneck buys anything therefore rests
-ENTIRELY on the modularity metrics at that matched density — see the two
-`metrics_summary.json` files.
+ENTIRELY on the modularity metrics at that matched density.
+
+### Experiment 2 — modularity metrics, scored 20/20
+
+| condition | arm | acc (AND) | acc (OR) | density % | LR | purity | Q | Q_m |
+|---|---|---|---|---|---|---|---|---|
+| budget | FG | 1.000+-0.000 | n/a | 37.8+-0.7 | 0.102+-0.069 | 0.151+-0.011 | **0.221+-0.019** | 0.050+-0.023 |
+| budget | MVG | 1.000+-0.000 | 0.500+-0.000 | 37.8+-0.6 | **0.129+-0.117** | **0.169+-0.039** | 0.218+-0.013 | 0.043+-0.031 |
+| ablation | FG | 1.000+-0.000 | n/a | 95.6+-0.3 | undefined (4/5) | 0.017+-0.006 | 0.070+-0.006 | undefined (1/5) |
+| ablation | MVG | 1.000+-0.000 | 0.500+-0.000 | 97.3+-1.0 | undefined (0/5) | 0.020+-0.013 | 0.085+-0.007 | undefined (0/5) |
+
+Seeds beating their own null at the planted split: **budget MVG 3/5, budget FG
+1/5, both ablation arms 0/5.**
+
+Two readings, both new:
+
+1. **Same constraint conclusion as experiment 1, now on a second encoding.**
+   Purity is ~9x higher constrained (0.151-0.169 vs 0.017-0.020) with
+   non-overlapping spreads; Q ~3x. Unconstrained, LR and Q_m are *undefined*
+   rather than low — at 95-98% density there is no sparser degree-preserving
+   null. **The constraint, not the goal-switching, is what makes modularity
+   appear — and it now replicates across encodings.**
+2. **First consistent MVG > FG signal in the project.** Constrained: purity
+   0.169 vs 0.151, LR 0.129 vs 0.102, significant LR in 3/5 seeds vs 1/5; Q and
+   Q_m tie. Small, not individually significant at n=5, but it points one way on
+   every defined metric — where experiment 1's constrained pair splits two
+   metrics each way. Report as a weak consistent direction, not a demonstration.
+
+### The cross-encoding answer: the bottleneck does not buy modularity here
+
+At matched density and `matched` champion, the direct encoding is **at least as
+modular** as the compressed one (purity 0.151 vs 0.114 FG, 0.169 vs 0.066 MVG;
+Q 0.221 vs 0.169; LR-MVG +0.129 vs -0.090; sig LR 3/5 vs 2/5), **far more
+consistent** (purity sd 0.011 vs 0.088), **and** saturates a task the compressed
+encoding cannot solve. Only Q_m favours the bottleneck (0.587+-0.588) and that
+spread with two seeds at exactly 0.000 means one or two runs carry it.
+
+So: **a negative result for the genomic-bottleneck hypothesis as stated.** Full
+caveat list in `experiment_2/RESULTS.md` section 6 — the load-bearing ones are
+(a) evaluation budgets are NOT matched across encodings (640k vs 320k, though
+the control wins on the *smaller* budget), (b) the two encodings are in
+different competence regimes (ceiling vs 10 points short), and (c) experiment
+1's metric variances are so large at n=5 that the honest claim is "no evidence
+the bottleneck helps", not "evidence it does not".
+
+The obvious next run, if you want the claim to hold up: rerun experiment 2 at
+10,000 generations (or experiment 1 at 5,000) so the budgets match. ~7h for the
+20 runs at 10 lanes.
 
 ### What is NOT done
 - No figure has been copied into `latex_figures/` — that needs your eyes first.
-- `add_to_latex.md` has not been updated with the new 4-group table.
-- The earlier 2x2 in `add_to_latex.md` (3 seeds, n_hidden=24, K=6, S=4 tau=0.9,
-  2000 gens) is now SUPERSEDED by this 5-seed 10k-generation study, but the old
-  entry has not been marked as such.
+  All 15 figures live in the two `runs/fgmvg/` directories (gitignored).
+- `add_to_latex.md` has not been updated with either new 4-group table, nor with
+  the cross-encoding comparison. Its stale experiment-1 verdict section HAS been
+  flagged with a `SUPERSEDED IN PART` banner (commit `15a09f8`), but the old
+  3-seed 2x2 numbers underneath it were left in place rather than rewritten.
+- Evaluation budgets across the two encodings are not matched (see above).
