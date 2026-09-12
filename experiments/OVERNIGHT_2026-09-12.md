@@ -120,19 +120,21 @@ switches, never an endpoint that happens to land on OR.
 | metric | **RAW accuracy** (`--no-balanced`) | equal cells => raw IS per-cell mean; every one-eye cheat caps at exactly 0.750. Balanced would hand that same cheat 0.833. |
 | operation (FG) | `and` | matches K-A's reported arm |
 | MVG ops | `and,or`, `--switch-interval 20` | classic KA pairing; E=20 measured right in exp_1 RESULTS.md (median t_recover = 10 gens) |
-| K (`--n-types`) | **TBD by preflight, default 8** | |
+| K (`--n-types`) | **8** | preflight: 0.914 vs K=6's 0.906; and at K=8 non-modularity is expressible |
 | n_hidden | 24 | user's read; matches the 2x2 study |
 | fitness | `margin` | accuracy fitness is piecewise-constant => near-zero gradient signal for CMA-ES |
-| generations | 10,000 | FG saturated ~gen 1400 historically; MVG still moving at 3000 (longest exp_1 run ever). 10k is ~3x that. |
+| generations | exp1 **10,000**; exp2 **5,000** | exp1: FG saturated ~gen 1400 historically, MVG still moving at 3000. exp2: CMA-ES is superlinear in dimension and exp2 searches 793 weights vs exp1's 443, so a generation costs ~5x; exp2 also converges in 290-456 gens historically, so 5000 is ~11x its own solve time. Arms WITHIN an experiment are always matched; across encodings they are not, and any exp1-vs-exp2 statement must say so. |
 | seeds | 0..4 per arm | |
-| constrained arm | `--synaptic-budget S --shrink tau`, **TBD, default S=4 tau=0.9** | exp_1's analogue of KA's fan-in cap; the absolute gate (`--w-threshold`) is a known failure |
+| constrained arm | exp1 **S=6 tau=0.9**; exp2 **S=4 tau=0.9** | exp_1's analogue of KA's fan-in cap; the absolute gate (`--w-threshold`) is a known failure |
 | unconstrained arm | no budget, no gate | |
 | always | `--no-early-stop --no-balanced --no-open` | `--no-early-stop` is REQUIRED for a fair FG-vs-MVG comparison |
 
-**Expected accuracy: 0.85-0.89, not a solve.** Nothing in exp_1 has ever exceeded
-0.885; the monotone-representability ceiling for `retina_ka2005`/and is 0.891.
-KA's own paper net got 0.90+-0.03, so this is the same regime — the story is
-modularity-at-matched-competence, not "we solved it".
+**Measured accuracy (see section 5): unconstrained 0.914-0.926, constrained
+~0.854.** This SUPERSEDES the planning estimate of 0.85-0.89, which was based on
+a monotone-representability bound that does not apply (the g-encoding is not
+monotone) and on weaker earlier task/metric/K combinations. KA's own paper net
+got 0.90+-0.03, so the unconstrained arm is now slightly ABOVE the reference
+reproduction.
 
 ---
 
@@ -164,7 +166,69 @@ byte-identically. Regression check before launching.
 
 ## 5. Preflight results
 
-(filled in as they run)
+All preflights: `retina_ka2005`/and, RAW accuracy, margin fitness, n_hidden=24,
+FG, **3 seeds, 2000 generations**. "END" = the `matched` champion, which under a
+fixed goal is the endpoint network — the one whose density is comparable across
+arms. Reproduce with `experiments/experiment_1/scratch_preflight_table.py`.
+
+| arm | END acc | END density | per-seed END acc |
+|---|---|---|---|
+| K=6, no budget | 0.906 +- 0.018 | 91.5 +- 8.7 | 0.891 0.902 0.926 |
+| **K=8, no budget** | **0.914 +- 0.012** | 90.9 +- 8.3 | 0.914 0.926 0.902 |
+| S=2, tau=0.85 | 0.812 +- 0.000 | 60.2 +- 19.7 | 0.812 0.812 0.812 |
+| S=2, tau=0.9 | 0.812 +- 0.000 | 49.5 +- 12.3 | 0.812 0.812 0.812 |
+| S=4, tau=0.85 | 0.837 +- 0.022 | 66.4 +- 7.3 | 0.852 0.848 0.812 |
+| S=4, tau=0.9 | 0.857 +- 0.016 | 52.3 +- 12.0 | 0.852 0.875 0.844 |
+| S=4, tau=0.95 | 0.842 +- 0.041 | 50.2 +- 2.9 | 0.871 0.812 |
+| S=6, tau=0.85 | 0.865 +- 0.055 | 55.9 +- 7.0 | 0.812 0.922 0.859 |
+| **S=6, tau=0.9** | **0.854 +- 0.018** | **49.3 +- 0.5** | 0.848 0.875 0.840 |
+| S=6, tau=0.95 | 0.838 +- 0.036 | 47.9 +- 4.1 | 0.863 0.812 |
+| S=8, tau=0.95 | 0.844 +- 0.044 | 47.7 +- 2.9 | 0.812 0.875 |
+
+**K = 8** (confirmed). Ahead of K=6 on the endpoint at every seed count tried
+(0.914 vs 0.906 at 3 seeds; 0.920 vs 0.896 at 2). The margin is small, so the
+argument carries the rest of the weight: at K=8 a non-modular solution is
+expressible, which is what stops "the encoding forced the modularity" from being
+a free objection. Cost is ~12 of ~443 genome parameters — `g` dominates.
+
+**Budget S = 6, tau = 0.9** — NOT the S=4 in the original plan. S=4 and S=6 at
+tau=0.9 tie on accuracy (0.857 vs 0.854, well inside the seed spread), but S=6
+lands lower in density and, more importantly, **24x tighter** (+-0.5 vs +-12.0).
+For a 5-seed FG-vs-MVG contrast a consistent density is worth more than half a
+point of mean accuracy, because density is the confound the whole comparison has
+to hold still. Rejected: tau=0.95 buys only ~2 points of density for ~1.5 points
+of accuracy and much worse variance; S=2 collapses every seed to exactly 0.812,
+which is the budget being too tight to hold a solution at all.
+
+**Accuracy is far better than expected — revise the prior.** The planning note
+said "expect 0.85-0.89, nothing in exp_1 has ever exceeded 0.885". Wrong: the
+unconstrained K=8 arm reaches **0.914-0.926**, clearing experiment 1's previous
+all-time best by ~4 points, and one budget seed hit 0.922. The 0.891 figure
+quoted as a ceiling is the *monotone-representability* bound, and the g-encoding
+is not monotone, so it never bound this. `retina_ka2005` under the g-encoding is
+substantially solvable; it was the earlier task/metric/K combinations that were
+weak, not the encoding.
+
+**The budget costs ~6 points of accuracy (0.914 -> 0.854).** That is the price of
+the constraint and it must be reported, not buried: the constrained arm is a
+different competence regime, so a modularity difference between constrained and
+unconstrained is confounded with accuracy. The FG-vs-MVG contrast WITHIN each
+constraint level is the clean comparison.
+
+**Density confirms the 2x2's central finding.** The unconstrained arm converges
+to 87-100% density (live runs are sitting at 98-100% by generation 6800). At that
+density Q_m is undefined or meaningless and the modularity question is not
+answered low — it is unanswerable. The budget is what makes it askable.
+
+### Two environment gotchas found the hard way (cost ~25 min)
+1. **`conda run` cannot be launched concurrently.** 8 parallel invocations raced
+   on one activation temp file; 7 died in under a second and the launcher
+   reported success. Call `C:\Users\raduc\miniconda3\envs\lndp\python.exe`
+   directly for anything parallel.
+2. Doing so loses `conda run`'s UTF-8 stdout, and the `sigma` character in
+   experiment 1's log line then kills the run with `UnicodeEncodeError` the
+   moment output is redirected. Export `PYTHONIOENCODING=utf-8`.
+   `run_fgmvg_study.py` does both correctly.
 
 ---
 
