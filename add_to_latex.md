@@ -390,6 +390,38 @@ at the defaults), not the 768 directed edges it expands to.
 
 ### Verdict: neither solved the task nor became modular — we moved on
 
+> ## ⚠️ SUPERSEDED IN PART (2026-09-12) — the "did not solve the task" half is WRONG
+>
+> A 4-arm x 5-seed study at **10,000** generations (`experiments/experiment_1/RESULTS.md`,
+> bottom section; runs in `experiment_1/runs/fgmvg/`) re-ran this design with
+> **K=8**, **raw** accuracy and **S=6, τ=0.9**, and reaches **0.978 ± 0.022 on
+> `retina_ka2005`/AND unconstrained, with seed 3 at exactly 1.000** — above
+> Kashtan–Alon's own network (0.90 ± 0.03). So:
+>
+> * **"Best accuracy 0.885 of 1.000" and "neither solved the task" no longer hold.**
+>   The encoding solves it. What was weak was this section's task/metric/K
+>   combination (K=6, *balanced* accuracy, 2,000 generations), not the encoding.
+> * **The ⚠️ "13× under budget" caveat below was the right instinct and is now
+>   largely discharged.** 10,000 × 64 = 640k evaluations is ~2.6× under KA's 1.68M
+>   median rather than 13×, and the extra budget is exactly where the accuracy
+>   came from.
+> * **The recommendation to abandon this architecture should be revisited before
+>   it is acted on.** It rests on the accuracy claim above.
+>
+> **What SURVIVES, and is now stronger, is the FG-vs-MVG null.** At 5 seeds and 5×
+> the generations the contrast is still not in MVG's favour: accuracy and purity
+> both favour FG, Q and left/right significance favour MVG (2/5 seeds vs 0/5),
+> two of four cuts each way. And the new study adds a mechanism for *why*: the
+> AND-matched champion of an MVG run scores only **0.42–0.47 on OR**, and the
+> per-generation trace shows AND and OR alternating in near-perfect antiphase
+> across all 500 switches. MVG is re-specialising every epoch rather than building
+> a shared decomposition — consistent with this section's "MVG's mechanism only
+> engages once a network already computes both halves".
+>
+> Also superseded: the 3-seed table below is replaced by the 5-seed one in
+> `experiment_1/RESULTS.md`. Note the two are not directly comparable — that table
+> is *balanced* accuracy at K=6, the new one is *raw* at K=8.
+
 **Density (Cost 1) turned out to be fixable.** A **synaptic budget** — fixed total
 incoming `Σ|w| = S` per neuron, plus a relative shrink `τ` zeroing any synapse
 below `τ ×` its target's own mean incoming magnitude — takes brains from 76–95%
