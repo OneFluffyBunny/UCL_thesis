@@ -262,10 +262,10 @@ gotchas in section 5. The runner already does this for the children it spawns.
 | 1 | nobudget_mvg | 10,000 | **5/5 done, scored, figured** |
 | 1 | budget_fg (S=6, tau=0.9) | 10,000 | **5/5 done, scored, figured** |
 | 1 | budget_mvg (S=6, tau=0.9) | 10,000 | **5/5 done, scored, figured** |
-| 2 (direct) | nobudget_fg | 5,000 | running |
-| 2 | nobudget_mvg | 5,000 | running |
-| 2 | budget_fg (S=4, tau=0.9) | 5,000 | queued |
-| 2 | budget_mvg (S=4, tau=0.9) | 5,000 | queued |
+| 2 (direct) | nobudget_fg | 5,000 | **5/5 done** |
+| 2 | nobudget_mvg | 5,000 | **5/5 done** |
+| 2 | budget_fg (S=4, tau=0.9) | 5,000 | running |
+| 2 | budget_mvg (S=4, tau=0.9) | 5,000 | running |
 
 ### Analysis
 
@@ -350,6 +350,28 @@ synapse, so that correction collapses to the role mask. Same guarantee in both:
 Default 0.0 leaves experiment 3 byte-identical (regression-checked). Measured on
 a 150-generation probe: **38.7% density at 0.883 accuracy**, the same band as
 KA's capped arm (34-38%). Running at S=4, tau=0.9.
+
+### Experiment 2 — partial (unconstrained arms done, 10/20)
+
+**The direct encoding solves the task outright: `acc(AND) = 1.000` in ALL TEN
+unconstrained seeds**, FG and MVG alike, at 87-98% density. And the same
+MVG failure shows up harder than in experiment 1: the AND-matched MVG champion
+scores **exactly 0.500 on OR** in every seed — chance. So the antiphase
+trade-off is not an artifact of the compressed encoding; it is what
+goal-switching does in this setup regardless of how the brain is encoded.
+
+Mid-run, the constrained arm is the most interesting number of the night:
+`budget_fg` is at **accuracy 1.000 with density 34.6-38.2%** — Kashtan-Alon's
+capped-arm density band (34-38%) but with better accuracy than KA's own
+0.90+-0.03. So the synaptic budget is not buying sparsity at the cost of
+competence here; it is getting both.
+
+That sets up the actual thesis question for the morning: the direct encoding is
+now ahead of the compressed one on BOTH accuracy (1.000 vs 0.895) and sparsity
+(36% vs 43%) under the same constraint. Whether the genomic bottleneck buys
+anything therefore rests entirely on whether experiment 1's brains are more
+MODULAR at matched density — which is exactly what `score_table.py` on both roots
+will answer.
 
 ### What is NOT done
 - No figure has been copied into `latex_figures/` — that needs your eyes first.
