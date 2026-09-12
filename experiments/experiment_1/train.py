@@ -30,6 +30,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
 import evosax as ex
+import numpy as np
 
 import tasks
 from model import Genome
@@ -132,6 +133,16 @@ class SeedResult:
     centroid_genome: object
     gens_run: int
     wall_s: float
+    # --- goal-matched champion (added 2026-09-12; see train_seed's docstring) ---
+    matched: float = float("nan")   # its accuracy ON `matched_op`
+    matched_genome: object = None
+    matched_op: str = ""            # the goal it was last selected under
+    matched_gen: int = -1           # the generation it came from
+    # tag -> {op: accuracy}: every saved champion scored against EVERY goal the
+    # run could face, so no number is ever read against the wrong target.
+    acc_by_op: dict = dataclasses.field(default_factory=dict)
+    archive_path: str = ""          # champions.npz, or "" if archiving was off
+    archive_n: int = 0
 
 
 def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
@@ -151,6 +162,24 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
       champions above are single draws and can be lucky; the mean is where the
       search actually settled, so it is the more stable thing to measure
       structure on when the two disagree.
+    * ``matched_*`` -- THE ONE TO REPORT UNDER ``--mvg`` (added 2026-09-12). The
+      last generation's champion from an epoch of the REFERENCE goal
+      (``run_cfg.operation``, i.e. the goal the fixed-goal arm also ran). This is
+      the fix for the reporting bug ``kashtan_alon/`` already hit: under
+      ``--mvg`` the schedule is deterministic, so with an even number of epochs
+      the run ALWAYS ends mid-OR and ``final_*`` is an OR-selected network being
+      compared against an FG arm's AND-selected one -- different tasks, silently.
+      ``matched_*`` is goal-matched by construction, so an FG and an MVG number
+      are the same measurement. Under a fixed goal it is identical to ``final_*``.
+
+    Every saved champion is additionally scored against EVERY goal in play and
+    returned as ``acc_by_op``, so a number can never be read against the wrong
+    target even by accident.
+
+    With ``--archive-interval > 0`` the champion of every Nth generation is kept
+    (flat DNA + its accuracy on every goal) and written to
+    ``<run_dir>/champions.npz``, which is what lets modularity be scored
+    generation-by-generation after the run rather than only at the endpoint.
 
     Also writes ``<run_dir>/log.csv`` as it goes (flushed every log interval, so
     it is readable mid-run) -- the FG-vs-MVG claim is about trajectories, and a
@@ -182,6 +211,22 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
         ops = run_cfg.mvg_ops
         return ops[(gen // run_cfg.switch_interval) % len(ops)]
 
+    # Every goal this run could be scored against. The reference goal
+    # (--operation) is always included even under --mvg: it is the goal the
+    # fixed-goal arm runs, so it is the only one an FG-vs-MVG comparison can be
+    # made on. For a task whose target ignores --operation this collapses to one
+    # entry and everything below is a no-op.
+    if tasks.uses_operation(run_cfg.task):
+        ops_in_play = tuple(dict.fromkeys(
+            (run_cfg.mvg_ops if run_cfg.mvg else ()) + (run_cfg.operation,)))
+    else:
+        ops_in_play = (run_cfg.operation,)
+    y_by_op = {op: tasks.targets(run_cfg.task, op, X) for op in ops_in_play}
+
+    def acc_on(flat, op):
+        """Accuracy of one flat DNA vector on one goal (batch of 1)."""
+        return float(batched_eval(jnp.asarray(flat)[None, :], y_by_op[op])[1][0])
+
     # One directory per run, so artifacts of different arms/gates can never mix.
     run_name = run_name_for(brain_cfg, run_cfg, seed)
     run_dir = os.path.join(run_cfg.out_dir, run_name)
@@ -200,6 +245,12 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
 
     best_flat, best = None, -1.0        # best-EVER (spans goal switches under --mvg)
     final_flat, final = None, -1.0      # best of the last generation actually run
+    # GOAL-MATCHED champion: overwritten every generation the reference goal is
+    # active, so after the loop it holds the last champion selected UNDER THAT
+    # GOAL -- never an OR-selected net masquerading as an AND result.
+    matched_flat, matched, matched_gen = None, -1.0, -1
+    # champion archive (only populated when --archive-interval > 0)
+    arc_flat, arc_gen, arc_op, arc_acc = [], [], [], {op: [] for op in ops_in_play}
     cur_op, y = None, None
     gens_run = 0
     t_start = time.time()
@@ -224,6 +275,21 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
         # ...and always keep the CURRENT generation's champion, so whatever
         # generation the loop exits on we still have the endpoint genome.
         final, final_flat = gen_best, jnp.asarray(gen_best_flat)
+        # ...and separately keep the last champion selected under the REFERENCE
+        # goal, which is the only endpoint an FG arm and an MVG arm share.
+        if cur_op == run_cfg.operation:
+            matched, matched_flat, matched_gen = gen_best, jnp.asarray(gen_best_flat), gen
+
+        # Champion archive: the flat DNA plus its accuracy on every goal in play.
+        # Scoring the champion against the goals it was NOT selected on is the
+        # only way to see, later, whether an MVG run holds both goals at once or
+        # just trades one for the other every epoch.
+        if run_cfg.archive_interval > 0 and gen % run_cfg.archive_interval == 0:
+            arc_flat.append(np.asarray(gen_best_flat, dtype=np.float32))
+            arc_gen.append(gen)
+            arc_op.append(cur_op)
+            for op in ops_in_play:
+                arc_acc[op].append(gen_best if op == cur_op else acc_on(gen_best_flat, op))
 
         # Under --mvg, log at the END of each goal epoch instead of on
         # --log-interval: every row is then the same thing -- a snapshot of a goal
@@ -278,8 +344,32 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
 
     csv_f.close()
 
+    # --- champion archive -> one npz per seed ------------------------------
+    # Written once at the end rather than streamed: a 10k-generation archive is
+    # ~18 MB in RAM, and a single atomic write cannot leave a half-file behind.
+    archive_path, archive_n = "", 0
+    if arc_flat:
+        archive_path = os.path.join(run_dir, "champions.npz")
+        payload = {"flat": np.stack(arc_flat),
+                   "gen": np.asarray(arc_gen, dtype=np.int32),
+                   "op": np.asarray(arc_op),
+                   "ops_in_play": np.asarray(ops_in_play),
+                   "reference_op": np.asarray(run_cfg.operation)}
+        for op in ops_in_play:
+            payload[f"acc_{op}"] = np.asarray(arc_acc[op], dtype=np.float32)
+        tmp = archive_path + ".tmp.npz"
+        np.savez_compressed(tmp, **payload)
+        os.replace(tmp, archive_path)       # atomic: a crash cannot corrupt it
+        archive_n = len(arc_flat)
+        print(f"[seed {seed}] archived {archive_n} champions -> {archive_path}")
+
     best_genome = eqx.combine(reshaper.reshape_single(best_flat), static)
     final_genome = eqx.combine(reshaper.reshape_single(final_flat), static)
+    # Under a fixed goal every generation runs the reference goal, so the matched
+    # champion IS the final one; the branch only bites under --mvg.
+    if matched_flat is None:
+        matched_flat, matched, matched_gen = final_flat, final, gens_run - 1
+    matched_genome = eqx.combine(reshaper.reshape_single(matched_flat), static)
 
     # CMA-ES distribution mean: where the search settled, as opposed to the
     # single lucky draw the champions are. Scored on the goal that was active at
@@ -292,11 +382,24 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
         centroid_genome = eqx.combine(reshaper.reshape_single(mean_flat), static)
         centroid_acc = float(batched_eval(mean_flat[None, :], y)[1][0])
 
+    # Score EVERY saved champion against EVERY goal in play. Without this a
+    # reader has to remember which goal a given number belongs to, and that is
+    # exactly the mistake this run exists to stop making.
+    acc_by_op = {"best": {op: acc_on(best_flat, op) for op in ops_in_play},
+                 "final": {op: acc_on(final_flat, op) for op in ops_in_play},
+                 "matched": {op: acc_on(matched_flat, op) for op in ops_in_play}}
+    if mean_flat is not None:
+        acc_by_op["centroid"] = {op: acc_on(mean_flat, op) for op in ops_in_play}
+
     return SeedResult(seed=seed, run_name=run_name, run_dir=run_dir,
                       best=best, best_genome=best_genome,
                       final=final, final_genome=final_genome,
                       centroid_acc=centroid_acc, centroid_genome=centroid_genome,
-                      gens_run=gens_run, wall_s=time.time() - t_start)
+                      gens_run=gens_run, wall_s=time.time() - t_start,
+                      matched=matched, matched_genome=matched_genome,
+                      matched_op=run_cfg.operation, matched_gen=matched_gen,
+                      acc_by_op=acc_by_op,
+                      archive_path=archive_path, archive_n=archive_n)
 
 
 def main():
@@ -309,14 +412,41 @@ def main():
                          f"Use one of {sorted(t for t in tasks.TASKS if tasks.uses_operation(t))}.")
     os.makedirs(run_cfg.out_dir, exist_ok=True)
 
-    # Under --mvg the best-EVER champion peaked on whichever goal happened to be
-    # active at the time, so the final-generation champion is the comparable one.
-    headline = "final" if run_cfg.mvg else "best"
+    # Which champion is THE result depends on the arm.
+    #   fixed goal -> "best": every generation ran the same goal, so the peak is
+    #                 a fair reading of what the arm achieved.
+    #   --mvg      -> "matched": NOT "final". The switch schedule is
+    #                 deterministic, so a run with an even number of epochs ends
+    #                 mid-OR and "final" would be an OR-selected network reported
+    #                 as an AND result -- the reporting bug kashtan_alon/ hit and
+    #                 fixed on 2026-09-10. "matched" is the last champion
+    #                 selected under --operation, which is the goal the FG arm
+    #                 ran too, so the two arms are the same measurement.
+    headline = "matched" if run_cfg.mvg else "best"
 
     commit = _git_commit()
     results = []
     for i in range(run_cfg.n_seeds):
         seed = run_cfg.seed + i
+
+        # --resume: a seed that already finished is left alone, so re-issuing the
+        # same command after a crash or reboot picks up where it stopped rather
+        # than throwing away hours of completed work.
+        if run_cfg.resume:
+            done = os.path.join(run_cfg.out_dir, run_name_for(brain_cfg, run_cfg, seed),
+                                "result.json")
+            if os.path.exists(done):
+                try:
+                    with open(done) as fh:
+                        prev = json.load(fh)
+                except (OSError, json.JSONDecodeError):
+                    prev = {}
+                if prev.get("complete"):
+                    hl = prev.get("stats", {}).get(prev.get("headline", ""), {})
+                    print(f"[seed {seed}] already complete "
+                          f"({prev.get('headline')} {hl.get('accuracy', float('nan')):.3f}) -> skip")
+                    continue
+
         res = train_seed(brain_cfg, run_cfg, seed)
 
         # Sidecar config. The gate (--w-threshold) is part of the PHENOTYPE but
@@ -335,7 +465,8 @@ def main():
                       fh, indent=2, default=str)
 
         pngs, stats = {}, {}
-        tagged = [("best", res.best, res.best_genome), ("final", res.final, res.final_genome)]
+        tagged = [("best", res.best, res.best_genome), ("final", res.final, res.final_genome),
+                  ("matched", res.matched, res.matched_genome)]
         if res.centroid_genome is not None:
             tagged.append(("centroid", res.centroid_acc, res.centroid_genome))
         for tag, acc, genome in tagged:
@@ -345,6 +476,7 @@ def main():
             stats[tag] = {k: st[k] for k in
                           ("n_edges", "max_edges", "density", "n_exc", "n_inh", "type_counts")}
             stats[tag]["accuracy"] = acc
+            stats[tag]["acc_by_op"] = res.acc_by_op.get(tag, {})
             print(f"[seed {seed}] {tag:8s} accuracy {acc:.3f} | edges {st['n_edges']}/{st['max_edges']}"
                   f" | density {st['density']:.1f}% | exc(+) {st['n_exc']} inh(-) {st['n_inh']}"
                   f" | hidden type counts {st['type_counts']}")
@@ -361,20 +493,33 @@ def main():
         with open(os.path.join(res.run_dir, "result.json"), "w") as fh:
             json.dump({"run_name": res.run_name, "seed": seed, "git_commit": commit,
                        "headline": headline, "gens_run": res.gens_run,
-                       "wall_s": round(res.wall_s, 1), "stats": stats},
+                       "wall_s": round(res.wall_s, 1), "stats": stats,
+                       # goal-matching provenance: which goal the headline number
+                       # belongs to, and which generation it was selected in.
+                       "reference_op": run_cfg.operation,
+                       "matched_gen": res.matched_gen,
+                       "acc_by_op": res.acc_by_op,
+                       "archive": {"path": os.path.basename(res.archive_path),
+                                   "n": res.archive_n} if res.archive_path else None,
+                       "complete": True},
                       fh, indent=2, default=str)
         print(f"[seed {seed}] artifacts -> {res.run_dir}")
         results.append((res, pngs[headline]))
 
-    if run_cfg.n_seeds > 1:
+    # `results` holds only the seeds actually trained here, so a fully-resumed
+    # batch prints nothing rather than crashing on an empty max().
+    if results and run_cfg.n_seeds > 1:
         print("\n=== summary ===")
         for res, _ in results:
             print(f"  seed {res.seed}: best {res.best:.3f} | final {res.final:.3f} "
+                  f"| matched({res.matched_op}) {res.matched:.3f} "
                   f"| centroid {res.centroid_acc:.3f}")
         # rank on the headline metric for this arm (see `headline` above)
-        key = (lambda r: r[0].final) if headline == "final" else (lambda r: r[0].best)
+        key = (lambda r: getattr(r[0], headline))
         top, best_png = max(results, key=key)
-        print(f"best seed by {headline}: {top.seed} (best {top.best:.3f} | final {top.final:.3f})")
+        print(f"best seed by {headline}: {top.seed} (best {top.best:.3f} | final {top.final:.3f}"
+              f" | matched {top.matched:.3f})")
+        print(f"mean {headline} {np.mean([getattr(r[0], headline) for r in results]):.3f}")
         if run_cfg.open_image:
             from visualize import _auto_open
             _auto_open(best_png)

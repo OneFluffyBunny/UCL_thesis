@@ -54,6 +54,7 @@ class RunConfig:
     sigma_init: float
     seed: int
     n_seeds: int            # how many seeds to run in one invocation
+    resume: bool            # skip seeds whose run dir already holds a finished result
     target: float           # stop a seed early once best accuracy reaches this
     early_stop: bool        # honour `target` at all (already forced off under mvg)
     # task
@@ -66,6 +67,7 @@ class RunConfig:
     # analysis / logging
     prune_threshold: float  # |w| below this is treated as "no edge" for analysis
     log_interval: int
+    archive_interval: int   # >0: store every Nth generation's champion to champions.npz
     viz_interval: int       # >0: render+open the best brain every N gens during training
     open_image: bool        # auto-open the saved brain image at the end
     balanced: bool          # balanced accuracy (chance=50%) vs raw accuracy
@@ -88,6 +90,18 @@ def build_parser() -> argparse.ArgumentParser:
     arch.add_argument("--rnn-iters", type=int, default=8, help="synchronous recurrent passes at inference")
     arch.add_argument("--no-bias", action="store_true", help="disable the per-neuron bias")
     arch.add_argument("--activation", choices=sorted(ACTIVATIONS), default="tanh", help="sigma activation")
+    arch.add_argument("--synaptic-budget", type=float, default=0.0,
+                      help="SYNAPTIC BUDGET: give every neuron this fixed total incoming "
+                           "|weight| to share out among its synapses (0 = off). The direct-"
+                           "encoding analogue of experiment 1's budget and of Kashtan-Alon's "
+                           "fan-in cap: density stops being free, because an extra connection "
+                           "dilutes the ones already there. Pair with --shrink for structural "
+                           "sparsity -- on its own it makes weights small but not zero")
+    arch.add_argument("--shrink", type=float, default=0.0,
+                      help="with --synaptic-budget: zero any synapse weaker than this FRACTION "
+                           "of its target neuron's mean incoming |w|, before the budget is "
+                           "shared out. In [0, 1). Relative on purpose -- nothing can inflate "
+                           "its way above its own mean")
 
     # --- evolution / search ---------------------------------------------------
     evo = p.add_argument_group("evolution")
@@ -102,6 +116,10 @@ def build_parser() -> argparse.ArgumentParser:
     evo.add_argument("--sigma-init", type=float, default=0.1, help="initial ES mutation scale")
     evo.add_argument("--seed", type=int, default=0, help="PRNG seed (first seed)")
     evo.add_argument("--n-seeds", type=int, default=1, help="run this many consecutive seeds")
+    evo.add_argument("--resume", action="store_true",
+                     help="skip any seed whose run directory already holds a COMPLETED "
+                          "result.json, instead of re-running it. Makes a long multi-seed "
+                          "batch restartable after a crash/reboot. Off by default")
     evo.add_argument("--target", type=float, default=1.0, help="stop a seed early once best accuracy reaches this")
     evo.add_argument("--no-early-stop", action="store_true",
                      help="never stop early, even if --target is reached (it is already ignored "
@@ -134,6 +152,12 @@ def build_parser() -> argparse.ArgumentParser:
     ana = p.add_argument_group("analysis")
     ana.add_argument("--prune-threshold", type=float, default=0.05, help="|w| below this = no edge (analysis only)")
     ana.add_argument("--log-interval", type=int, default=10, help="generations between log lines")
+    ana.add_argument("--archive-interval", type=int, default=0,
+                     help="CHAMPION ARCHIVE: >0 stores every Nth generation's champion "
+                          "(flat weights + its accuracy on EVERY goal in play) into "
+                          "<run_dir>/champions.npz, so modularity can be scored "
+                          "generation-by-generation after the fact. 1 = every generation, "
+                          "which is what a switch-window figure needs. 0 = off")
     ana.add_argument("--viz-interval", type=int, default=0, help=">0: render+open best brain every N gens during training")
     ana.add_argument("--no-open", action="store_true", help="do not auto-open the brain image at the end")
     ana.add_argument("--no-balanced", action="store_true", help="use raw accuracy instead of balanced (chance=50%%)")
@@ -150,6 +174,8 @@ def build_brain_config(args: argparse.Namespace) -> BrainConfig:
         rnn_iters=args.rnn_iters,
         use_bias=not args.no_bias,
         activation=ACTIVATIONS[args.activation],
+        synaptic_budget=args.synaptic_budget,
+        shrink=args.shrink,
     )
 
 
@@ -162,6 +188,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         sigma_init=args.sigma_init,
         seed=args.seed,
         n_seeds=args.n_seeds,
+        resume=args.resume,
         target=args.target,
         early_stop=not args.no_early_stop,
         task=args.task,
@@ -172,6 +199,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         mvg_ops=tuple(op.strip() for op in args.mvg_ops.split(",")),
         prune_threshold=args.prune_threshold,
         log_interval=args.log_interval,
+        archive_interval=args.archive_interval,
         viz_interval=args.viz_interval,
         open_image=not args.no_open,
         balanced=not args.no_balanced,
@@ -180,7 +208,18 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
 
 
 def parse_args(argv=None):
-    args = build_parser().parse_args(argv)
+    p = build_parser()
+    args = p.parse_args(argv)
+    # Same guards as experiment_1/config.py, so a flag combination that is an
+    # error in the treatment cannot be silently accepted in the control.
+    if not 0.0 <= args.shrink < 1.0:
+        p.error("--shrink must be in [0, 1): it is a FRACTION of each target "
+                "neuron's mean incoming |w|, not an absolute weight")
+    if args.shrink > 0.0 and args.synaptic_budget <= 0.0:
+        p.error("--shrink has no meaning without --synaptic-budget > 0 "
+                "(there is no budget to share out)")
+    if args.synaptic_budget < 0.0:
+        p.error("--synaptic-budget must be >= 0 (0 = off)")
     return build_brain_config(args), build_run_config(args), args
 
 

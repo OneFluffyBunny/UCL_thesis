@@ -42,6 +42,7 @@ class RunConfig:
     sigma_init: float
     seed: int
     n_seeds: int            # how many seeds to run in one invocation
+    resume: bool            # skip seeds whose run dir already holds a finished result
     target: float           # stop a seed early once best accuracy reaches this
     early_stop: bool        # honour `target` at all (already forced off under mvg)
     # NOTE: elitism / eval_reps / test_reps / n_examples used to live here but
@@ -59,6 +60,7 @@ class RunConfig:
     # analysis / logging
     prune_threshold: float  # |w| below this is treated as "no edge" for analysis
     log_interval: int
+    archive_interval: int   # >0: store every Nth generation's champion to champions.npz
     viz_interval: int       # >0: render+open the best brain every N gens during training
     open_image: bool        # auto-open the saved brain image at the end
     balanced: bool          # balanced accuracy (chance=50%) vs raw accuracy
@@ -125,6 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
     evo.add_argument("--sigma-init", type=float, default=0.1, help="initial ES mutation scale")
     evo.add_argument("--seed", type=int, default=0, help="PRNG seed (first seed)")
     evo.add_argument("--n-seeds", type=int, default=1, help="run this many consecutive seeds")
+    evo.add_argument("--resume", action="store_true",
+                     help="skip any seed whose run directory already holds a COMPLETED "
+                          "result.json, instead of re-running it. Makes a long multi-seed "
+                          "batch restartable after a crash/reboot: just re-issue the same "
+                          "command. Off by default so a plain re-run still overwrites, "
+                          "which is the historical behaviour")
     evo.add_argument("--target", type=float, default=1.0, help="stop a seed early once best accuracy reaches this")
     evo.add_argument("--no-early-stop", action="store_true",
                      help="never stop early, even if --target is reached (it is already ignored "
@@ -157,6 +165,16 @@ def build_parser() -> argparse.ArgumentParser:
     ana = p.add_argument_group("analysis")
     ana.add_argument("--prune-threshold", type=float, default=0.05, help="|w| below this = no edge (analysis only)")
     ana.add_argument("--log-interval", type=int, default=10, help="generations between log lines")
+    ana.add_argument("--archive-interval", type=int, default=0,
+                     help="CHAMPION ARCHIVE: >0 stores every Nth generation's champion "
+                          "(the flat DNA vector, plus its accuracy on EVERY goal in play) "
+                          "into <run_dir>/champions.npz, so modularity can be scored "
+                          "generation-by-generation after the fact. 1 = every generation, "
+                          "which is what a switch-window figure needs (a goal epoch is only "
+                          "--switch-interval generations long, so anything coarser cannot "
+                          "resolve what happens across a switch). 0 = off, the historical "
+                          "behaviour. Cost is ~4 bytes x n_params per archived generation "
+                          "(~18 MB for 10k gens at K=8) and ~3%% wall time")
     ana.add_argument("--viz-interval", type=int, default=0, help=">0: render+open best brain every N gens during training")
     ana.add_argument("--no-open", action="store_true", help="do not auto-open the brain image at the end")
     ana.add_argument("--no-balanced", action="store_true", help="use raw accuracy instead of balanced (chance=50%%)")
@@ -193,6 +211,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         sigma_init=args.sigma_init,
         seed=args.seed,
         n_seeds=args.n_seeds,
+        resume=args.resume,
         target=args.target,
         early_stop=not args.no_early_stop,
         task=args.task,
@@ -203,6 +222,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         mvg_ops=tuple(op.strip() for op in args.mvg_ops.split(",")),
         prune_threshold=args.prune_threshold,
         log_interval=args.log_interval,
+        archive_interval=args.archive_interval,
         viz_interval=args.viz_interval,
         open_image=not args.no_open,
         balanced=not args.no_balanced,
