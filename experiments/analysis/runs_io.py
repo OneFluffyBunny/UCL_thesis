@@ -77,15 +77,24 @@ class Run:
             M = _load_module("exp1_model", os.path.join(EXPERIMENTS, "experiment_1", "model.py"))
             self.cfg = M.BrainConfig(activation=act, **brain)
             template = M.Genome.init(jr.split(jr.PRNGKey(self.seed))[1], self.cfg)
-            self._build = lambda g: np.asarray(g.build_weights(self.cfg)[0])
+            self._build_jax = lambda g: g.build_weights(self.cfg)[0]
         else:
             M = _load_module("direct_model", os.path.join(EXPERIMENTS, "shared_direct_model.py"))
             self.cfg = M.BrainConfig(activation=act, **brain)
             template = M.DirectGenome.init(jr.split(jr.PRNGKey(self.seed))[1], self.cfg)
-            self._build = lambda g: np.asarray(g.build_weights(self.cfg))
+            self._build_jax = lambda g: g.build_weights(self.cfg)
         self._template = template
         params, self._static = eqx.partition(template, eqx.is_inexact_array)
         self._reshaper = ex.ParameterReshaper(params, verbose=False)
+
+        # A switch-window figure rebuilds ~800 brains and a progress figure ~300.
+        # Run eagerly that is the whole runtime (experiment 1 re-evaluates the MLP
+        # `g` over U^2 signature pairs on every call); jitted it is one compile and
+        # then microseconds. Same numbers either way -- jit changes nothing but the
+        # dispatch.
+        self._build_jit = eqx.filter_jit(
+            lambda flat: self._build_jax(
+                eqx.combine(self._reshaper.reshape_single(flat), self._static)))
 
     # -- identity -----------------------------------------------------------
 
@@ -110,8 +119,7 @@ class Run:
     # -- brains -------------------------------------------------------------
 
     def weights_from_flat(self, flat) -> np.ndarray:
-        genome = eqx.combine(self._reshaper.reshape_single(jnp.asarray(flat)), self._static)
-        return self._build(genome)
+        return np.asarray(self._build_jit(jnp.asarray(flat)))
 
     def weights(self, tag: str = "matched") -> np.ndarray:
         """Weight matrix of a saved champion ('best'/'final'/'matched'/'centroid').
@@ -122,7 +130,7 @@ class Run:
         """
         path = os.path.join(self.dir, f"{tag}_dna.eqx")
         genome = eqx.tree_deserialise_leaves(path, self._template)
-        return self._build(genome)
+        return np.asarray(self._build_jax(genome))
 
     def accuracy(self, tag: str = "matched", op: str | None = None) -> float:
         """Accuracy of a saved champion on a NAMED goal (default: the reference)."""

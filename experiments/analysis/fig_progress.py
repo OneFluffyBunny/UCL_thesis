@@ -152,10 +152,13 @@ def main():
     axes[0].legend(fontsize=8, loc="lower right", framealpha=0.9, ncol=2)
 
     n_seeds = {a: len(v) for a, v in by_arm.items()}
+    # Keep this to two short lines: a dict of seed counts plus a full sentence
+    # overflows the figure width and gets clipped mid-word.
+    counts = ", ".join(f"{a}={n}" for a, n in sorted(n_seeds.items()))
     fig.suptitle(
         f"FG vs MVG x constraint — {enc} encoding — median across seeds, band = full range\n"
-        f"seeds per arm: {n_seeds} | edge = |w| > {thr} | accuracy always scored on the "
-        f"reference goal", fontsize=11)
+        f"{counts} | edge = |w| > {thr} | every point is the end of a reference-goal epoch",
+        fontsize=10)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     out = args.out or os.path.join(args.root, "progress_fg_vs_mvg.png")
     fig.savefig(out, dpi=150)
