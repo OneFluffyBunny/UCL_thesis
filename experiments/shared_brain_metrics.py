@@ -133,7 +133,7 @@ def role_allowed(n_in: int, n_hidden: int, n_out: int) -> np.ndarray:
 def score_weights(w, n_in: int, n_hidden: int, n_out: int, *,
                   rnn_iters: int = 8, threshold: float = 0.05,
                   n_rand: int = 200, qm: bool = True, lr: bool = True,
-                  seed: int = 0) -> dict:
+                  seed: int = 0, n_jobs: int = 1) -> dict:
     """Score one brain. Returns a flat dict of numbers, ready for a table row.
 
     threshold  |w| at or below this is not an edge. Default 0.05 is the repo's
@@ -144,6 +144,11 @@ def score_weights(w, n_in: int, n_hidden: int, n_out: int, *,
                question unanswerable, and Q_m in particular goes undefined.
     n_rand     randomisations behind Q_m and the left/right p-value. 200 for a
                headline table; drop to ~50 when scoring a whole trajectory.
+    n_jobs     worker processes for those null models. DEFAULT 1, deliberately:
+               qmetrics defaults to -1 (every core), and calling it in a loop
+               while training jobs are running oversubscribes the machine so
+               badly that scoring makes no progress at all. Raise it only when
+               the box is otherwise idle.
     qm / lr    turn off the expensive null models for a cheap density-only pass.
     """
     w = np.asarray(w, dtype=np.float64)
@@ -195,7 +200,7 @@ def score_weights(w, n_in: int, n_hidden: int, n_out: int, *,
 
     if qm:
         try:
-            q_m, parts = normalized_qm(G_und, n_rand=n_rand, seed=seed)
+            q_m, parts = normalized_qm(G_und, n_rand=n_rand, seed=seed, n_jobs=n_jobs)
             out["q_m"] = float(q_m)
             out["q_real"], out["q_rand"] = float(parts["q_real"]), float(parts["q_rand"])
             out["q_max"] = float(parts["q_max"])
@@ -211,7 +216,7 @@ def score_weights(w, n_in: int, n_hidden: int, n_out: int, *,
         exclude = list(range(n_in + n_hidden, n_in + n_hidden + n_out))
         try:
             score, info = left_right_q(G_dir, pinned, exclude=exclude, assign="optimal",
-                                       n_rand=n_rand, seed=seed)
+                                       n_rand=n_rand, seed=seed, n_jobs=n_jobs)
             out["lr"] = float(score)
             for k in ("q", "r", "crosstalk", "p"):
                 if k in info:

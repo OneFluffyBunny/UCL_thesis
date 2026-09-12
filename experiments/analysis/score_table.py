@@ -69,6 +69,8 @@ def main():
                    help="which champion to score (matched = goal-matched, the right one)")
     p.add_argument("--n-rand", type=int, default=200,
                    help="randomisations for Q_m and the left/right p-value")
+    p.add_argument("--n-jobs", type=int, default=1,
+                   help="worker processes for the null models; 1 while training runs, -1 (all cores) when the machine is idle")
     p.add_argument("--threshold", type=float, default=None,
                    help="|w| cut defining an edge; default = each run's --prune-threshold")
     args = p.parse_args()
@@ -84,7 +86,7 @@ def main():
         thr = args.threshold if args.threshold is not None else r.run["prune_threshold"]
         s = score_weights(r.weights(args.tag), n_in, n_hid, n_out,
                           rnn_iters=r.cfg.rnn_iters, threshold=thr,
-                          n_rand=args.n_rand, seed=r.seed)
+                          n_rand=args.n_rand, seed=r.seed, n_jobs=args.n_jobs)
         s.update(arm=r.arm, seed=r.seed, encoding=r.encoding,
                  acc=r.accuracy(args.tag), reference_op=r.reference_op,
                  gens=r.rj.get("gens_run"), matched_gen=r.rj.get("matched_gen"),
