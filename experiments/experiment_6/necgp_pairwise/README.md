@@ -55,6 +55,51 @@ zero-fake-modules guarantee itself holds.
 
 ## Status
 
-First real run in progress/complete — see `../RESULTS.md` for the dated entry
-and numbers. Single seed(s), NAND-only, `retina_ka2005`/xor, same task/budget
-`necgp/` used, for direct comparability.
+Pilot: 5 seeds, NAND-only, `retina_ka2005`/xor. See `../RESULTS.md` (2026-08-21
+first run; 2026-09-14 re-run under `train.py` after the draw-order change below).
+
+## Running it (2026-09-14)
+
+```bash
+# search: PyPy, headless, seeds in parallel (~1 min for 5 seeds)
+../../experiment_5/.venv-pypy/Scripts/pypy.exe train.py --seeds 0-4 --tag base
+# figures: CPython (matplotlib), per seed into runs/base/seed<k>/
+conda run -n lndp python render.py runs/base
+```
+
+`run.py` still works and walks the same search; `train.py` adds parallel seeds and
+the history files. PyPy venv: `conda run -n lndp python ../../experiment_5/setup_pypy.py`.
+
+**History, per seed** (`runs/<tag>/seed<k>/`, flushed live): `log.csv` (one row per
+snapshot), `gates.csv` (one row per gate type per snapshot: NAND and every live
+module, with call counts, top-level and flattened shares, truth-table signature, a
+name like `XOR` when it has one, depth, birth generation), `snapshots.jsonl` (the
+genotype, so any stage can be redrawn), `result.json`. A snapshot is taken at gen 0,
+every `--snapshot-interval` (1000) generations, on every accuracy improvement, and at
+the end. Column meanings: `census.py`'s docstring.
+
+**Figures** (`render.py`): `gate_shares.png` (gate mix over evolution, top-level and
+flattened, with accuracy), `stages.png` (six snapshots), `final_decomposition.png`.
+Fake modules are drawn grey (ported from `necgp/`; none should exist here). A module
+keeps one colour across all three; the 7 most-used are coloured, the rest pooled
+grey. ⚠️ The colours are `visualize.MODULE_COLOURS` unchanged and have not been run
+through a colour-blind check.
+
+## Speed — PyPy, measured
+
+Seed 1, 30 000 generations, one process (2026-09-14, Core Ultra 7 155H):
+
+| | CPython 3.10 | PyPy 3.11 |
+|---|---|---|
+| snapshots every 1000 gens + on improve | 1 388 gen/s | **6 875 gen/s** |
+| snapshots off | 1 358 gen/s | 6 993 gen/s |
+
+**PyPy is 5.0x faster**, and snapshots cost under 3%. 8 inputs is well below
+experiment 5's ~14-input crossover, so this holds for every task offered here.
+
+⚠️ **Seeds before 2026-09-14 do not reproduce.** `cgp._draw_slots` returned a `set`;
+CPython and PyPy iterate sets differently, so the same seed walked different searches
+on the two interpreters. It now returns slots in draw order (experiment 5's fix),
+which changes every trajectory on both. `test_train.py` asserts PyPy == CPython and
+`train.py` == `run.py`; `test_tasks.py` asserts the numpy-free task masks equal the
+old ones.

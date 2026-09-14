@@ -112,8 +112,16 @@ def n_mutations(n_nodes: int, arity: int, n_outputs: int, rate: float) -> int:
 # initialisation
 # ---------------------------------------------------------------------------
 
-def _draw_slots(rnd: random.Random, total: int, k: int) -> list[int] | set[int]:
-    """`k` distinct slot indices drawn uniformly from `range(total)`.
+def _draw_slots(rnd: random.Random, total: int, k: int) -> list[int]:
+    """`k` distinct slot indices drawn uniformly from `range(total)`, IN DRAW ORDER.
+
+    CHANGED 2026-09-14 (necgp_pairwise only), ported from `experiment_5/cgp.py`: this
+    used to return the `set` and let the caller iterate it, which made a run depend
+    on CPython's set layout for small ints. PyPy's layout differs, so the same seed
+    walked a different search under the two interpreters. The draw loop is
+    unchanged (same `random()` calls, same slots from the same RNG state); only the
+    order the caller writes the slots in changes. ⚠️ Consequence: a seed run before
+    this change does not reproduce after it, on either interpreter.
 
     `random.sample` is correct but heavy: it builds a set/pool and routes every draw
     through `_randbelow_with_getrandbits`, and profiling showed `mutate` (dominated
@@ -133,10 +141,14 @@ def _draw_slots(rnd: random.Random, total: int, k: int) -> list[int] | set[int]:
         return rnd.sample(range(total), k)
     rand = rnd.random
     picked: set[int] = set()
+    order: list[int] = []
     add = picked.add
     while len(picked) < k:
-        add(int(rand() * total))
-    return picked
+        s = int(rand() * total)
+        if s not in picked:
+            add(s)
+            order.append(s)
+    return order
 
 
 def _draw_slots_biased(rnd: random.Random, total: int, n_func: int, k: int,

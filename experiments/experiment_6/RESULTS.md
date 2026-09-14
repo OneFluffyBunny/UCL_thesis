@@ -409,3 +409,55 @@ instead of a cheap proxy) reveals a similar gap if ported back to `necgp/`'s
 own window-based `compress` — not attempted, `necgp/` is frozen-by-convention
 for this kind of change per its own docs, so any such fix belongs here, not
 there.
+
+---
+
+## 2026-09-14 — necgp_pairwise: PyPy, history snapshots, fake-module drawing (machinery + re-run)
+
+**What was built** (all in `necgp_pairwise/`, search unchanged except the draw order):
+- `tasks.py` now loads `experiment_5/tasks.py` (mask algebra, no numpy), so the search
+  runs under PyPy. `test_tasks.py`: masks identical to the old numpy shim on all 4
+  tasks × 3 operations.
+- `cgp._draw_slots` returns slots in draw order instead of a `set` (experiment 5's
+  fix). Without it the same seed diverged between CPython and PyPy by generation
+  3000 (hits 180 vs 181, 213 vs 194). ⚠️ This changes every trajectory, so the
+  2026-08-21 table's seed identities no longer reproduce; `seeds_0_4.log` stays as
+  the record of that run.
+- `train.py`: `run.py`'s loop verbatim, plus parallel seeds and per-snapshot history
+  (`log.csv`, `gates.csv`, `snapshots.jsonl`). `census.py` names each module's
+  function (truth-table signature, `XOR`-style label). `test_train.py`: `train.py`
+  == `run.py` with snapshots on and off; PyPy == CPython (genotype hash); every
+  snapshot replays to its logged hits; shares sum to 1.
+- `visualize.py`, `decompose.py`, `test_visualize.py` copied from `necgp/` (fake
+  modules grey), plus a shared colour map; `render.py` draws `gate_shares.png`,
+  `stages.png`, `final_decomposition.png` per seed.
+
+**Speed:** PyPy 6 875 gen/s vs CPython 1 388 gen/s (5.0×), snapshot overhead <3%.
+
+**Re-run** (PyPy, `train.py --seeds 0-4 --tag base`, defaults = the 2026-08-21
+config; 56 s wall for all five):
+
+| seed | solved gen | module ids ever active | distinct functions among them | final active modules (size in NANDs) |
+|---|---:|---:|---:|---|
+| 0 | 106 622 | 5 | 3 | 5 (2–3) |
+| 1 | 80 696 | 9 | 2 | 8 (2–3) |
+| 2 | 47 578 | 6 | 4 | 6 (2–4) |
+| 3 | **not solved** (242/256 at 300k) | 7 | 4 | 7 (2–3) |
+| 4 | 126 281 | 6 | 3 | 6 (2–3) |
+
+**First look, descriptive only (n=5, no null, no knock-out):**
+- Modules are born early and **persist to the end**. Every final circuit still calls
+  M1 or M2, which were acquired in the first few thousand generations.
+- The invented gates are **tiny** (2–4 NANDs) and **the same function recurs under
+  different ids**. `3:8f` = NAND(NAND(a,b),c), usually exposed together with its
+  inner NAND, accounts for 8 of 9 module ids in seed 1. Evolution re-encapsulates the
+  smallest communicating pair again and again, rather than reusing one id for it.
+  Whether that reads as independent "duplicates" or as a pairwise-compress artefact
+  (a 2-node chain is the only thing this compress can make at depth 1) is open.
+- No XOR/XNOR module (4 NANDs, the predicted reuse target on retina/xor) appeared in
+  any seed.
+- Seed 3's failure to solve is new: the 2026-08-21 run solved 5/5 under the old draw
+  order.
+
+Next (from the review that motivated this): flat-CGP null for how often the same
+function recurs without modules, and a knock-out test on the busiest module.
