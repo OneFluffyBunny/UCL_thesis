@@ -305,14 +305,51 @@ Keep `--n-jobs 1` whenever training is also running.
 Full write-up: `experiment_1/RESULTS.md`, new section at the bottom. Numbers:
 `experiment_1/runs/fgmvg/metrics_summary.json` + `metrics_per_seed.csv`.
 
+> ### ⚠ REVISED LATER ON 2026-09-12 - read this before any table below
+>
+> Everything below was written from the metric set as it stood when the runs
+> finished. A follow-up pass on the same 40 champions forced four changes. No run
+> was re-executed and **no raw number changed**; what changed is which numbers
+> are load-bearing and what two of them are allowed to claim.
+>
+> 1. **`purity` is withdrawn as evidence of modularity.** Against KA's own second
+>    null (60 random genomes per run through the same encoding at the same
+>    config) observed purity is BELOW the null in all 40 runs, in both constraint
+>    conditions - and the null genomes are *denser*, which should have lowered
+>    theirs. `recurrent_purity` measures distance from mixing equilibrium after
+>    `rnn_iters` steps, which tracks density. It is descriptive only now.
+> 2. **Report `lr_r`, not the `lr` ratio.** Same `q`, same partition, different
+>    denominator. The ratio is `nan` in 15 of 40 runs, produces -10.214, and
+>    returns exactly **1.000** for `nobudget_fg` seed 0 whose `q` is *negative* -
+>    it hands its top score to the least modular graph in the study.
+> 3. **Q_m is reference-only and is NOT comparable across encodings.** Raw Q is
+>    0.133 (exp 1) vs 0.117 (exp 2) - a 14% difference - while Q_m reads 0.495 vs
+>    0.046, a 10.7x gap, because a degree-preserving null is not an
+>    encoding-preserving one and exp 1's cell-type blow-up clumps its degree
+>    sequence. **Using KA's own metric would have inverted the cross-encoding
+>    verdict below.** Q_m also returns exactly 1.000 for both the least and the
+>    most modular constrained run.
+> 4. **"MVG never holds both goals" was VACUOUS, and "first consistent MVG > FG
+>    signal" does not survive.** `acc(AND) + acc(OR) <= 1.500` is forced for any
+>    network that receives no goal cue, so finding 3 below is an arithmetic
+>    identity; experiment 2's MVG seeds sit at exactly 1.500, i.e.
+>    Pareto-OPTIMAL, not maximally failing. And the MVG>FG gap is 0.016 on an SD
+>    of ~0.034 (p = 0.274) in the density-matched encoding, while experiment 1's
+>    larger gap is confounded with a 9.0-point density difference
+>    (density-`lr_r` correlation r = -0.471).
+>
+> Corrected write-ups: `experiment_1/RESULTS.md` sections 2, 3, 5 and
+> `experiment_2/RESULTS.md` sections 3, 5, 6. The metric rationale lives in the
+> REVISED block of `shared_brain_metrics.py`.
+
 ### Experiment 1 — done, 20/20
 
-| condition | arm | acc (AND) | acc (OR) | density % | LR | purity | Q | Q_m |
-|---|---|---|---|---|---|---|---|---|
-| budget | FG | 0.895+-0.017 | n/a | 43.0+-5.3 | -0.569+-1.322 | **0.114+-0.088** | 0.169+-0.096 | 0.403+-0.324 |
-| budget | MVG | 0.853+-0.016 | 0.423+-0.034 | 34.0+-7.6 | -0.090+-0.744 | 0.066+-0.106 | **0.208+-0.154** | 0.587+-0.588 |
-| ablation | FG | **0.978+-0.022** | n/a | 93.7+-6.4 | undefined (3/5) | 0.021+-0.008 | 0.048+-0.024 | undefined (1/5) |
-| ablation | MVG | 0.867+-0.042 | 0.467+-0.080 | 96.9+-5.1 | undefined (1/5) | 0.004+-0.008 | 0.010+-0.014 | undefined (1/5) |
+| condition | arm | acc (AND) | acc (OR) | density % | `lr_r` (PRIMARY) | Q (PRIMARY) | purity (descr.) | Q_m (ref) | `lr` (don't report) |
+|---|---|---|---|---|---|---|---|---|---|
+| budget | FG | 0.895+-0.017 | n/a | 43.0+-5.3 | +0.094+-0.068 | 0.169+-0.096 | 0.114+-0.088 | 0.403+-0.324 | -0.569+-1.322 |
+| budget | MVG | 0.853+-0.016 | 0.423+-0.034 | 34.0+-7.6 | **+0.199+-0.217** | **0.208+-0.154** | 0.066+-0.106 | 0.587+-0.588 | -0.090+-0.744 |
+| ablation | FG | **0.978+-0.022** | n/a | 93.7+-6.4 | -0.013+-0.007 | 0.048+-0.024 | 0.021+-0.008 | undef (1/5) | undef (3/5) |
+| ablation | MVG | 0.867+-0.042 | 0.467+-0.080 | 96.9+-5.1 | -0.024+-0.005 | 0.010+-0.014 | 0.004+-0.008 | undef (1/5) | undef (1/5) |
 
 Seeds beating their own null at the planted split: **budget MVG 2/5, all others 0/5.**
 
@@ -321,16 +358,24 @@ Three things to take to the thesis:
 1. **`retina_ka2005` is solvable under the g-encoding — 0.978, one seed at
    1.000.** This kills the "experiment 1 tops out at 0.885" line that is
    currently in RESULTS.md, and beats KA's own 0.90+-0.03.
-2. **The CONSTRAINT makes the modularity, goal-switching does not.** 5-16x on
-   purity, 4-20x on Q, density halved. Removing it sends 3 of 5 MVG seeds to
-   *exactly* 100.0% density, where the metrics are undefined rather than low.
-   MVG does not beat FG: accuracy and purity favour FG, Q and LR-significance
-   favour MVG — two of four each way, reported as a split.
-3. **MVG never holds both goals.** The AND-matched champion scores 0.42-0.47 on
-   OR, below the 0.750 one-eye cap. `switch_window_budget_seed0.png` shows AND
-   and OR alternating in near-perfect antiphase across all 500 switches with no
-   narrowing. MVG is re-specialising every epoch, not building a shared modular
-   decomposition.
+2. **The CONSTRAINT makes the modularity, goal-switching does not.** 4-20x on Q,
+   a sign flip on `lr_r` (+0.09/+0.20 vs -0.013/-0.024), density halved. Removing
+   it sends 3 of 5 MVG seeds to *exactly* 100.0% density, where the ratio metrics
+   are undefined rather than low. MVG does not beat FG. *(Revised: the "5-16x on
+   purity" that originally led this item is withdrawn - see the banner. Q and
+   `lr_r` carry the conclusion, and both survive the encoding-aware null in the
+   constrained arms; purity does not.)*
+3. ~~**MVG never holds both goals.**~~ **VACUOUS - RETRACTED.** `acc(AND) +
+   acc(OR) <= 1.500` is forced for any network with no goal cue: of the 256
+   patterns the two goals agree on 128 and disagree on 128, so a *perfect* AND
+   solver scores exactly 0.500 on OR. Experiment 1's 0.42-0.47 is therefore not
+   "below chance", it is what a good-but-imperfect AND solver gives, and
+   experiment 2's "exactly 0.500" - reported below as the sharpest failure - is
+   **Pareto-optimal** (1.000 + 0.500 = the 1.500 ceiling, all ten seeds). The
+   antiphase in `switch_window_budget_seed0.png` is real as *mechanism* but
+   proves nothing about MVG, because holding both goals is arithmetically
+   unavailable here. The actual Kashtan-Alon claim is about **re-adaptation speed
+   after a switch**, which is measurable from `champions.npz` and NOT YET DONE.
 
 ### Experiment 2 — the budget analogue you asked me to propose
 
@@ -354,11 +399,14 @@ KA's capped arm (34-38%). Running at S=4, tau=0.9.
 ### Experiment 2 — done, 20/20
 
 **The direct encoding solves the task outright: `acc(AND) = 1.000` in ALL TWENTY
-seeds** — every arm, every seed, constrained and not. And the MVG failure is
-sharper than experiment 1's: the AND-matched MVG champion scores **exactly 0.500
-on OR** in all ten MVG seeds. So the antiphase trade-off is not an artifact of
-the compressed encoding; it is what goal-switching does here regardless of how
-the brain is encoded.
+seeds** - every arm, every seed, constrained and not. The AND-matched MVG
+champion scores **exactly 0.500 on OR** in all ten MVG seeds.
+
+*(Revised: this was originally written as "the MVG failure is sharper than
+experiment 1's". Wrong sign - 1.000 + 0.500 = 1.500 is the CEILING on this goal
+pair, so these ten seeds are Pareto-optimal, while experiment 1's 1.276 / 1.334
+are the ones leaving something on the table. See the banner at the top of this
+section.)*
 
 | arm | acc (AND) | acc (OR) | density |
 |---|---|---|---|
@@ -381,38 +429,54 @@ ENTIRELY on the modularity metrics at that matched density.
 
 ### Experiment 2 — modularity metrics, scored 20/20
 
-| condition | arm | acc (AND) | acc (OR) | density % | LR | purity | Q | Q_m |
-|---|---|---|---|---|---|---|---|---|
-| budget | FG | 1.000+-0.000 | n/a | 37.8+-0.7 | 0.102+-0.069 | 0.151+-0.011 | **0.221+-0.019** | 0.050+-0.023 |
-| budget | MVG | 1.000+-0.000 | 0.500+-0.000 | 37.8+-0.6 | **0.129+-0.117** | **0.169+-0.039** | 0.218+-0.013 | 0.043+-0.031 |
-| ablation | FG | 1.000+-0.000 | n/a | 95.6+-0.3 | undefined (4/5) | 0.017+-0.006 | 0.070+-0.006 | undefined (1/5) |
-| ablation | MVG | 1.000+-0.000 | 0.500+-0.000 | 97.3+-1.0 | undefined (0/5) | 0.020+-0.013 | 0.085+-0.007 | undefined (0/5) |
+| condition | arm | acc (AND) | acc (OR) | density % | `lr_r` (PRIMARY) | Q (PRIMARY) | purity (descr.) | Q_m (ref) | `lr` (don't report) |
+|---|---|---|---|---|---|---|---|---|---|
+| budget | FG | 1.000+-0.000 | n/a | 37.8+-0.7 | +0.194+-0.031 | **0.221+-0.019** | 0.151+-0.011 | 0.050+-0.023 | 0.102+-0.069 |
+| budget | MVG | 1.000+-0.000 | 0.500+-0.000 | 37.8+-0.6 | **+0.210+-0.036** | 0.218+-0.013 | 0.169+-0.039 | 0.043+-0.031 | 0.129+-0.117 |
+| ablation | FG | 1.000+-0.000 | n/a | 95.6+-0.3 | -0.012+-0.006 | 0.070+-0.006 | 0.017+-0.006 | undef (1/5) | undef (4/5) |
+| ablation | MVG | 1.000+-0.000 | 0.500+-0.000 | 97.3+-1.0 | -0.016+-0.006 | 0.085+-0.007 | 0.020+-0.013 | undef (0/5) | undef (0/5) |
 
 Seeds beating their own null at the planted split: **budget MVG 3/5, budget FG
 1/5, both ablation arms 0/5.**
 
-Two readings, both new:
+Two readings:
 
-1. **Same constraint conclusion as experiment 1, now on a second encoding.**
-   Purity is ~9x higher constrained (0.151-0.169 vs 0.017-0.020) with
-   non-overlapping spreads; Q ~3x. Unconstrained, LR and Q_m are *undefined*
-   rather than low — at 95-98% density there is no sparser degree-preserving
-   null. **The constraint, not the goal-switching, is what makes modularity
-   appear — and it now replicates across encodings.**
-2. **First consistent MVG > FG signal in the project.** Constrained: purity
-   0.169 vs 0.151, LR 0.129 vs 0.102, significant LR in 3/5 seeds vs 1/5; Q and
-   Q_m tie. Small, not individually significant at n=5, but it points one way on
-   every defined metric — where experiment 1's constrained pair splits two
-   metrics each way. Report as a weak consistent direction, not a demonstration.
+1. **Same constraint conclusion as experiment 1, now on a second encoding.** Q is
+   ~3x higher constrained (0.22 vs 0.07-0.09) and `lr_r` flips sign (+0.19/+0.21
+   vs -0.012/-0.016) with no overlap across the 20 runs. Unconstrained, the `lr`
+   ratio and Q_m are *undefined* rather than low - at 95-98% density there is no
+   sparser degree-preserving null. **The constraint, not the goal-switching, is
+   what makes modularity appear - and it now replicates across encodings.**
+   *(The ~9x purity gap originally cited here is withdrawn; see the banner.)*
+2. ~~**First consistent MVG > FG signal in the project.**~~ **DOES NOT SURVIVE.**
+   On the primary metrics the constrained pair is `lr_r` +0.210 vs +0.194 and Q
+   0.218 vs 0.221 - a tie the other way. The `lr_r` gap is 0.016 against an SD of
+   0.031-0.036, i.e. **half a standard deviation**, and an exact one-sided
+   Mann-Whitney U gives **p = 0.274** (n = 5 v 5). Experiment 1's larger 2.1x gap
+   does not corroborate it either: that arm runs **9.0 density points sparser**
+   than its FG arm and `lr_r` correlates with density at r = -0.471 within those
+   ten runs, so it is confounded (p = 0.345). **This encoding is the
+   density-matched one (37.8% vs 37.8%, correlation -0.009) and it is the one
+   that shows nothing.** The only pro-MVG fact left is the significant-seed count
+   (3/5 vs 1/5), uncorrected for five metrics looked at.
 
 ### The cross-encoding answer: the bottleneck does not buy modularity here
 
-At matched density and `matched` champion, the direct encoding is **at least as
-modular** as the compressed one (purity 0.151 vs 0.114 FG, 0.169 vs 0.066 MVG;
-Q 0.221 vs 0.169; LR-MVG +0.129 vs -0.090; sig LR 3/5 vs 2/5), **far more
-consistent** (purity sd 0.011 vs 0.088), **and** saturates a task the compressed
-encoding cannot solve. Only Q_m favours the bottleneck (0.587+-0.588) and that
-spread with two seeds at exactly 0.000 means one or two runs carry it.
+At near-matched density and `matched` champion, the direct encoding is **at least
+as modular** as the compressed one (`lr_r` +0.194 vs +0.094 FG, +0.210 vs +0.199
+MVG; Q 0.221 vs 0.169 FG, 0.218 vs 0.208 MVG; sig LR 3/5 vs 2/5), **far more
+consistent** (`lr_r` sd 0.031-0.036 vs 0.068-0.217), **and** saturates a task the
+compressed encoding cannot solve.
+
+**Only Q_m favours the bottleneck, and that is now understood to be an artifact.**
+Raw Q differs by 14% between the encodings (0.133 vs 0.117) while Q_m differs by
+10.7x (0.495 vs 0.046), ~6x of it from the numerator because experiment 1's
+`q_rand` is much lower. Cause: a degree-preserving null is not an
+encoding-preserving null, and experiment 1's cell-type blow-up gives clones
+identical rows and so a clumped degree sequence, which rewires to a lower Q.
+**Had this comparison been reported on KA's own metric it would have said the
+bottleneck triples-to-tenfolds modularity.** It does not. Full derivation:
+`experiment_2/RESULTS.md` section 6.
 
 So: **a negative result for the genomic-bottleneck hypothesis as stated.** Full
 caveat list in `experiment_2/RESULTS.md` section 6 — the load-bearing ones are
@@ -427,7 +491,18 @@ The obvious next run, if you want the claim to hold up: rerun experiment 2 at
 20 runs at 10 lanes.
 
 ### What is NOT done
-- No figure has been copied into `latex_figures/` — that needs your eyes first.
+- No figure has been copied into `latex_figures/` - that needs your eyes first.
+- **Re-adaptation speed after a goal switch is NOT measured** - the proper
+  replacement for the retracted finding 3. Everything needed is in
+  `champions.npz`; it is an analysis pass, no retraining. Tracked in
+  `experiment_1/RESULTS.md` Open threads.
+- **No density-matched cross-encoding rescore.** The densities are close
+  (34-43% vs 37.8%) but `lr_r` correlates with density at r = -0.471 inside
+  experiment 1's constrained runs, so the slack is not free. Also tracked there.
+- **`add_to_latex.md` is stale** and it is the doc that feeds the thesis: its
+  verdict still reads "Best accuracy 0.885 of 1.000 / neither solved the task"
+  (flagged as dead at line 401 by commit `15a09f8`, never rewritten), and
+  neither 4-arm table nor any of the metric revisions above are in it.
   All 15 figures live in the two `runs/fgmvg/` directories (gitignored).
 - `add_to_latex.md` has not been updated with either new 4-group table, nor with
   the cross-encoding comparison. Its stale experiment-1 verdict section HAS been

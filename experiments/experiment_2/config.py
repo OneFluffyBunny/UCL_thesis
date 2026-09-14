@@ -67,6 +67,7 @@ class RunConfig:
     # analysis / logging
     prune_threshold: float  # |w| below this is treated as "no edge" for analysis
     log_interval: int
+    dense_log: str          # "lo:hi,lo:hi": log EVERY generation inside these windows
     archive_interval: int   # >0: store every Nth generation's champion to champions.npz
     viz_interval: int       # >0: render+open the best brain every N gens during training
     open_image: bool        # auto-open the saved brain image at the end
@@ -152,6 +153,17 @@ def build_parser() -> argparse.ArgumentParser:
     ana = p.add_argument_group("analysis")
     ana.add_argument("--prune-threshold", type=float, default=0.05, help="|w| below this = no edge (analysis only)")
     ana.add_argument("--log-interval", type=int, default=10, help="generations between log lines")
+    ana.add_argument("--dense-log", default="",
+                     help="DENSE LOG WINDOWS, as comma-separated lo:hi generation "
+                          "ranges (e.g. 100:300,1000:1200). Inside a window EVERY "
+                          "generation gets a log.csv row, on top of whatever "
+                          "--log-interval would have produced. The only way to get "
+                          "a per-generation POPULATION statistic: champions.npz "
+                          "archives the champion, so a population mean cannot be "
+                          "recovered from it afterwards. Logging draws no "
+                          "randomness, so a run with --dense-log is the SAME run "
+                          "as one without. Mirrors experiment_1 and "
+                          "kashtan_alon/train.py.")
     ana.add_argument("--archive-interval", type=int, default=0,
                      help="CHAMPION ARCHIVE: >0 stores every Nth generation's champion "
                           "(flat weights + its accuracy on EVERY goal in play) into "
@@ -199,6 +211,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         mvg_ops=tuple(op.strip() for op in args.mvg_ops.split(",")),
         prune_threshold=args.prune_threshold,
         log_interval=args.log_interval,
+        dense_log=args.dense_log,
         archive_interval=args.archive_interval,
         viz_interval=args.viz_interval,
         open_image=not args.no_open,

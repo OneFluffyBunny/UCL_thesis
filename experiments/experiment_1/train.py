@@ -35,6 +35,7 @@ import numpy as np
 import tasks
 from model import Genome
 from config import parse_args
+from ga import KAGeneticAlgorithm, gene_blocks
 from visualize import brain_stats, visualize_brain
 
 
@@ -115,6 +116,8 @@ def run_name_for(brain_cfg, run_cfg, seed) -> str:
         name += f"_b{brain_cfg.synaptic_budget:g}"
         if brain_cfg.shrink > 0:
             name += f"s{brain_cfg.shrink:g}"
+    if run_cfg.strategy == "KA_GA":      # a GA run must never overwrite a CMA-ES one
+        name += f"_ga{run_cfg.popsize}e{run_cfg.ga_elite}m{run_cfg.ga_mut_sigma:g}"
     return f"{name}_seed{seed}"
 
 
@@ -197,9 +200,19 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
     batched_eval = _make_eval(static, reshaper, brain_cfg, X_enc, run_cfg.balanced,
                               run_cfg.fitness)
 
-    strategy = ex.Strategies[run_cfg.strategy](
-        popsize=run_cfg.popsize, num_dims=reshaper.total_params, sigma_init=run_cfg.sigma_init,
-    )
+    if run_cfg.strategy == "KA_GA":
+        # Kashtan-Alon-style GA (ga.py): same ask/tell/initialize calls, so the
+        # rest of this loop -- goal schedule, archive, champions -- is unchanged.
+        strategy = KAGeneticAlgorithm(
+            popsize=run_cfg.popsize, num_dims=reshaper.total_params,
+            sigma_init=run_cfg.sigma_init,
+            block_ids=gene_blocks(params, reshaper, brain_cfg),
+            n_elite=run_cfg.ga_elite, pc=run_cfg.ga_pc, pm=run_cfg.ga_pm,
+            mut_sigma=run_cfg.ga_mut_sigma)
+    else:
+        strategy = ex.Strategies[run_cfg.strategy](
+            popsize=run_cfg.popsize, num_dims=reshaper.total_params, sigma_init=run_cfg.sigma_init,
+        )
     es_params = strategy.default_params
     key, es_key = jr.split(key)
     state = strategy.initialize(es_key, es_params)
@@ -237,6 +250,10 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
           f"n_hidden={brain_cfg.n_hidden} K={brain_cfg.n_types} dims={reshaper.total_params} "
           f"pop={run_cfg.popsize} w_threshold={brain_cfg.w_threshold}")
     print(f"[seed {seed}] -> {run_dir}")
+
+    # Extra per-generation logging windows; see RunConfig.dense_log.
+    dense_windows = [tuple(int(v) for v in w.split(":"))
+                     for w in run_cfg.dense_log.split(",") if w.strip()]
 
     csv_f = open(os.path.join(run_dir, "log.csv"), "w", newline="")
     writer = csv.writer(csv_f)
@@ -300,6 +317,13 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
         epoch_len = max(1, run_cfg.switch_interval)
         due = ((gen + 1) % epoch_len == 0 if run_cfg.mvg
                else gen % run_cfg.log_interval == 0)
+        # --dense-log windows log EVERY generation inside them. Under --mvg the
+        # rule above gives one row per goal epoch, which is the right cadence for
+        # a 10000-generation trend and useless for reading the shape of a single
+        # switch: 10 points in a 200-generation window. The champion archive is
+        # already per-generation, so this exists only for the POPULATION mean,
+        # which no archive of champions can reconstruct after the fact.
+        due = due or any(lo <= gen <= hi for lo, hi in dense_windows)
         # gen 0 and the last generation are always logged, so every run has a
         # baseline row before selection has done anything, and an endpoint row.
         if due or gen == 0 or gen == run_cfg.generations - 1:
@@ -308,7 +332,11 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
             density, n_edges = st["density"], st["n_edges"]
             sigma = float(getattr(state, "sigma", float("nan")))
             sigma_str = "" if sigma != sigma else f" | σ: {sigma:.4f}"
-            gens_in = (epoch_len if run_cfg.mvg else run_cfg.log_interval) if gen > 0 else 1
+            # Inside a dense window rows are one generation apart, so dividing
+            # by the nominal interval would under-report s/gen by up to 20x.
+            in_dense = any(lo <= gen <= hi for lo, hi in dense_windows)
+            gens_in = 1 if (gen == 0 or in_dense) else (
+                epoch_len if run_cfg.mvg else run_cfg.log_interval)
             secs_per_gen = (time.time() - interval_start) / gens_in
             interval_start = time.time()
             mean_acc = float(acc.mean())

@@ -604,9 +604,229 @@ Note this did **not** bind in the gated run above: both arms ended mixed-sign
 section, all-positive weights cap `retina_ka2005/and` at 0.891 — above the 0.750
 plateau — so single-sign weights do not explain that plateau.
 
+
+## Re-adaptation speed after a goal switch — the bottleneck buys EVOLVABILITY ⭐ (2026-09-13)
+
+The headline result of the FG-vs-MVG study, and **not** the one the study was
+built to find. Measured on the budgeted MVG arms, 5 seeds per encoding, via
+`analysis/dense_replay.py` (per-generation population logging in the two KA
+windows) and `phase_stats` in `analysis/fig_switch_window.py`.
+
+**The statistic.** Within a 200-generation window there are 10 goal epochs. For
+each epoch: the population mean accuracy at the switch (trough), the peak it
+reaches inside that epoch, and the generations needed to cover 90% of that
+climb. Against the epoch's OWN peak, not a fixed threshold — early in training
+the population never reaches a fixed 0.9, so a fixed cut censors every early
+epoch at the epoch length and destroys the comparison. (KA's reasoning.) Each
+seed's number is therefore already a mean over 10 switches.
+
+| | s0 | s1 | s2 | s3 | s4 | mean | late − early |
+|---|---|---|---|---|---|---|---|
+| compressed [100,300] | 6.3 | 5.8 | 6.2 | 4.9 | 8.3 | 6.30 ± 1.25 | |
+| compressed [1000,1200] | 3.9 | 4.1 | 4.1 | 4.4 | 4.5 | **4.20 ± 0.24** | **−2.10, 5/5 faster** |
+| direct [100,300] | 5.2 | 6.3 | 6.1 | 5.5 | 6.4 | 5.90 ± 0.52 | |
+| direct [1000,1200] | 8.8 | 10.1 | 8.1 | 7.2 | 7.6 | **8.36 ± 1.14** | **+2.46, 0/5 faster** |
+
+**The dissociation is total.** Per-seed deltas are −2.4, −1.7, −2.1, −0.5, −3.8
+(compressed) against +3.6, +3.8, +2.0, +1.7, +1.2 (direct). The two sets do not
+overlap; exact Mann-Whitney at n = 5 vs 5 returns the smallest value the test can
+produce, p ≈ 0.008. Seed 0 — the only seed available before this run — was the
+*least* impressive compressed seed, not a lucky one.
+
+**The result does not depend on how recovery is measured** (updated 2026-09-14).
+The 90%-of-own-climb statistic is relative to each epoch's peak, and peaks move
+between windows (direct 0.84 -> 0.97), so it was checked against measures that
+use no peak. Population mean, 5 seeds per encoding, early -> late window:
+
+| measure | compressed | seeds faster | direct | seeds faster |
+|---|---|---|---|---|
+| gain in the first 3 gens after a switch | 0.196 -> **0.299** | 5/5 | 0.237 -> **0.152** | 0/5 |
+| gens to climb +0.20 above the trough | 6.1 -> **2.3** | 5/5 | 3.0 -> **4.2** | 0/5 |
+| gens to reach 0.75 | 7.3 -> **3.6** | 5/5 | 4.4 -> **5.0** | 0/5 |
+| gens to climb +0.30 above the trough | 15.9 -> **4.2** | 5/5 | 4.6 -> **5.8** | 0/5 |
+
+(+0.30: the compressed arm never got there in 70% of its early epochs; those are
+censored at 20.) Every measure agrees in every seed. **The compressed encoding
+accelerates and the direct encoding genuinely decelerates, modestly.** This
+SUPERSEDES the earlier note here that the direct slowdown was "partly a ceiling
+effect" (-13% per generation, normalised) and was the weaker half: a gain over
+the first 3 generations cannot be capped by a peak reached ~10 generations later.
+It is also not CMA-ES step-size collapse: σ averaged over each window is unchanged
+or slightly larger late (late/early ratio 1.00-1.21 in all 5 direct seeds,
+0.96-1.54 compressed; from the archived runs' `log.csv`). ⚠️ These measures came
+from a scratch script (per-epoch segmentation of `population_window` from
+`analysis/fig_switch_window.py`), not a file in the repo.
+
+**The champion row agrees but is noisy** (compressed 4/5 faster, direct 1/5).
+Expected: the champion is a max over the population, so it barely dents at a
+switch. KA's headline was the population mean for this reason.
+
+**What the population carries across a switch** (updated 2026-09-14). AND and OR
+agree on the 128 patterns with L = R and disagree on the 128 with L ≠ R. So a
+network's accuracy on the new goal right after a switch is exactly
+`½ + ½(a − b)`, with `a`, `b` its old-goal accuracy on the L = R and L ≠ R
+patterns: the trough reads directly as where old-goal competence sits.
+Population troughs, early -> late: direct 0.464 -> **0.500 ± 0.001**, compressed
+0.510 -> **0.438 ± 0.022**. Late on, the direct population is equally good on both
+halves (a = b). The compressed one is better on the L ≠ R patterns (b − a ≈ 0.12),
+**exactly the half the switch flips**, and it is the one that re-adapts faster.
+A population whose competence is concentrated on the goal-discriminating patterns
+may have less to rebuild. Hypothesis, not tested. (Replaces an earlier "0.500 vs
+0.465, chance vs carrying structure" note: 0.465 was not the population mean,
+and "chance" was the wrong frame for 0.500.)
+
+**Why this matters.** Re-adaptation speed is facilitated variation measured
+directly. It routes through no modularity metric, no null model and no pruning
+threshold — so it is immune to both the threshold sensitivity and the
+`lr_r` resampling instability recorded above. Read with the rest of the study,
+the compressed budgeted arm gives:
+
+* modularity (`lr_r`): **no support** — 0/5 FG and 2/5 MVG seeds beat their own
+  degree-preserving null, Fisher p ≈ 0.44;
+* accuracy: the bottleneck **costs** competence — 0.895 against the direct
+  encoding's 1.000;
+* evolvability: **supported**, 5/5 seeds, and it is the entangled encoding that
+  wins.
+
+i.e. *the genomic bottleneck buys facilitated variation, at a cost in raw
+competence, and without producing measurable left/right modularity.* Narrower
+than the original hypothesis, and it contradicts the natural worry that a shared
+`g` (one gene moving many synapses) would make re-adaptation harder — the
+opposite holds.
+
+⚠️ **Caveats.** n = 5 per encoding; one task; one budget setting; two windows
+inherited from KA rather than chosen here. These are **replays**, i.e. a second
+sample of each arm (the archived study is not bit-reproducible on this backend —
+float reduction order, amplified by CMA-ES), so they will not reconcile
+edge-for-edge with the end-of-run tables above. Replay-vs-replay is bit-exact, so
+the numbers are regenerable.
+
+⚠️ **What this does NOT test.** MVG shows no modularity effect in *either*
+encoding (compressed +0.094 FG → +0.199 MVG; direct +0.194 → +0.210), so the
+absence is not attributable to the encoding. The variable both arms share is the
+optimiser: KA's MVG→modularity result runs on a GA with per-gene mutation
+(Pm = 0.5) and crossover (Pc = 0.5, elite 150/600), and modularity is selected
+there because a modular genome swaps one module in few mutations and because
+crossover recombines intact modules. CMA-ES has neither — one multivariate
+Gaussian, no per-gene locality, no recombination — and at n = 443 its covariance
+adapts far slower than the 20-generation switch period. **We ported KA's goal
+protocol but not KA's variation operators, and their result is a claim about how
+variation is generated.** That is the open thread, not a footnote.
+
+## GA pilot: does a Kashtan-Alon-style GA give MVG more modularity or accuracy? (2026-09-14)
+
+**Preregistered before the run.** The FG-vs-MVG study found no MVG modularity
+effect under CMA-ES in either encoding. KA's result used a GA, and their mechanism
+depends on how variation is generated: local mutations, crossover of whole parts,
+and surviving elites. CMA-ES has none of the three. This pilot swaps the optimiser
+and nothing else (`ga.py`, `--strategy KA_GA`; operator tests in `test_ga.py`).
+
+**Scope: ONE MVG run, seed 0.** It is a pilot. n = 1 cannot establish an effect;
+it can only say whether a full FG-vs-MVG GA study is worth running.
+
+| | value | note |
+|---|---|---|
+| model, task, budget, goal schedule | identical to the `budget_mvg` arm above | K = 8, n_hidden 24, S = 6, τ = 0.9, AND ↔ OR every 20 gens, raw accuracy, margin fitness |
+| population / elite | 600 / 150 | KA |
+| crossover | P = 0.5 per offspring; each gene block from one parent, 50/50 | KA's Pc; blocks = 8 cell types, input type, output type, 16 units of `g`, `g`'s output bias [our mapping] |
+| mutation | P = 0.5 per offspring; ONE uniformly chosen gene + N(0, 0.5²) | KA's Pm and one-edit rule; step 0.5 [our choice] |
+| initial population | N(0, 0.1²) per gene | the same distribution as CMA-ES's first generation |
+| generations | 3000 = 1.8M evaluations | KA's median budget. CMA-ES ran 640k evaluations, so the GA is also read at generation 1066 (640k) |
+| logging | champion archive every gen; population mean every gen in [100,300] and [1000,1200] | |
+
+```
+cd experiments/experiment_1
+python train.py --strategy KA_GA --popsize 600 --ga-elite 150 --ga-pc 0.5 --ga-pm 0.5 \
+    --ga-mut-sigma 0.5 --n-hidden 24 -K 8 --task retina_ka2005 --operation and --no-balanced \
+    --fitness margin --no-early-stop --no-open --archive-interval 1 --generations 3000 \
+    --mvg --mvg-ops and,or --switch-interval 20 --synaptic-budget 6 --shrink 0.9 \
+    --seed 0 --n-seeds 1 --dense-log 100:300,1000:1200 --out-dir runs/ga_pilot
+```
+
+**Baseline:** the CMA-ES `budget_mvg` arm, 5 seeds. Goal-matched acc(AND)
+0.853 ± 0.016; density 34.0 ± 7.6%; `lr_r` +0.199 ± 0.217 (seed 0: +0.004);
+2/5 seeds beat their null.
+
+**Reading rules, fixed now** (goal-matched champion, at generation 3000 and at the
+evaluation-matched generation 1066):
+- *Better accuracy:* acc(AND) ≥ 0.869, i.e. above the CMA-ES MVG mean + 1 SD.
+- *Higher modularity:* `lr_r` ≥ 0.416 (CMA-ES mean + 1 SD) **and** beats its
+  degree-preserving null (p < 0.05, 200 rewirings) at both cut 0.05 and cut 0
+  (exact zeros).
+- Anything less: "no sign at n = 1". That argues against, but does not rule out,
+  the GA hypothesis for this encoding.
+- ⚠️ A positive result would still be one seed. It licenses the full 5 + 5
+  FG-vs-MVG GA study, not a claim.
+- ⚠️ The GA's population mean includes 150 unchanged elites, so its recovery
+  curves are not like-for-like with CMA-ES's samples. Recovery is reported as
+  descriptive only.
+
+### Result (run 2026-09-14, ~5 min; `runs/ga_pilot/`)
+
+Goal-matched champion. `lr_r` p from 200 degree-preserving, mask-respecting rewirings.
+
+| | gen | acc(AND) | density (cut 0.05) | `lr_r` (cut 0.05), p | `lr_r` (cut 0), p |
+|---|---|---|---|---|---|
+| **GA**, 640k evals | 1059 | **0.891** | 51.7% | +0.028, p = 1.00 | +0.035, p = 1.00 |
+| **GA**, 1.8M evals (end) | 2979 | **0.938** | 57.3% | +0.040, p = 1.00 | +0.052, p = 1.00 |
+| CMA-ES seed 0, 640k evals (end) | 9979 | 0.836 | 27.6% | +0.004, p = 1.00 | −0.007, p = 1.00 |
+| CMA-ES seed 0, same generation | 2979 | 0.812 | 28.4% | +0.008, p = 1.00 | +0.008, p = 1.00 |
+
+Against the preregistered rules:
+- **Better accuracy: YES.** 0.938 at the end and 0.891 at matched evaluations,
+  against a threshold of 0.869. At matched evaluations it beats every CMA-ES MVG
+  seed (0.853 ± 0.016) and even the CMA-ES *fixed-goal* budget arm (0.895 ± 0.017).
+- **Higher modularity: NO.** `lr_r` is +0.04 to +0.05, far below the 0.416
+  threshold and below the CMA-ES MVG mean. It does not beat its null at either
+  cut. The GA champion is also much DENSER (57% vs 28–34%), and in this model
+  sparser brains read as more modular (r = −0.47). So the GA found better
+  networks that are less sparse, not more modular.
+- Trajectory at AND-epoch ends: `lr_r` peaks at +0.14 around generation 600
+  (density 52%), then falls back to +0.02 to +0.04 as accuracy climbs from 0.85
+  to 0.94.
+- Recovery (descriptive, population mean includes elites): 90% of the post-switch
+  climb in 8.0 gens in [100,300] vs 8.3 in [1000,1200]. There is **no speed-up**,
+  unlike CMA-ES on this encoding (6.3 -> 4.2).
+
+**Reading.** At n = 1, the GA helps competence under MVG but shows no sign of
+KA's modularity mechanism in the K-type genome. That is consistent with the
+caveat stated before the run: this genome has no locus that holds a left or right
+detector, so crossover of cell-type blocks or `g` units cannot move a module.
+Not yet separated:
+- (a) the accuracy gain is a GA effect independent of MVG. This needs a GA
+  fixed-goal run.
+- (b) the absent modularity is due to the encoding, not the operator. This needs
+  the same GA on the direct encoding, where a neuron's column IS KA's crossover
+  unit.
+- The mutation step (0.5) was not tuned.
+
 ## Open threads
 
-- **Re-run curriculum on `retina/xor`** (no one-side shortcut) — the honest
+- **DONE 2026-09-13**, see "Re-adaptation speed after a goal switch" (measured
+  on the population mean from dense replays; the champion barely dents at a switch).
+  ~~MEASURE RE-ADAPTATION SPEED AFTER A GOAL SWITCH~~ (added 2026-09-12, the
+  replacement for the withdrawn "MVG never holds both goals" finding in section
+  3 above). `acc(AND) + acc(OR) <= 1.500` is forced for any network that gets no
+  goal cue, so simultaneous accuracy can never test the Kashtan-Alon claim. What
+  KA actually claim is that MVG populations RE-ADAPT FASTER after each switch.
+  The measurement: for every switch in an MVG run, count generations from the
+  switch until the champion's accuracy on the newly-active goal returns to
+  within epsilon of its pre-switch level, then ask whether that count SHRINKS
+  over the run (learning to switch) or stays flat (re-specialising from scratch
+  each time). Compare constrained vs unconstrained, and compare against the FG
+  arm's time-to-recover after an equivalent perturbation. **Everything needed is
+  already on disk** - `champions.npz` holds the per-generation champion plus its
+  accuracy on every goal in play, so this is an analysis pass over existing runs
+  with no retraining. Cheap, and it is the one test of the thesis's evolvability
+  question that this study can still answer.
+- **Density-matched cross-encoding rescore** (added 2026-09-12). Section 6 of
+  `../experiment_2/RESULTS.md` compares the two encodings at "close enough"
+  density (34-43% vs 37.8%), but within experiment 1's constrained runs `lr_r`
+  correlates with density at r = -0.471, so that slack is not free. Prune each
+  experiment-1 champion to experiment 2's edge count and rescore. It would also
+  settle whether the Q_m cross-encoding gap (0.495 vs 0.046 at equal raw Q) is
+  driven by clumped degrees or merely by density. Saved DNAs make it cheap.
+- **Re-run curriculum on `retina/xor`** (no one-side shortcut) - the honest
   modularity test; `/and` is confounded by the 0.848 one-side freebie.
 - **Disambiguate the K=6 wall: reachability vs `g`-capacity.** Retrain K=6 with
   wider `g` (64/128); run the basin probe at K=6; full nonlinear `g` fit in the
@@ -638,6 +858,9 @@ plateau — so single-sign weights do not explain that plateau.
 - **Decide whether `g`'s init should be re-centred** (zero the output bias and/or
   raise the `0.1` identity scale) so the brain doesn't start as one global weight.
   Both are one-liners and could be flags rather than default changes.
+  ⚠️ (2026-09-13) Largely moot for CMA-ES runs: evosax starts the search mean at
+  the ALL-ZERO genome (`init_min = init_max = 0`), so `Genome.init`'s values are a
+  shape template only and never enter the search.
 - **Log the `curric_k8_xor` null** — run exists on disk, conclusions never written
   up here.
 - **Wire `qmetrics` into exp 1** — still not connected; `Q` is not computed at any
@@ -665,15 +888,36 @@ generations. Every number below is the **goal-matched** champion (`matched`: the
 last champion selected under AND), so FG and MVG are the same measurement --
 see the goal-matching note further down.
 
-| condition | arm | n | acc (AND) | acc (OR) | density % | LR (primary) | purity (primary) | Q | Q_m |
-|---|---|---|---|---|---|---|---|---|---|
-| budget (S=6, tau=0.9) | FG | 5 | 0.895+-0.017 | n/a | 43.0+-5.3 | -0.569+-1.322 | **0.114+-0.088** | 0.169+-0.096 | 0.403+-0.324 |
-| budget | MVG | 5 | 0.853+-0.016 | 0.423+-0.034 | 34.0+-7.6 | -0.090+-0.744 | 0.066+-0.106 | **0.208+-0.154** | 0.587+-0.588 |
-| no budget (ablation) | FG | 5 | **0.978+-0.022** | n/a | 93.7+-6.4 | -2.738+-6.474 (3/5) | 0.021+-0.008 | 0.048+-0.024 | -0.178 (1/5) |
-| no budget | MVG | 5 | 0.867+-0.042 | 0.467+-0.080 | 96.9+-5.1 | 1.538 (1/5) | 0.004+-0.008 | 0.010+-0.014 | 1.000 (1/5) |
+> **METRICS REVISED 2026-09-12** (same runs, same champions, re-read). The
+> primary modularity numbers are now **`lr_r`** (Newman's discrete assortativity
+> at the planted left/right split) and **raw Newman Q**. The `lr` ratio score and
+> `purity` are demoted and kept only for continuity; `Q_m` is reference-only. The
+> reasons are in the REVISED block in `../shared_brain_metrics.py` and in the
+> caveats below - in one line each: the `lr` ratio is `nan` in 15 of 40 runs and
+> returns exactly **1.000** for an *anti*-assortative graph; `purity` sits below
+> KA's own encoding-aware null in all 40 runs; `Q_m` is not comparable across
+> encodings. **No number in the table changed - only which column leads.**
+
+| condition | arm | n | acc (AND) | acc (OR) | density % | `lr_r` (PRIMARY) | Q (PRIMARY) | purity (descr.) | Q_m (ref) | `lr` ratio (do not report) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| budget (S=6, tau=0.9) | FG | 5 | 0.895+-0.017 | n/a | 43.0+-5.3 | +0.094+-0.068 | 0.169+-0.096 | 0.114+-0.088 | 0.403+-0.324 | -0.569+-1.322 |
+| budget | MVG | 5 | 0.853+-0.016 | 0.423+-0.034 | 34.0+-7.6 | **+0.199+-0.217** | **0.208+-0.154** | 0.066+-0.106 | 0.587+-0.588 | -0.090+-0.744 |
+| no budget (ablation) | FG | 5 | **0.978+-0.022** | n/a | 93.7+-6.4 | -0.013+-0.007 | 0.048+-0.024 | 0.021+-0.008 | undef (1/5) | undef (3/5) |
+| no budget | MVG | 5 | 0.867+-0.042 | 0.467+-0.080 | 96.9+-5.1 | -0.024+-0.005 | 0.010+-0.014 | 0.004+-0.008 | undef (1/5) | undef (1/5) |
 
 Seeds beating their own degree-preserving null at the planted split (p < 0.05):
-**budget MVG 2/5; every other arm 0/5.**
+**budget MVG 2/5; every other arm 0/5.** (The p-value is unaffected by the
+`lr`-vs-`lr_r` change - both are functions of the same `q` at the same partition,
+and the test compares that `q` to the null *distribution*.)
+
+**`lr_r` flips sign with the constraint.** All 10 unconstrained runs are negative
+(-0.026 to -0.005); 8 of 10 constrained are positive. At 94-100% density the
+planted split is very slightly *anti*-assortative - marginally fewer
+within-hemisphere edges than the degree sequence predicts. Read that as "no
+structure", consistent with the undefined-not-unmodular point below. The two
+exceptions are `budget_fg` seed 4 (-0.006) and `budget_mvg` seed 4 (-0.007),
+which fall inside the unconstrained band, so the separation is near-complete but
+not clean.
 
 ### 1. `retina_ka2005` is solvable under the g-encoding — the old ceiling was wrong
 
@@ -691,9 +935,16 @@ reproduction.
 This is the finding, and it is the same one `kashtan_alon/` reports for its
 fan-in cap:
 
-* purity 0.114 / 0.066 (constrained) vs 0.021 / 0.004 (ablation) — 5x to 16x.
-* Q 0.169 / 0.208 vs 0.048 / 0.010.
+* **Q 0.169 / 0.208 (constrained) vs 0.048 / 0.010 (ablation)** - 4x to 20x,
+  and Q survives the encoding-aware null (>=92nd percentile) in 9 of the 10
+  constrained runs against 2 of 10 unconstrained.
+* **`lr_r` +0.094 / +0.199 vs -0.013 / -0.024** - a sign flip, above the
+  encoding-aware null in 6 of 10 constrained runs and 0 of 10 unconstrained.
 * density 34-43% vs 94-97%.
+* purity 0.114 / 0.066 vs 0.021 / 0.004 - 5x to 16x, **but this is no longer
+  offered as evidence.** Purity is below the random-genome null in all 40 runs of
+  this study (see caveats), and most of this gap is the density gap. The finding
+  stands on Q and `lr_r`; only its evidence changed.
 
 **Removing the budget does not answer the modularity question low; it makes the
 question unanswerable.** Three of the five `nobudget_mvg` seeds converge to
@@ -707,28 +958,80 @@ MVG, meanwhile, does **not** beat FG:
 | metric | direction | constrained | ablation |
 |---|---|---|---|
 | accuracy | **FG > MVG** | 0.895 vs 0.853 | 0.978 vs 0.867 |
-| purity (primary) | **FG > MVG** | 0.114 vs 0.066 | 0.021 vs 0.004 |
-| Q (secondary) | MVG > FG | 0.169 vs 0.208 | 0.048 vs 0.010 |
+| `lr_r` (PRIMARY) | MVG > FG, **n.s.** | +0.094 vs +0.199 (p = 0.345) | -0.013 vs -0.024 |
+| Q (PRIMARY) | MVG > FG | 0.169 vs 0.208 | 0.048 vs 0.010 |
 | LR seeds significant | **MVG > FG** | 0/5 vs 2/5 | 0/5 vs 0/5 |
+| purity (descriptive) | **FG > MVG** | 0.114 vs 0.066 | 0.021 vs 0.004 |
 
 Two of the four cut for MVG, two against, and the two that favour MVG disagree
 with each other about the ablation. The single cleanest pro-MVG fact is that
 `budget_mvg` is the ONLY arm with any seed beating its null at the planted split
-(seeds 1 and 2, p = 0.005 each, LR +0.616 and +0.573, Q 0.195 and 0.462) — but
-3/5 of its seeds do not, and seed 0 is at LR -1.138. Report the split, do not
-average it away.
+(seeds 1 and 2, p = 0.005 each, `lr_r` +0.347 and +0.489, Q 0.195 and 0.462) -
+but 3/5 of its seeds do not, and seed 0 is at `lr_r` +0.004. Report the split, do
+not average it away.
 
-### 3. MVG never holds both goals — it swaps between them every epoch
+**And the MVG>FG gap on `lr_r` is confounded with density.** The constrained MVG
+arm converges 9.0 density points SPARSER than the constrained FG arm (34.0+-7.6%
+vs 43.0+-5.3%), and within these 10 constrained runs `lr_r` correlates with
+density at **r = -0.471**: sparser scores as more modular. So the 2.1x `lr_r` gap
+is partly a density artifact and partly (possibly) real, and this design cannot
+separate them. Two facts say the artifact is most of it: the gap is **not
+significant** (exact one-sided Mann-Whitney U = 15.0, p = 0.345, n = 5 v 5), and
+in experiment 2 - where the same budget mechanism happens to produce *matched*
+densities (37.8% vs 37.8%, and density-`lr_r` correlation -0.009) - the same gap
+collapses to 0.194 vs 0.210, well inside one SD. **Do not claim MVG > FG from
+this study.**
+
+### 3. MVG swaps between goals every epoch - but "never holds both" was a VACUOUS claim
+
+> **CORRECTED 2026-09-12.** The original heading here was "MVG never holds both
+> goals", offered as a substantive negative result about MVG. **It is an
+> arithmetic identity, not a result**, and the correction runs the other way from
+> what was written. Kept visible rather than deleted because the same claim was
+> propagated into `../experiment_2/RESULTS.md` and `../OVERNIGHT_2026-09-12.md`.
+>
+> On `retina_ka2005` there are 2^8 = 256 input patterns, split 64/64/64/64 across
+> the four (left-object, right-object) combinations. AND is true on 64 patterns,
+> OR on 192; the two goals **agree on 128 patterns** (both-true 64, both-false 64)
+> and **disagree on the other 128**. The brain receives only the 8 retina bits -
+> `train.py` passes no goal cue - so one and the same function is scored against
+> both goals. Every pattern in the disagreeing half can therefore be correct for
+> at most one goal, which forces
+>
+>     acc(AND) + acc(OR) <= 1.500
+>
+> with equality **iff** the network is perfect on all 128 agreeing patterns. A
+> *perfect* AND solver scores exactly **0.500** on OR. Low OR accuracy in an
+> AND-matched champion is thus the signature of a GOOD AND solver, not of a
+> failure to generalise, and the "antiphase" is forced by the arithmetic.
+>
+> This makes the original reporting exactly backwards. Experiment 2's MVG seeds
+> were written up as the *sharpest* form of the failure because they score
+> "exactly 0.500 on OR" - but they also score 1.000 on AND, i.e. **1.500 exactly,
+> Pareto-optimal, the best attainable score on this pair.** Experiment 1's arms
+> reach 1.276 (constrained) and 1.334 (ablation), i.e. they are the ones leaving
+> something on the table, and only because their AND accuracy is short of 1.000.
+>
+> **What survives.** The per-generation *swapping* is real and worth reporting as
+> mechanism (the figures below show it), and so is the observation that the
+> population re-specialises rather than parking on a both-goals compromise. What
+> does NOT survive is any claim that low cross-goal accuracy measures a failure of
+> MVG, or that 0.42-0.50 on OR is "below chance". **The correct test of the
+> Kashtan-Alon claim is RE-ADAPTATION SPEED after a switch** - how many
+> generations to recover the active goal, and whether that shrinks over the run -
+> which is measurable from `champions.npz`. **DONE 2026-09-13**, see "Re-adaptation
+> speed after a goal switch" above: the compressed encoding accelerates, the direct
+> one slows down.
 
 The AND-matched champion of an MVG run scores **0.423 +- 0.034 (constrained) and
-0.467 +- 0.080 (ablation) on OR** — not merely worse than AND, but far below the
-0.750 cap that any one-eye solution already achieves, and below chance-level
-performance on the goal it is not currently being selected for.
+0.467 +- 0.080 (ablation) on OR**, against the 0.500 that a perfect AND solver
+would score and the 1.500 ceiling on the summed pair.
 
 `runs/fgmvg/switch_window_budget_seed0.png` shows the mechanism generation by
 generation: AND and OR accuracy alternate in near-perfect antiphase, each rising
-to ~0.83 while it is the active goal and collapsing to ~0.40-0.50 the moment the
-goal switches. Over 10,000 generations and 500 switches there is no sign of the
+to ~0.83 while it is the active goal and falling to ~0.40-0.50 the moment the
+goal switches - which, per the bound above, is what a network specialising hard
+on the active goal MUST look like. Over 10,000 generations and 500 switches there is no sign of the
 oscillation narrowing. Seed 2 (`..._budget_seed2.png`) is the cleanest case: two
 near-perfect square waves in exact antiphase.
 
@@ -738,11 +1041,13 @@ shows the same antiphase in the unconstrained arm — AND and OR alternating
 trade-off is what goal-switching does in this framework, in both constraint
 conditions, and (see experiment 2) under the direct encoding as well.
 
-So MVG here is not building a network that solves both sub-goals with a shared
-modular decomposition — the mechanism Kashtan-Alon propose. It is building one
-that re-specialises every 20 generations. That is a substantive negative result
-about MVG in this framework, and it is invisible to any measurement that reports
-only the active goal.
+So MVG here re-specialises every 20 generations rather than parking on a
+compromise network. Note what this does and does not establish: it is a real
+description of the *dynamics*, but it is **not** evidence against the
+Kashtan-Alon mechanism, because the 1.500 bound means no context-free network
+could hold both goals in the first place. Acting on both goals at once is not
+available to this architecture at all. Testing KA's actual claim needs
+re-adaptation speed (Open threads).
 
 ### 4. The goal-matching bug was NOT cosmetic here
 
@@ -758,15 +1063,34 @@ scored against every goal into `result.json`'s `acc_by_op`.
 
 ### 5. Caveats
 
-* **LR is degenerate at high density.** Its spread is +-1.322 to +-6.474, with
-  single-seed values of -10.214 and +1.538 and 2/5 to 4/5 seeds undefined in the
-  ablation arms. It is a normalised score whose denominator collapses when the
-  graph approaches complete. Trust its **p-values and its sign on sparse graphs**;
-  do not average its magnitude across arms of different density. Purity does not
-  have this failure mode and is the metric to lead with here.
-* **Q_m likewise** (+-0.324 to +-0.588, several arms with one usable seed).
-  Consistent with KA's own observation that Q_m stops discriminating above ~50%
-  density.
+* **The `lr` RATIO score is degenerate - superseded by `lr_r`.** Its spread is
+  +-1.322 to +-6.474, with single-seed values of -10.214 and +1.538 and 2/5 to
+  4/5 seeds undefined in the ablation arms. Its denominator `(q_max - q_rand)`
+  collapses as the graph approaches complete, and `left_right_q` floors `q_max`
+  at `q`, so a graph that rewiring cannot improve on returns exactly **1.000** -
+  which is what `nobudget_fg` seed 0 reports while its `q` is *negative*. The
+  ratio hands its top score to the least modular graph in the study. `lr_r`
+  divides the same `q` by a closed-form ceiling instead (0.38-0.50 in all 40
+  runs, never collapses), is bounded, is never `nan`, and needs no null.
+  Caveat on `lr_r` in turn: the ceiling is ~0.5 throughout, so **`lr_r` ~ 2q and
+  carries no information raw Q does not** - it buys a stable scale and a named
+  published quantity, not extra signal.
+* **`purity` is withdrawn as evidence of modularity** (kept as a descriptive
+  column). Against KA's own second null - 60 random genomes per run through this
+  same encoding at this same config - observed purity is BELOW the null in all
+  40 runs of this study, in both constraint conditions, and the null genomes are
+  *denser* (58% vs the evolved 27-48%), which should have lowered their purity.
+  `recurrent_purity` unrolls a hidden block that is reciprocal nearly everywhere,
+  so side-mixture diffuses back and equilibrates toward 0.5; what it reports is
+  distance from mixing equilibrium after `rnn_iters` steps, a function of density
+  and spectral gap. `qmetrics.circuit_purity` raises on a cycle for a reason.
+* **Q_m is reference-only** (+-0.324 to +-0.588, several arms with one usable
+  seed). Consistent with KA's own observation that Q_m stops discriminating above
+  ~50% density - and see section 6 of `../experiment_2/RESULTS.md` for the worse
+  problem: Q_m is **not comparable across encodings**, because a
+  degree-preserving null is not an encoding-preserving one. It also saturates at
+  exactly 1.000 for both the least (`q` = 0.030) and the most (`q` = 0.415)
+  modular constrained run here.
 * **The budget costs ~8 points of accuracy** (0.978 -> 0.895 under FG), so
   constrained and unconstrained arms are different competence regimes and any
   constrained-vs-unconstrained modularity difference is confounded with that.
@@ -777,14 +1101,17 @@ scored against every goal into `result.json`'s `acc_by_op`.
   and is why its SD (+-0.106) exceeds its mean. A zero there means no hidden
   neuron had one-sided ancestry, not that the metric failed.
 
-### Figures (in `runs/fgmvg/`, NOT yet promoted to `latex_figures/`)
+### Figures (promoted to `latex_figures/experiment_1_fgmvg/`, 2026-09-13)
 
-* `switch_window_budget_seed0.png` — accuracy + purity + Q + density, every
-  generation, across ~20 goal switches. The antiphase result above.
-* `progress_fg_vs_mvg.png` — all four arms over 10,000 generations, median and
-  full seed range. Sampled at the END of each reference-goal epoch, never at
-  even spacing: even spacing aliases against the 20-generation switch cycle and
-  draws a sawtooth that is an artifact of the sampling rate.
-* `brains_grid_purity.png` / `_community.png` — every run's goal-matched
-  champion, hidden neurons coloured by left/right ancestry.
-* `metrics_per_seed.csv`, `metrics_summary.json` — the numbers above.
+Both constraint conditions, as `*_budget*` / `*_nobudget*`; provenance,
+regeneration commands and caveats in that folder's `README.md`.
+
+* `brains_grid_leftright_*.png`: all 10 goal-matched champions, hidden neurons
+  coloured by the left/right side `lr_r` is scored at.
+* `progress_fg_vs_mvg_*.png`: champion accuracy, density and `lr_r` over 10,000
+  generations, 5-seed mean ± 1 SD, sampled at reference-goal epoch ends.
+* `switch_window_*_seed0.png`: windows [100,300] and [1000,1200] from a dense
+  REPLAY of seed 0 (champion accuracy on the active goal, population mean, `lr_r`).
+* The older `brains_grid_purity.png` / `_community.png` and the 4-arm
+  `progress_fg_vs_mvg.png` stay in `runs/fgmvg/` (purity is withdrawn as evidence).
+* `metrics_per_seed.csv`, `metrics_summary.json`: the numbers above.

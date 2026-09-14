@@ -4,19 +4,70 @@
 same four for the brains grown in `experiments/`, so the two studies can be read
 side by side:
 
-    Q         Newman modularity of a DISCOVERED partition        (secondary)
-    Q_m       KA's normalized (Q_real - Q_rand)/(Q_max - Q_rand) (secondary)
-    LR / r    modularity at the PLANTED left/right split         (PRIMARY)
-    purity    left/right purity of each hidden neuron's ancestry (PRIMARY)
+    lr_r      assortativity at the PLANTED left/right split     (PRIMARY)
+    Q         Newman modularity of a DISCOVERED partition        (PRIMARY)
+    LR score  (q - q_rand)/(q_max - q_rand) at the same split    (do not report)
+    Q_m       KA's normalized (Q_real - Q_rand)/(Q_max - Q_rand) (reference only)
+    purity    left/right purity of each hidden neuron's ancestry (descriptive)
 
 Which are primary is not a style choice. experiment_1/RESULTS.md records a run
 where `newman_q` returned Q = 0.20 with p = 0.87 against its own null, having
 found a partition that had nothing to do with the retina's left/right structure
 — a discovered partition can be real and irrelevant at the same time. The split
-this task is *about* is known in advance, so score that one:
-`left_right_q` needs no search and so has no optimiser to fail. Q_m is reported
-because KA reported it, with the caveat KA's own data shows (and this repo
-reproduced): it stops discriminating above ~50% density.
+this task is *about* is known in advance, so score that one: `left_right_q`
+needs no search and so has no optimiser to fail.
+
+⚠ REVISED 2026-09-12, after the 40-run FG-vs-MVG study. Three demotions, all
+forced by evidence in that study's 40 scored champions:
+
+  * PURITY IS NO LONGER EVIDENCE OF MODULARITY — report it descriptively only.
+    Against KA's own second null (random genomes through the same encoding at
+    the same config, 60 per run) the observed purity sits BELOW the null in all
+    40 runs, in both constraint conditions. The null genomes are also *denser*
+    (58% vs the evolved 27-48%), which should have lowered their purity, not
+    raised it. `recurrent_purity` unrolls a graph whose hidden block is
+    reciprocal nearly everywhere (see the reciprocity note below), so the
+    side-mixture diffuses back and forth and equilibrates toward 0.5: what the
+    number tracks is distance from mixing equilibrium after `rnn_iters` steps,
+    which is a function of density and spectral gap. The constrained-vs-
+    unconstrained purity gap (0.114 vs 0.021) is mostly the density gap.
+
+  * REPORT `lr_r`, NOT THE `lr` RATIO SCORE. Both are built from the same `q` at
+    the same planted partition; they differ only in the denominator. `lr_r`
+    divides by the analytic ceiling `1 - sum_g (a_g/2m)^2` (closed form from the
+    per-group degree sums, 0.38-0.50 in all 40 runs, cannot collapse). The `lr`
+    score divides by `(q_max - q_rand)`, two sampled quantities that collapse
+    together on a dense graph: `nan` in 15 of 40 runs, and values of -10.214,
+    -2.916, -2.241. Worse, `left_right_q` floors `q_max` at `q`, so when
+    rewiring cannot beat the observed graph the ratio returns EXACTLY 1.000 —
+    which is what it reports for `nobudget_fg` seed 0, a graph whose `q` is
+    *negative* (-0.0076, anti-assortative). The ratio hands its maximum score to
+    the least modular graph in the study. `lr_r` reports -0.015 there.
+    Caveat on `lr_r`: with two groups of near-equal degree mass the ceiling is
+    ~0.5 throughout, so `lr_r` ~ 2q and carries no information raw `q` does not.
+    Its value is a stable scale and a named, published quantity (Newman's
+    discrete assortativity; 1 = split, 0 = chance, <0 = anti-associated), not
+    extra signal. The identity `r == 1 - crosstalk` is verified in all 40 runs.
+
+  * Q_m IS REFERENCE-ONLY, AND IS NOT COMPARABLE ACROSS ENCODINGS. It stops
+    discriminating above ~50% density (KA's own data shows this, and this repo
+    reproduced it). Beyond that: the two encodings in this project score raw Q
+    of 0.133 (compressed) vs 0.117 (direct) — indistinguishable — and Q_m of
+    0.495 vs 0.046, a 10.7x gap. The gap is ~6x numerator (the compressed
+    encoding's `q_rand` is lower) and ~1.9x denominator. Cause: a
+    degree-preserving null is not an ENCODING-preserving null. experiment_1's
+    genome emits a K x K type graph blown up by clone counts, so clones have
+    identical rows and the degree sequence is clumped; rewiring such a sequence
+    scores lower, which inflates the numerator. Q_m therefore rewards whichever
+    encoding has the clumpier degrees. Using it for a cross-encoding claim
+    inverts the answer. Q_m also saturates at exactly 1.000 for both the LEAST
+    (q=0.030) and the MOST (q=0.415) modular constrained run in the study.
+
+  * PREFER THE ENCODING-AWARE NULL. Where a null is needed, draw random genomes
+    through the same encoding at the same config rather than rewiring neurons.
+    Neuron-level rewiring explores graphs the encoding can never emit. Under the
+    encoding-aware null, raw Q survives in 9/10 constrained runs (>=92nd pct)
+    and `lr_r` in 6/10, while purity fails in all 40.
 
 WHY PURITY NEEDED NEW CODE. `qmetrics.circuit_purity` raises
 ``ValueError("circuit_purity needs an acyclic graph")`` — it calls
@@ -177,10 +228,25 @@ def score_weights(w, n_in: int, n_hidden: int, n_out: int, *,
     #    undirected graph, KA's Q_m is undirected, and `newman_q`'s greedy
     #    method refuses a DiGraph outright. from_matrix(directed=False) keeps
     #    edge i-j when either direction exists, at the larger |w|.
-    #  * DIRECTED for left_right_q, matching experiment_1/score_2x2.py, which is
-    #    how the existing 2x2 in add_to_latex.md was scored. Keeping the same
-    #    convention means these numbers extend that table instead of being a
-    #    second, incomparable set.
+    #  * G_dir is passed to left_right_q to match experiment_1/score_2x2.py,
+    #    which is how the existing 2x2 in add_to_latex.md was scored, so these
+    #    numbers extend that table instead of being a second, incomparable set.
+    #    ⚠ CORRECTED 2026-09-12: passing a DiGraph there has NO EFFECT. The
+    #    first thing `left_right_q` does is `_unweighted(G)`, which builds a
+    #    fresh `nx.Graph()` from whatever it is given, so direction and weight
+    #    are discarded before anything is measured; it sees the same edge set as
+    #    G_und. An earlier version of this comment claimed left_right_q was
+    #    scored DIRECTED. It never was. Consequence worth knowing: every metric
+    #    in this module except `recurrent_purity` is blind to edge direction, so
+    #    the reciprocity of the hidden block cannot corrupt Q / Q_m / lr_r — but
+    #    none of them can detect it either. Measured on this study's 40
+    #    champions: reciprocity among active hidden->hidden edges runs 79-100%
+    #    unconstrained (which is just the ER expectation at 94-100% density, so
+    #    not elevated) and 7-75% constrained (departing from chance both ways,
+    #    because `shrink` acts per target column). In experiment 1 the hidden
+    #    block is additionally a K x K type graph blown up by clone counts, so
+    #    same-type clone pairs are not merely reciprocal but EXACTLY symmetric:
+    #    both directions evaluate g(f_t, f_t). Verified True in all 20 runs.
     # Building the graphs and running greedy modularity is cheap; only the
     # degree-preserving NULL MODELS behind Q_m and the left/right p-value are
     # expensive, so those are what `qm` / `lr` gate. Q is always computed, which
@@ -209,6 +275,10 @@ def score_weights(w, n_in: int, n_hidden: int, n_out: int, *,
             out["qm_error"] = repr(e)
 
     # --- METRIC 3: PRIMARY, the planted left/right split -------------------
+    # Read `lr_r` out of `info`, not the returned `score`. See the REVISED
+    # 2026-09-12 block in the module docstring: `score` is `nan` in 15 of 40
+    # runs and returns exactly 1.000 for anti-assortative graphs. Both are
+    # stored, so old tables remain reproducible.
     if lr:
         pinned = {i: i // (n_in // 2) for i in range(n_in)}
         # The single output must read both halves by construction, so scoring it
@@ -228,4 +298,54 @@ def score_weights(w, n_in: int, n_hidden: int, n_out: int, *,
     return out
 
 
-METRIC_KEYS = ("lr", "purity", "q", "q_m")   # PRIMARY first -- see module docstring
+def left_right_split(w, n_in: int, n_hidden: int, n_out: int, *,
+                     threshold: float = 0.05):
+    """`lr_r` and the partition it was measured at, with NO null model.
+
+    -> (r, groups). `r` is bit-identical to `score_weights`'s `lr_r` and
+    `groups` to `left_right_q`'s `info["groups"]` (node -> 0 left / 1 right,
+    the output excluded) -- verified on both a constrained and an unconstrained
+    champion. What is dropped is everything that needs randomisation: q_rand,
+    q_max, z, p and the `lr` ratio.
+
+    Why this exists rather than `score_weights(..., lr=True)`: `lr_r = q /
+    ceiling` is a closed form, but `left_right_q` also rewires the graph
+    `sweeps * m` times to estimate `q_max`, which costs 122 ms constrained and
+    313 ms dense. Skipping it takes the same number to 1.7-2.3 ms, which is the
+    difference between `lr_r` being traceable per generation and not. That
+    matters because `lr_r` is the PRIMARY metric (see the module docstring) and
+    the figures need it where they previously plotted purity.
+
+    The two private imports are deliberate: re-deriving the greedy assignment
+    here would risk it drifting out of step with `left_right_q`, and the point
+    of this function is to return exactly what that one would have returned.
+    """
+    # Same assignment and same Q as left_right_q, minus the null models.
+    from qmetrics.metrics import _assign, _q_at, _unweighted
+
+    allowed = role_allowed(n_in, n_hidden, n_out)
+    G = from_matrix(np.asarray(w, dtype=np.float64), threshold=threshold,
+                    directed=False, weighted=True, allowed=allowed)
+    U = _unweighted(G)
+    U.remove_nodes_from(range(n_in + n_hidden, n_in + n_hidden + n_out))
+    m = U.number_of_edges()
+    if m == 0:
+        return float("nan"), {}
+    pinned = {i: i // (n_in // 2) for i in range(n_in)}
+    ids = sorted({pinned[v] for v in U if v in pinned}) or [0]
+    gid = _assign(U, pinned, ids, "optimal", 20)
+    q = _q_at(U, gid)
+    a = {g: 0 for g in ids}
+    for v, g in gid.items():
+        a[g] += U.degree(v)
+    ceiling = 1.0 - sum((x / (2 * m)) ** 2 for x in a.values())
+    r = q / ceiling if ceiling > 1e-12 else float("nan")
+    return float(r), dict(gid)
+
+
+# PRIMARY first -- see the REVISED 2026-09-12 block in the module docstring.
+# `lr` (the ratio score) and `purity` are still COMPUTED and still written to
+# every CSV, so every earlier table stays reproducible; they are demoted here
+# only as to what a result should be reported on. Nothing in the repo reads this
+# tuple -- it is documentation, and changing its order breaks no caller.
+METRIC_KEYS = ("lr_r", "q", "purity", "lr", "q_m")

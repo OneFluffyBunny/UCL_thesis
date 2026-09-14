@@ -220,6 +220,10 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
           f"pop={run_cfg.popsize} budget={brain_cfg.synaptic_budget} shrink={brain_cfg.shrink}")
     print(f"[seed {seed}] -> {run_dir}")
 
+    # Extra per-generation logging windows; see RunConfig.dense_log.
+    dense_windows = [tuple(int(v) for v in w.split(":"))
+                     for w in run_cfg.dense_log.split(",") if w.strip()]
+
     csv_f = open(os.path.join(run_dir, "log.csv"), "w", newline="")
     writer = csv.writer(csv_f)
     writer.writerow(["gen", "op", "best_acc", "mean_acc", "sel_best",
@@ -268,12 +272,18 @@ def train_seed(brain_cfg, run_cfg, seed) -> SeedResult:
         epoch_len = max(1, run_cfg.switch_interval)
         due = ((gen + 1) % epoch_len == 0 if run_cfg.mvg
                else gen % run_cfg.log_interval == 0)
+        # --dense-log windows log EVERY generation inside them; see RunConfig.
+        due = due or any(lo <= gen <= hi for lo, hi in dense_windows)
         if due or gen == 0 or gen == run_cfg.generations - 1:
             genome = eqx.combine(reshaper.reshape_single(gen_best_flat), static)
             st = brain_stats(genome, brain_cfg, run_cfg.prune_threshold)
             sigma = float(getattr(state, "sigma", float("nan")))
             sigma_str = "" if sigma != sigma else f" | sigma: {sigma:.4f}"
-            gens_in = (epoch_len if run_cfg.mvg else run_cfg.log_interval) if gen > 0 else 1
+            # Inside a dense window rows are one generation apart, so dividing
+            # by the nominal interval would under-report s/gen by up to 20x.
+            in_dense = any(lo <= gen <= hi for lo, hi in dense_windows)
+            gens_in = 1 if (gen == 0 or in_dense) else (
+                epoch_len if run_cfg.mvg else run_cfg.log_interval)
             secs_per_gen = (time.time() - interval_start) / gens_in
             interval_start = time.time()
             mean_acc = float(acc.mean())

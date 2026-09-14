@@ -60,11 +60,18 @@ class RunConfig:
     # analysis / logging
     prune_threshold: float  # |w| below this is treated as "no edge" for analysis
     log_interval: int
+    dense_log: str          # "lo:hi,lo:hi": log EVERY generation inside these windows
     archive_interval: int   # >0: store every Nth generation's champion to champions.npz
     viz_interval: int       # >0: render+open the best brain every N gens during training
     open_image: bool        # auto-open the saved brain image at the end
     balanced: bool          # balanced accuracy (chance=50%) vs raw accuracy
     out_dir: str
+    # --strategy KA_GA only (ga.py). Defaulted so older config.json files, which
+    # predate these fields, still load into RunConfig(**...) (dense_replay.py).
+    ga_elite: int = 150         # genomes copied unchanged each generation [KA: 150 of 600]
+    ga_pc: float = 0.5          # P(offspring recombines two elite parents) [KA: 0.5]
+    ga_pm: float = 0.5          # P(offspring gets one single-gene mutation) [KA: 0.5]
+    ga_mut_sigma: float = 0.5   # SD of that one-gene step [our choice: KA's weights are +-1]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,7 +123,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- evolution / search ---------------------------------------------------
     evo = p.add_argument_group("evolution")
-    evo.add_argument("--strategy", default="CMA_ES", help="evosax strategy (CMA-ES for now)")
+    evo.add_argument("--strategy", default="CMA_ES",
+                     help="evosax strategy name, or KA_GA for the Kashtan-Alon-style GA in ga.py")
+    evo.add_argument("--ga-elite", type=int, default=150,
+                     help="KA_GA: genomes copied unchanged per generation (KA: 150 of 600)")
+    evo.add_argument("--ga-pc", type=float, default=0.5,
+                     help="KA_GA: probability an offspring is a block-wise crossover (KA: 0.5)")
+    evo.add_argument("--ga-pm", type=float, default=0.5,
+                     help="KA_GA: probability an offspring gets one single-gene mutation (KA: 0.5)")
+    evo.add_argument("--ga-mut-sigma", type=float, default=0.5,
+                     help="KA_GA: SD of the one-gene mutation step (our choice; KA's weights are +-1)")
     evo.add_argument("--fitness", choices=["accuracy", "margin"], default="accuracy",
                      help="training signal for selection: raw balanced accuracy (default, as before) "
                           "or a smooth hinged signed-margin surrogate on the tanh output "
@@ -165,6 +181,18 @@ def build_parser() -> argparse.ArgumentParser:
     ana = p.add_argument_group("analysis")
     ana.add_argument("--prune-threshold", type=float, default=0.05, help="|w| below this = no edge (analysis only)")
     ana.add_argument("--log-interval", type=int, default=10, help="generations between log lines")
+    ana.add_argument("--dense-log", default="",
+                     help="DENSE LOG WINDOWS, as comma-separated lo:hi generation "
+                          "ranges (e.g. 100:300,1000:1200). Inside a window EVERY "
+                          "generation gets a log.csv row, on top of whatever "
+                          "--log-interval would have produced. This is the only way "
+                          "to get a per-generation POPULATION statistic: "
+                          "champions.npz archives the champion, so a population "
+                          "mean cannot be recovered from it afterwards. Logging "
+                          "draws no randomness and consumes no RNG, so a run with "
+                          "--dense-log is the SAME run as one without -- same seed, "
+                          "same trajectory (ported from kashtan_alon/train.py, "
+                          "where analysis/dense_replay.py relies on exactly that).")
     ana.add_argument("--archive-interval", type=int, default=0,
                      help="CHAMPION ARCHIVE: >0 stores every Nth generation's champion "
                           "(the flat DNA vector, plus its accuracy on EVERY goal in play) "
@@ -222,11 +250,16 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         mvg_ops=tuple(op.strip() for op in args.mvg_ops.split(",")),
         prune_threshold=args.prune_threshold,
         log_interval=args.log_interval,
+        dense_log=args.dense_log,
         archive_interval=args.archive_interval,
         viz_interval=args.viz_interval,
         open_image=not args.no_open,
         balanced=not args.no_balanced,
         out_dir=args.out_dir,
+        ga_elite=args.ga_elite,
+        ga_pc=args.ga_pc,
+        ga_pm=args.ga_pm,
+        ga_mut_sigma=args.ga_mut_sigma,
     )
 
 
