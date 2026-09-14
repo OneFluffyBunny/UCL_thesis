@@ -7,7 +7,7 @@ group: default
 notes experiment: null
 device: 0
 return_loss: 0
-environment: KA_retina_AND
+environment: KA_retina
 
 #########
 # Model #

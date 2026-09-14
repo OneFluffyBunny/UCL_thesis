@@ -1,0 +1,17 @@
+C:\Users\raduc\programare\UCL_thesis\NDP\experiments_paper\retina\matched_figures.py:289: RuntimeWarning: Mean of empty slice
+  mu, sd = np.nanmean(Y, axis=0), np.nanstd(Y, axis=0, ddof=1)
+C:\Users\raduc\miniconda3\envs\ndp\lib\site-packages\numpy\lib\_nanfunctions_impl.py:2019: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+
+  sampled 1789303257 (60 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1789303833 (60 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1789304372 (60 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1789304978 (60 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1789305630 (60 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1786053806 (38 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1788817038 (38 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1788821061 (38 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1788866451 (38 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+  sampled 1788871442 (38 points, max |regrown acc - replay fitness| 0.00e+00, verified True)
+Saved -> C:\Users\raduc\AppData\Local\Temp\claude\C--Users-raduc-programare-UCL-thesis-NDP\51c81ba1-ff3c-4cd5-abe8-1bbee4cfa539\scratchpad\light\ndp_matched_progress_fg_vs_mvg.png
+

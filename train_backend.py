@@ -291,7 +291,7 @@ def fitness_functional(config: dict, render=False, animate_graph_growth=False, a
                 gs = np.sum(W)
                 print(f"\nChecksum of initial network state before growth: {ns}")
                 print(f"Checksum of graph G before growth: {gs}")
-                print(f"The final grown graph has {W.shape[0]} nodes and {int(np.count_nonzero(W))} edges.")
+                print(f"The seed graph (before growth) has {W.shape[0]} nodes and {int(np.count_nonzero(W))} edges.")
                 config["checksum_best_State_grown"] = ns
                 config["checksum_best_Graph_grown"] = gs
 
@@ -634,8 +634,12 @@ def bool_gates_fitness(W: np.ndarray, config: dict, render=False, animate_graph_
 
 def retina_fitness(W: np.ndarray, config: dict, render=False, animate_graph_rollout: bool = False):
     """Kashtan-Alon-style retina task: 8 bipolar {-1,+1} inputs, 1 output node whose
-    sign (> 0 / < 0) is read as the predicted bit. Target = left_feature AND
-    right_feature (see ka_task.py).
+    sign (> 0 / < 0) is read as the predicted bit. Target = left_feature OP
+    right_feature (see ka_task.py), where OP is read from
+    config["current_op"] (set every generation by optimizers.py::CMAES --
+    fixed under Fixed Goal, alternating under --mvg), falling back to
+    config.get("operation", "and") if current_op isn't set (e.g. this
+    function called standalone, outside the normal training loop).
 
     Deliberately DOES reset network_state to zeros before every pattern (unlike
     bool_gates_fitness, which lets state carry over between rows) -- the target
@@ -651,9 +655,10 @@ def retina_fitness(W: np.ndarray, config: dict, render=False, animate_graph_roll
     returns balanced accuracy (mean of per-class accuracy) as a float in [0, 1],
     matching experiment_1's default (see root CLAUDE.md's retina/AND note).
     """
-    from ka_task import retina_and_dataset, to_bipolar
+    from ka_task import retina_dataset, to_bipolar
 
-    X, Y = retina_and_dataset()
+    op = config.get("current_op", config.get("operation", "and"))
+    X, Y = retina_dataset(op=op)
     X = to_bipolar(X)
 
     if animate_graph_rollout:
@@ -720,11 +725,11 @@ def retina_fitness(W: np.ndarray, config: dict, render=False, animate_graph_roll
         tnr = correct_neg / n_neg if n_neg > 0 else 0.0
         balanced_acc = 0.5 * (tpr + tnr)
         if render:
-            print(f"{config['environment']} retina fitness (balanced): {balanced_acc:.4f} (raw {fitness} / {len(Y)})")
+            print(f"{config['environment']} retina fitness (op={op}, balanced): {balanced_acc:.4f} (raw {fitness} / {len(Y)})")
         return balanced_acc
 
     if render:
-        print(f"{config['environment']} retina fitness: {fitness} / {len(Y)}")
+        print(f"{config['environment']} retina fitness (op={op}): {fitness} / {len(Y)}")
     return fitness
 
 

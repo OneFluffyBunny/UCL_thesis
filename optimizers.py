@@ -62,6 +62,17 @@ def CMAES(config, fitness, fitness_with_stats=None):
             X = es.ask()
 
             config["current_gen"] = gen
+
+            # MVG: which goal is active this generation. Fixed under FG (config["mvg"]
+            # falsy), alternates every mvg_switch_interval generations under --mvg.
+            # gen is 0-indexed here, matching kashtan_alon/train.py::goal_op exactly.
+            if config.get("mvg", False):
+                mvg_ops = config.get("mvg_ops", ["and", "or"])
+                switch_interval = config.get("mvg_switch_interval", 20)
+                config["current_op"] = mvg_ops[(gen // switch_interval) % len(mvg_ops)]
+            else:
+                config["current_op"] = config.get("operation", "and")
+
             warmup = config.get("size_reg_warmup")
             if warmup is not None and gen == warmup:
                 print(f"\n  [Gen {gen}] Regularisation off — switching to raw fitness\n")
@@ -81,6 +92,22 @@ def CMAES(config, fitness, fitness_with_stats=None):
             else:
                 fitvals = results
 
+            # This generation's champion (not best-ever) -- computed every generation
+            # (not just at print_every) so it's accurate to the true final generation
+            # when the loop ends. Needed because under MVG, "best fitness ever" isn't
+            # meaningfully comparable across goal switches (a peak hit while the goal
+            # was AND doesn't mean the same thing once the goal is OR) -- mirrors
+            # kashtan_alon/train.py's final_indiv/final_fit/final_op, which is what
+            # that reference actually saves/reports/visualises, not its own best-ever
+            # tracker, for the same reason.
+            best_idx = int(np.argmax(fitvals) if config["maximise"] else np.argmin(fitvals))
+            final_gen_solution = X[best_idx]
+            final_gen_fitness = fitvals[best_idx]
+            final_gen_op = config.get("current_op")
+            if use_stats:
+                final_gen_raw = raw_rewards[best_idx]
+                final_gen_nodes = brain_sizes[best_idx]
+
             # Correct sign — CMA-ES minimises, we maximise
             if config["maximise"]:
                 fitvals_for_cma = [-f for f in fitvals]
@@ -96,15 +123,14 @@ def CMAES(config, fitness, fitness_with_stats=None):
 
                 extra = ""
                 if use_stats:
-                    best_idx = int(np.argmax(fitvals) if config["maximise"] else np.argmin(fitvals))
-                    best_reg = fitvals[best_idx]
-                    best_raw = raw_rewards[best_idx]
-                    best_nodes = brain_sizes[best_idx]
+                    best_reg = final_gen_fitness
+                    best_raw = final_gen_raw
+                    best_nodes = final_gen_nodes
                     mean_nodes = np.mean(brain_sizes)
                     extra += f" | Nodes: {best_nodes} (mean {mean_nodes:.1f})"
                     best_str = f"{best_reg:.2f} (raw: {best_raw:.1f})"
                 else:
-                    best_reg = max(fitvals) if config["maximise"] else min(fitvals)
+                    best_reg = final_gen_fitness
                     best_str = f"{best_reg:.2f}"
                 if config.get("log_gen_time", True):
                     elapsed = time.time() - gen_tic
@@ -112,6 +138,8 @@ def CMAES(config, fitness, fitness_with_stats=None):
                     gen_tic = time.time()
                 if config.get("size_reg_warmup") is not None:
                     extra += " | [reg]" if gen < config["size_reg_warmup"] else " | [raw]"
+                if config.get("mvg", False):
+                    extra += f" | op={final_gen_op}"
                 print(f"  Gen {gen:4d} | Best: {best_str} | Pop mean: {pop_mean_score:.2f} | Sigma: {es.sigma:.4f}{extra}")
 
             # Store best solution
@@ -128,9 +156,12 @@ def CMAES(config, fitness, fitness_with_stats=None):
                 objective_solution_centroid = objective_current_centroid_sol
                 solution_centroid = es.mean
 
-            # Success stop: best fitness reached the target
+            # Success stop: best fitness reached the target. Disabled under MVG (matches
+            # kashtan_alon/train.py's `if args.early_stop and (not args.mvg) and ...`) --
+            # trivially satisfying one goal and stopping would mean the other goal was
+            # never addressed, which defeats the point of alternating them.
             target = config.get("target")
-            if target is not None and config["maximise"] and -objective_current_best_sol >= target:
+            if target is not None and config["maximise"] and not config.get("mvg", False) and -objective_current_best_sol >= target:
                 print(f"\nTarget fitness {target} reached at generation {gen}. Stopping.\n")
                 break
 
@@ -183,8 +214,26 @@ def CMAES(config, fitness, fitness_with_stats=None):
     config["training time"] = str(int(toc - tic)) + " seconds"
     print("\nEvolution took: ", int(toc - tic), " seconds\n")
     print(f"========Optimizer output:==========================")
-    print(f"Best single loss found was {objective_solution_best}")
+    print(f"Best single loss found (peak, any goal) was {objective_solution_best}")
     print(f"Best population centroid loss found was {objective_solution_centroid}")
+
+    # Under MVG, "best fitness ever" isn't comparable across goal switches (see the
+    # comment above final_gen_solution), so the network actually returned/saved/
+    # snapshotted is the LAST generation's champion instead -- matching
+    # kashtan_alon/train.py, which reports both (peak fitness, for "did it ever solve
+    # either goal") but saves/visualises the final-generation network. FG runs are
+    # completely unaffected (config["mvg"] is falsy by default): solution_best/
+    # solution_centroid stay exactly the best-ever values, as before this feature.
+    if config.get("mvg", False):
+        peak_fitness = -objective_solution_best if config["maximise"] else objective_solution_best
+        print(f"Final-generation champion (op={final_gen_op}): fitness={final_gen_fitness:.4f} "
+              f"-- this is what gets returned/saved as solution_best under MVG "
+              f"(peak fitness {peak_fitness:.4f} was reached under some possibly-different goal)")
+        config["mvg_peak_fitness"] = float(peak_fitness)
+        config["mvg_final_gen_fitness"] = float(final_gen_fitness)
+        config["mvg_final_gen_op"] = final_gen_op
+        solution_best = final_gen_solution
+        solution_centroid = es.mean
     print(f"===================================================\n")
 
     # Create dataframe for logging objective values

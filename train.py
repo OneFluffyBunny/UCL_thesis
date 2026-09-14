@@ -60,10 +60,11 @@ def train(config):
                 balanced = config.get("balanced_fitness", False)
                 max_reward = environment_max_reward(config["environment"], balanced=balanced)
                 score = retina_fitness(W=W, config=config)
+                op_suffix = f" (op={config.get('current_op', config.get('operation', 'and'))})" if config.get("mvg", False) else ""
                 if balanced:
-                    extra_title += f"\nBalanced accuracy: {score:.4f} ({100 * score:.1f}%)"
+                    extra_title += f"\nBalanced accuracy: {score:.4f} ({100 * score:.1f}%){op_suffix}"
                 else:
-                    extra_title += f"\nAccuracy: {score} / {max_reward} ({100 * score / max_reward:.1f}%)"
+                    extra_title += f"\nAccuracy: {score} / {max_reward} ({100 * score / max_reward:.1f}%){op_suffix}"
             elif "Network" not in config["environment"] and "gate" not in config["environment"]:
                 try:
                     max_reward = environment_max_reward(config["environment"])
@@ -144,6 +145,7 @@ if __name__ == "__main__":
     parser.add_argument("--growth-cycles", type=int, default=None, help="Override number_of_growth_cycles from config")
     parser.add_argument("--no-gen-time", action="store_true", help="Disable per-generation timing in progress output")
     parser.add_argument("--pruning", action="store_true", default=False, help="Enable edge pruning after each growth cycle (overrides config)")
+    parser.add_argument("--pruning-threshold", type=float, default=None, help="Edge |weight| threshold below which an edge is pruned each growth cycle (default from config, 0.3 for retina). Only has an effect when pruning is on (--pruning or prunning_phase: True in the yaml).")
     parser.add_argument("--no-elitism", action="store_true", default=False, help="Disable CMA-ES elitism (default is elitist)")
     parser.add_argument("--growth-threshold", type=float, default=None, help="Growth MLP output must exceed this to spawn a node (default 0.0)")
     parser.add_argument("--size-reg", type=str, default=None, help="Brain size regularisation strategy: 'io_ratio' (nodes), 'io_edges' (edges), 'both' (nodes + edges)")
@@ -155,6 +157,10 @@ if __name__ == "__main__":
     parser.add_argument("--balanced-fitness", action="store_true", default=False, help="Retina task: use balanced accuracy (mean of per-class accuracy, in [0,1]) instead of raw correct-count as the fitness signal (default False)")
     parser.add_argument("--no-early-stopping", action="store_true", default=False, help="Disable the 'unpromising run' early-stopping check (early_stopping_conditions). Its objective_value threshold is tuned for raw-reward scales (e.g. -3) and will always trigger on a [0,1] balanced-fitness run, silently discarding logs/snapshot -- pass this flag for any --balanced-fitness run")
     parser.add_argument("--allow-io-self-edges", action="store_true", default=False, help="Allow input-input and output-output edges in the seed graph (forbidden by default -- an input node is clamped to the observation every propagation step during rollout, so an edge into it from another input node, or itself, can never affect anything)")
+    parser.add_argument("--operation", type=str, default="and", choices=["and", "or", "xor"], help="Retina task: fixed-goal combining operation for left_feature OP right_feature (ignored under --mvg; default 'and', matching all runs before this flag existed)")
+    parser.add_argument("--mvg", action="store_true", default=False, help="Retina task: Modularly Varying Goals -- alternate the operation between --mvg-ops every --mvg-switch-interval generations, instead of a fixed goal (matches kashtan_alon/train.py's --mvg)")
+    parser.add_argument("--mvg-ops", type=str, default="and,or", help="Comma-separated operations to cycle through under --mvg, in order (default 'and,or', matching kashtan_alon/train.py's --mvg-ops default)")
+    parser.add_argument("--mvg-switch-interval", type=int, default=20, help="Generations between goal switches under --mvg (default 20, matching kashtan_alon/train.py's --switch-interval / the KA 2005 paper)")
     args = parser.parse_args()
     with open(args.conf) as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
@@ -181,6 +187,8 @@ if __name__ == "__main__":
     config["log_gen_time"] = not args.no_gen_time
     if args.pruning:
         config["prunning_phase"] = True
+    if args.pruning_threshold is not None:
+        config["prunning_threshold"] = args.pruning_threshold
     if args.no_elitism:
         config["CMA_elitist"] = False
     if args.growth_threshold is not None:
@@ -202,6 +210,10 @@ if __name__ == "__main__":
         config["early_stopping"] = False
     if args.allow_io_self_edges:
         config["forbid_io_self_edges"] = False
+    config["operation"] = args.operation
+    config["mvg"] = args.mvg
+    config["mvg_ops"] = [o.strip() for o in args.mvg_ops.split(",")]
+    config["mvg_switch_interval"] = args.mvg_switch_interval
     if args.size_reg_warmup is not None:
         config["size_reg_warmup"] = args.size_reg_warmup
     if args.target is not None:
