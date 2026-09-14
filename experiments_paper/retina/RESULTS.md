@@ -268,6 +268,10 @@ something about those nodes' indirect paths into the output shifts a few
 boundary-case (popcount 4-6) predictions relative to the other 8 runs. Not
 investigated further here.
 
+> **Update 2026-09-14:** resolved — see "What the budget-matched brains compute"
+> at the end. The 0.8540 is floating-point rounding at the popcount-4 tie, not a
+> better brain: every brain is exactly a majority vote (true score 0.8432).
+
 No modularity metric computed yet in this entry — node/edge counts and
 accuracy alone don't distinguish FG from MVG (ranges overlap heavily, both
 plateau at the same accuracy), which is expected: those stats say nothing
@@ -331,6 +335,166 @@ runs and all 5 new FG runs; the first MVG run (1786053806, 2026-08-06) predates
 the Aug 7 `train.py` edit, but its config matches the others on every training
 parameter.
 
-No modularity or size analysis has been run on this matched set yet. The
-modularity numbers in `MODULARITY_RERUN_RESULTS.md` use the old 200-generation
-FG runs and should not be read as a matched comparison.
+The modularity numbers in `MODULARITY_RERUN_RESULTS.md` use the old
+200-generation FG runs and should not be read as a matched comparison. The
+matched set is analysed in the next two entries (added 2026-09-14).
+
+## FG vs MVG over training, budget-matched set (2026-09-14)
+
+Per-generation champions of all 10 runs were recovered by deterministic replay:
+
+```
+conda run --no-capture-output -n ndp python -u experiments_paper/retina/replay_archive.py
+```
+
+It writes `saved_models/<run>/replay_champions.npz` and log
+`logs/replay_archive.log`. All 10 archives are `VERIFIED=True`: the best-ever
+fitness and population mean match `logger.csv` for every generation, and the
+final genome matches `solution_best.npy`.
+
+Figures:
+
+```
+python experiments_paper/retina/matched_figures.py grid --out-dir <dir>
+python experiments_paper/retina/matched_figures.py progression --out-dir <dir>
+```
+
+The progression figure shows the mean ± 1 SD of the 5 runs per arm, for each
+generation's champion. FG is sampled at 60 points, MVG at the end of each of
+its 38 AND epochs. Every sampled brain, regrown, reproduces its replay fitness
+exactly (`logs/progression_fig.log`). Copies are in UCL_thesis
+`latex_figures/NDP/KA/` (`brains_grid_leftright_matched.png`,
+`progress_fg_vs_mvg_matched.png`).
+
+- **Accuracy (AND): a complete plateau in both arms from the first few
+  generations.** Both sit at ≈ 0.844 for 1500 generations (MVG mean 0.846, FG
+  0.8438).
+  - Every value away from 0.8432 is rounding (next entry).
+  - The FG dip to 0.834 in the last ~40 generations is one run, 1789305630: its
+    last 43 generation champions score 0.78–0.80. Its saved best-ever brain is
+    0.8438.
+- **Density:** both arms settle by ~generation 450, FG ≈ 55%, MVG ≈ 42%, with
+  ±1 SD bands (≈ 17–90%) that overlap almost completely.
+- **lr_r:** both settle at 0.1–0.2 (FG ≈ 0.12, MVG ≈ 0.17), bands fully
+  overlapping.
+- **MVG shows no effect here.** In the Kashtan–Alon reproduction MVG gave
+  clearly more modular networks than FG: Q_m 0.245 vs 0.025, p ≈ 0.02–0.03
+  (UCL_thesis `kashtan_alon/RESULTS.md`, Run 5). In NDP on this task, FG and MVG
+  give the same accuracy, the same function and overlapping density/lr_r. The
+  next entry shows why MVG has nothing to select for.
+
+## What the budget-matched brains compute (2026-09-14)
+
+```
+conda run -n ndp python experiments_paper/retina/counting_analysis.py all
+```
+
+Every number below comes from that command.
+
+### 1. Every brain is exactly a majority vote
+
+All 10 final brains, FG and MVG, 12 to 80 neurons, compute: **1 if ≥ 5 of the 8
+inputs are on, 0 if ≤ 3.** At exactly 4 on, the output is 0 in exact arithmetic.
+Checks on all 10:
+
+- **Same count → same output.** Outputs for patterns with the same number of
+  inputs on are identical (popcount ≠ 4; ≤ 1e-16 at step 1). This already holds at propagation step 1,
+  where outputs are still ≈ ±0.93–0.96, not saturated.
+- **f(−x) = −f(x)** to ≤ 7e-15.
+- **At exactly 4 on, |output| ≤ 1e-12.** Flipping a 4-on pattern gives another
+  4-on pattern, so count-invariance and oddness together force 0.
+- **The reported scores are rounding.** Treating those ties as 0 gives **every
+  brain 0.8432**. The reported 0.8438 / 0.8540 depend on floating-point
+  rounding at the ties.
+  - Renumbering hidden neurons, a mathematically identical network, moves
+    `retina_fitness` to 0.7737–0.7936 for the 40-, 30- and 80-neuron brains.
+  - The 12- and 16-neuron brains stay at 0.8540 under renumbering, but not under
+    a batched matrix product (0.8274 / 0.8202, checked earlier the same day).
+
+**Ceilings** (`ceilings`), balanced accuracy over all 256 patterns:
+
+| Rule family | AND | OR |
+|---|---|---|
+| any rule on popcount alone | 0.8432 | 0.8212 |
+| any sign-symmetric classifier, f(−x) = −f(x) | 0.9796 | 0.8429 |
+| popcount rules NDP can express (both limits: 0 at popcount 4) | **0.8432** | **0.7657** |
+
+The best NDP-expressible rule is the majority vote for **both** goals. Counting
+cannot solve the task: `11001100` (label 1) and `10101010` (label 0) both have
+4 on.
+
+### 2. Why: NDP cannot tell its inputs apart, and its rollout has no bias
+
+- **No input identity.** All 8 inputs share one role embedding
+  (`train_backend.py:62-67`; only 2 role vectors, `:843`) and start with the
+  same neighbourhood (the output). The growth, embedding-transform and weight
+  MLPs are applied identically everywhere, and a child is wired to its parent
+  plus the parent's whole neighbourhood (`NDP.py:407-411`). So each input grows
+  an exact copy of every other input's subtree, and the brain is invariant
+  under any input permutation. This is an argument from the setup, confirmed on
+  the 10 brains; it is not a formal proof for every genome.
+- **Growth history shows in the wiring.** Every hidden neuron is wired to exactly
+  1 input (a descendant of that input) or to all 8 (a descendant of the output):
+  never 2–7, in any brain. The 8 larger brains split into **8 greedy Newman
+  communities, one input each**. The 12-neuron brain forms 1 community, the
+  16-neuron brain 2 (4 + 4, Q = 0.006). These are input lineages, not a
+  left/right split.
+- **No bias.** The rollout is `s ← tanh(Wᵀs)` from zero with inputs re-clamped
+  and no bias (`NDP.py:230-240`), so f(−x) = −f(x) for any weights. The target
+  is not sign-symmetric (`11001100` and `00110011` are both positive).
+- **Shared wirings.** The 10 brains have only 5 distinct edge sets. FG
+  1789303833, 1789304372, 1789305630 and MVG 1788817038, 1788866451, 1788871442
+  are one identical 40-neuron wiring.
+
+### 3. Rounding is the only way out, and evolution does use it during OR epochs
+
+`or-champs`: the best OR-epoch champion of every MVG run scores **0.8429**
+under `retina_fitness`, against the exact NDP cap of **0.7657**. With 4-on ties
+set to 0, every one scores 0.7657. Renumbering hidden neurons drops them to
+0.79–0.80.
+
+Two of the five grew input-asymmetrically, which only rounding at a growth
+decision sitting on its threshold can cause:
+- **1788817038, generation 112:** neurons per cycle 9 → 12 → …, input degrees
+  79/79/79/79/111/111/79/79;
+- **1788866451, generation 32:** input degrees 47/47/63/63/47/47/47/47.
+
+None of this survives into a final brain.
+
+### 4. A perfect brain exists, but NDP cannot grow it
+
+UCL_thesis `experiments/experiment_1/oracle.py --task retina` hand-wires a
+recurrent tanh brain for this same stand-in task. It has 4 AND detectors on
+different input pairs, 2 OR combiners, an output AND, and biases. It scores
+**1.000** (stage 1; re-run 2026-09-14). NDP cannot express it: each detector
+must single out 2 specific inputs, and its threshold is a bias. **The ≈ 0.84
+plateau is a representability limit of this NDP set-up, not a search
+failure.**
+
+### 5. Consequences
+
+- Only functions of how many inputs are on are reachable. That excludes both
+  retina variants, KA's task, and even `x0 AND x1`.
+- **MVG has nothing to select for.** The majority vote is the best expressible
+  brain for AND and for OR at once, so a goal switch never rewards a different
+  brain.
+- Fitness above 0.8432 (AND) or 0.7657 (OR) in any log or figure of this study is
+  a rounding artefact.
+- Untested ways to lift the limit:
+  - per-input embeddings or positional codes;
+  - a bias term in the rollout;
+  - symmetry breaking in the seed graph.
+
+### 6. Elitism
+
+- **All retina runs were elitist.** `CMA_elitist: true` in every saved
+  `KA_retina*` config (30 runs).
+- **Elitism was varied only on LunarLander** (`fluffy_experiments.md`):
+  - Run 6 (elitist, σ_init 1, popsize 512) froze its best at −67 from
+    generation 70 while the population mean kept improving. That was diagnosed as
+    elitist premature convergence.
+  - Run 8 added `--no-elitism` (`train.py:149`, commit b23abb3). σ kept rising
+    (0.80 → 0.90) and the best improved to −72.93 by generation 60, then froze
+    again. It was killed at ~110 generations, unsolved.
+- **Not retried on retina, and it could not help there.** The cap in §1–§2 holds
+  for every genome, so no optimiser setting can move it.
