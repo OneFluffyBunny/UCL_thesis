@@ -198,3 +198,214 @@ evaluating more effective nodes), no comparison against experiment_4's own
 NAND-only ECGP numbers (56 571 median gens, 12 seeds, but on goal `and` with its
 known shortcut and a different codebase — not a fair like-for-like without
 re-running on `xor`).
+
+## 2026-08-20 — 10-seed sweep: the generation-count win does NOT reach significance
+
+**Why this run.** The single-seed result above (32% fewer generations, nested
+vs flat) is one paired observation — no variance estimate, so no basis for a
+significance claim. `necgp/seed_sweep.py` runs the same twin
+`stage_run.run_to_solution` (nest_decay=0.5 vs 0.0, same driver, same task) for
+seeds 0 through 9, then a paired Wilcoxon signed-rank test on
+generations-to-solve (paired because each seed's nested/flat pair shares a
+seed, i.e. the same starting population and mutation stream up to where
+`compress` starts mattering — a matched-pairs design, not two independent
+samples).
+
+Also fixed first: `visualize._box_style`'s grey-out-trivial-modules code
+(`ecgp.is_trivial_module` + `visualize.py`'s `_box_style`, with
+`test_visualize.py` covering it) was already written but the seed-0 stage
+sheet on disk predated it (PNG timestamped before the last edits to
+`visualize.py`/`ecgp.py`) — regenerated it; `stages_seed0_nand.png` now
+correctly greys any module whose recursively-flattened body is a single
+primitive gate (e.g. `M271|3` in the gen-16000 panel), independent of how many
+nesting levels it took to write that module down.
+
+**Per-seed results** (`necgp/seed_sweep.csv`, `--gates nand --nodes 100
+--popsize 5 --max-generations 300000`, task `retina_ka2005/xor`):
+
+| seed | nested gen | nested s | flat gen | flat s | diff (nested − flat) |
+|---|---|---|---|---|---|
+| 0 | 78134 | 155.2 | 115095 | 144.2 | −36961 |
+| 1 | 63938 | 117.2 | 55218 | 66.3 | +8720 |
+| 2 | 29551 | 51.4 | 113118 | 131.8 | −83567 |
+| 3 | 15662 | 27.7 | 14933 | 18.3 | +729 |
+| 4 | 99051 | 292.3 | 113179 | 396.2 | −14128 |
+| 5 | 55186 | 390.0 | **NOT SOLVED** (254/256 @ 300000 gen cap) | 758.8 | excluded |
+| 6 | 91133 | 170.4 | 100681 | 103.6 | −9548 |
+| 7 | 104420 | 184.5 | 113746 | 112.2 | −9326 |
+| 8 | 36121 | 55.1 | 99704 | 114.7 | −63583 |
+| 9 | 101400 | 355.5 | 53594 | 78.3 | +47806 |
+
+**Summary statistics** (9/10 pairs — seed 5's flat run is excluded because it
+never solved, capping out at 254/256 hits after 300000 generations; nested
+solved that same seed in 55186):
+
+```
+nested gens: median 78134   mean 68823.3   stdev 34073.9
+flat   gens: median 100681  mean 86585.3   stdev 36295.5
+nested faster (fewer gens) in 6/9 seeds (0 ties, 3 flat-faster)
+mean paired diff (nested - flat): -17762.0 generations
+Wilcoxon signed-rank: statistic=10.000  p=0.1641  NOT significant at alpha=0.05
+```
+
+**Verdict: the seed-0 win does not generalise into a statistically significant
+effect.** Direction is consistent with nesting helping — nested wins on 6 of
+9 solved pairs, the mean paired difference is negative (nested faster by
+~17.8k generations on average), and the one excluded seed (5) is a case where
+nested clearly wins outright (flat never even reached the target within the
+300000-generation safety cap, nested solved it in 55186) — excluding it is the
+*conservative* choice, since including it as a right-censored "flat needed
+>300000" observation would only strengthen nested's case. But with n=9 paired
+seeds and Wilcoxon p=0.16, we cannot reject the null hypothesis that nested
+and flat need the same number of generations. The per-seed variance is large
+relative to the effect (stdev ~34-36k against a median gap of ~22k), and the
+sign flips on 3 of 9 seeds (1, 3, 9) — sometimes by a lot (seed 9: flat wins by
+47806 generations). One seed (0) was simply not representative of the typical
+spread.
+
+**Wall-clock is noisy in a way generation-count is not.** Seed 0's generation
+counts reproduced exactly across the two independent runs of this seed (the
+original single-seed run above and this sweep's seed-0 pair both give
+nested=78134, flat=115095 — fully deterministic, as expected from a fixed RNG
+seed). Its wall-clock did not: 229.5s/136.3s in the original run vs
+155.2s/144.2s here, on the same machine. Generations-to-solve is the number to
+trust for comparisons; gen/s or elapsed-seconds varies with system load and
+should not be over-read seed to seed.
+
+**Not yet done:** no repeat of the sweep with a second block of seeds to
+tighten the variance estimate; no test of whether a higher `--nest-decay`
+(nesting cheaper to reach) or a lower one changes the picture; the excluded
+seed-5 case (flat failing to solve within budget at all) is exactly the kind
+of result a right-censored survival analysis (e.g. Cox on time/generations-to-
+solve with a "did not solve" indicator) would use properly instead of
+discarding — not done here; still no profiling of where nested's extra
+per-generation wall-clock cost actually goes.
+
+---
+
+## 2026-08-21 — decomposing a solved circuit: a large fraction of "modules" are fake
+
+Motivation: 6/9 seeds isn't a significant generation-count win (above), and the
+real question was never speed — it's whether necgp produces genuine behavioural
+modularity. Reused `experiment_4/scratch_decompose_final.py`'s approach (draw
+the solved circuit, then decompose each real module's own internals),
+generalised for nesting: `necgp/scratch_decompose_final.py` reproduces seed 0's
+final individual (nest_decay=0.5, NAND-only, `retina_ka2005`/xor, gen 78134,
+256/256) by calling `stage_run.run_to_solution` directly, then walks the
+active circuit *recursively through module bodies* (not just top-level calls,
+since a necgp module can itself call another module) to find every module type
+genuinely reachable, and draws the solved circuit next to one panel per **real**
+module (`not ecgp.is_fake_module` — no two of the module's own recursively-
+flattened primitives are chained), each panel showing that module's own body
+one level unflattened.
+
+**Result: a large share of what the drawing calls a "module" does no real
+computation.** Of 15 distinct module types reachable in the active circuit,
+**6 are fake** (40% by type) — a box that greys out on the left because,
+however many nesting levels it took to write it down, none of its own
+primitives interact. Weighted by how often each is actually *called* (the more
+meaningful number, since a busy fake module pollutes more of the drawing than
+a rare one): **24 of 64 module calls in the active circuit — 37.5% — are to
+fake modules.** The single busiest module in the whole circuit, `M154` (10
+calls, tied for most-used), is one of them.
+
+**This is concrete evidence for the "too many fake gates" suspicion.**
+Roughly a third to two-fifths of the apparent modular structure in this
+framework is a single non-interacting gate (or several gates that never chain)
+wrapped in module packaging — not reused computation. `ecgp.compress` has no
+notion of whether the primitives it happens to bundle together *interact*; it
+bundles whatever is structurally adjacent in the genome. See the next section
+for why that's the root cause, not a bug in this one run.
+
+Not yet done: this is one seed. No check of whether the fake fraction is
+stable across seeds, or whether it grows/shrinks with `nest_decay`.
+
+Scratch script/figure (`necgp/scratch_decompose_final.py`,
+`necgp/scratch_decompose_final_seed0.png`) are gitignored by convention
+(`scratch_*.py`, `*.png` under `experiments/` — see root `CLAUDE.md`); this
+section is the durable record of the finding.
+
+---
+
+## 2026-08-21 — necgp_pairwise: ⚠️ EXPERIMENTAL, third attempt, NOT `necgp/`
+
+Direct response to the fake-module finding above. `necgp/`'s `compress` grabs a
+window of genome-**adjacent** nodes and accepts unconditionally — genome
+position carries no information about which nodes actually feed each other,
+which is the root cause of the 37.5% fake-call rate. `necgp_pairwise/` (new
+directory, kept fully separate from `necgp/` on purpose) replaces `compress`
+with a version that always proposes exactly **one genome-adjacent pair**
+(never a wider window) and **rejects it, as a no-op, unless the resulting
+module's own module-has-interaction check passes** — i.e., unless its exposed
+outputs genuinely depend on an internal edge. Deliberately stripped down at
+the same time, to keep any result attributable to this one change:
+`module_point_mutate`/`add_input`/`remove_input`/`add_output`/`remove_output`
+are removed entirely (not just zeroed) — a module's interface is fixed forever
+at whatever `compress` gave it. Four knobs left: `mutation_rate`,
+`compress_prob`, `expand_prob`, `nest_decay`. `max_module_size` (still 5, same
+number `necgp/` used) is reinterpreted as a cap on the resulting module's own
+recursively-flattened primitive count, since every module body here is always
+exactly 2 slots — a slot-count bound would do nothing. See
+`necgp_pairwise/README.md` and `ecgp.py`'s module docstring for the full
+mechanism.
+
+**A real bug surfaced and got fixed before any result should be trusted.**
+The first design used only the cheap check "does the second node read the
+first node's output" — necessary but, it turns out, not sufficient. Seed 0's
+first run hit `validate()`'s new invariant assertion: a module whose body was
+`NAND(in0,in1) -> NAND(prev,in2)` — a genuine internal edge — but whose
+*exposed* output (`out=[...]`, computed from what external code referenced
+before the merge) turned out to be only the *first* NAND, because nothing
+outside the pair had ever used the second NAND's raw value. The second node's
+dependency on the first was real but never surfaced — fake by the same
+`module_has_interaction` definition used everywhere else, despite passing the
+cheap check. Fixed by building the candidate module fully and checking
+`module_has_interaction` on it directly (the authoritative check) before
+splicing it in, keeping the cheap check only as a fast pre-filter. Worth
+recording as a lesson on its own: "the two nodes reference each other" and
+"the module's own outputs depend on that reference" are different claims, and
+only the second is the one that matters.
+
+**Result, 5 seeds (0–4), NAND-only, `retina_ka2005`/xor, same budget/params
+`necgp/` used (`nodes=100 popsize=5 max_generations=300000`), after the fix:**
+
+| seed | solved gen | modules alive | module types reachable | fake types | module calls | fake calls |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 | 27852 | 6 | 6 | **0** | 42 | **0** |
+| 1 | 217937 | 9 | 8 | **0** | 64 | **0** |
+| 2 | 47952 | 6 | 5 | **0** | 38 | **0** |
+| 3 | 55320 | 6 | 6 | **0** | 38 | **0** |
+| 4 | 17815 | 4 | 4 | **0** | 37 | **0** |
+| **total** | — | — | **29** | **0 (0%)** | **219** | **0 (0%)** |
+
+Every single seed solved the task, every `validate()` call (which now also
+asserts no fake module survived) passed, and **zero** module types or module
+calls across all 5 seeds were fake — vs. `necgp/`'s single-seed decomposition
+above, which found 40% of reachable module types and 37.5% of module calls
+fake. Nesting still happens under this mechanism too: 2–4 of each seed's
+module types are depth-2 (a module nesting another), so the interaction
+guarantee survives nesting, not just the depth-1 case.
+
+**Generations to solve are noisy and not yet a fair comparison to `necgp/`.**
+27852 / 217937 / 47952 / 55320 / 17815 for seeds 0–4 vs. `necgp/`'s nested
+numbers for the same seeds (78134 / 63938 / 29551 / 15662 / 99051) — no
+consistent direction (faster on 0 and 4, much slower on 1, slower on 2 and 3),
+and seed 1's 217937 is a clear outlier. This is expected, not concerning: the
+operator set differs by more than just the interaction check (four fewer
+mutation operators competing for the same mutation budget), so this is not a
+controlled speed comparison — read only the fake-module result above as the
+finding this run was designed to test.
+
+**Not yet done, in order of what matters most:** a paired significance test
+analogous to the 9-seed sweep above (5 seeds is not enough to trust the speed
+numbers either way, and speed was never the question this run was built to
+answer); checking whether `max_module_size=5` is actually a binding
+constraint anywhere (no seed above needed it — largest flattened module seen
+is 4 primitives — so **no evidence yet that 5 needs raising**, revisit if a
+seed starts hitting it); a decomposition figure for one of these seeds,
+analogous to `necgp/scratch_decompose_final_seed0.png`, now that there should
+be nothing fake left to draw; whether the same fix (candidate-then-check
+instead of a cheap proxy) reveals a similar gap if ported back to `necgp/`'s
+own window-based `compress` — not attempted, `necgp/` is frozen-by-convention
+for this kind of change per its own docs, so any such fix belongs here, not
+there.

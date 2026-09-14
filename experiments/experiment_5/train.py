@@ -112,7 +112,12 @@ def _median(xs) -> float:
 # them (see `cgp.behavioural_deps`).
 LOG_FIELDS = ["seed", "gen", "goal", "score", "hits", "acc", "active_nodes",
               "left", "right", "pure", "mixed", "const", "out_pure", "beh_pure",
-              "depth", "n_modules", "module_nodes", "evals", "secs_per_gen"]
+              "depth", "n_modules", "module_nodes", "evals", "secs_per_gen",
+              # `[exp5 -- SPECIALISATION.md]` staged demands + the pleiotropy readout.
+              # `stage` is how many program outputs fitness is currently scoring;
+              # `spec` is specialised/(specialised+pleiotropic) active nodes, and is
+              # EMPTY when no node influences any output (see cgp.specialisation).
+              "stage", "spec", "n_spec", "n_pleio"]
 
 # One row per goal epoch under --mvg: how far the lineage fell when the goal moved
 # and how long it took to climb back. Written as its own file rather than as columns
@@ -270,6 +275,24 @@ def _goal_at(cfg: RunConfig, gen: int) -> str:
     return cfg.mvg_ops[(gen // cfg.switch_interval) % len(cfg.mvg_ops)]
 
 
+def _n_scored_at(cfg: RunConfig, gen: int, n_out: int) -> int:
+    """How many program outputs fitness scores at generation `gen`.
+
+    `[exp5 -- SPECIALISATION.md]` Staging changes WHAT IS SCORED, never what the
+    genotype carries: every output gene exists and is mutable from generation 0, so
+    output 1 drifts freely through stage 1 and stage 2 inherits whatever drift left
+    there. That is the point -- the treatment is the selection schedule, not a
+    change of representation, and `cold` (stage1_gens=0) runs the identical code
+    path with the boundary never reached.
+
+    Derived from `gen` alone, so a resumed checkpoint recomputes it rather than
+    trusting a stored copy.
+    """
+    if cfg.stage1_gens <= 0:
+        return n_out
+    return 1 if gen < cfg.stage1_gens else n_out
+
+
 def _even_picks(seq: list, k: int) -> list:
     """`k` roughly evenly spaced items of `seq`, always including the first and last."""
     if len(seq) <= k:
@@ -354,6 +377,13 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
     targets, groups = ctx["targets"], ctx["groups"]
     # The perfect score. `n_patterns` alone stopped being it the moment a program
     # could have several outputs, and every "solved?" test below reads this.
+    n_scored = n_out                    # reassigned below once start_gen is known
+    # `[exp5 -- ENTRENCHMENT.md]` what stage 1 actually built, captured at the
+    # boundary. The entrenchment hypothesis is that the SIZE of the committed
+    # stage-1 circuit is what costs stage 2, so it needs to be a recorded cause
+    # rather than something inferred from the final circuit (which stage 2 rewrote).
+    # ⚠️ NOT checkpointed: run these with --checkpoint-interval 0.
+    stage1_solved_gen, stage1_active, stage1_hits = -1, -1, -1
     total_hits = cgp.max_hits(n_out, n_patterns)
     # `visualize.py` still takes a single input index to gap the input column at.
     # That is a LAYOUT hint, not the classification (which now uses `groups`), so it
@@ -432,7 +462,9 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
         solved_gen, evals = c["solved_gen"], c["evals"]
         recoveries, rec_open = c.get("recoveries", []), c.get("rec_open")
         goal = c["goal"]                    # the goal p_score/p_hits were scored on
-        target = targets[goal]
+        n_scored = _n_scored_at(cfg, start_gen, n_out)
+        total_hits = cgp.max_hits(n_scored, n_patterns)
+        target = targets[goal][:n_scored]
         csv_f = csv_path.open("a", newline="", encoding="utf-8")
         writer = csv.DictWriter(csv_f, fieldnames=LOG_FIELDS)
         gate_f = gate_path.open("a", newline="", encoding="utf-8")
@@ -441,6 +473,9 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
               f"(hits {p_hits}/{total_hits})", flush=True)
     else:
         # Step 1 -- random population, select the fittest.
+        n_scored = _n_scored_at(cfg, 0, n_out)
+        total_hits = cgp.max_hits(n_scored, n_patterns)
+        target = targets[goal][:n_scored]
         pop = [new() for _ in range(cfg.popsize)]
         scored = [score(g, target) for g in pop]
         i = max(range(len(scored)), key=lambda k: scored[k][0])
@@ -468,6 +503,18 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
     stages: list[tuple] = []
     stride = [1]
     n_seen = [0]
+
+    def _spec_columns(view) -> dict:
+        """The pleiotropy readout, on the FLATTENED circuit so CGP and ECGP share code.
+
+        Only meaningful once more than one output is being scored; during stage 1 the
+        second output is unselected drift, so its influence is noise and the columns
+        are left empty rather than filled with a number that invites reading.
+        """
+        if n_scored < 2:
+            return dict(spec="", n_spec="", n_pleio="")
+        sp, ns, npl = cgp.specialisation(view, gate_set, in_masks, mask, n_in)
+        return dict(spec=("" if sp != sp else round(sp, 6)), n_spec=ns, n_pleio=npl)
 
     def gate_rows(view, pheno) -> list[dict]:
         """What the circuit is built from: one row per distinct gate, per log point.
@@ -569,7 +616,8 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
             active_nodes=pheno.n_active, **class_columns(view, pheno),
             depth=max(pheno.depth.values(), default=0),
             n_modules=n_mods, module_nodes=mod_nodes,
-            evals=evals, secs_per_gen=round(secs, 6)))
+            evals=evals, secs_per_gen=round(secs, 6),
+            stage=n_scored, **_spec_columns(view)))
         csv_f.flush()
         rows = gate_rows(view, pheno)
         gate_w.writerows(dict(seed=seed, gen=gen, goal=goal, **r) for r in rows)
@@ -610,14 +658,42 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
 
     gen = start_gen
     for gen in range(start_gen, cfg.generations):
+        new_scored = _n_scored_at(cfg, gen, n_out)
+        if new_scored != n_scored:
+            # THE TREATMENT. A second demand arrives and the first stays scored.
+            # Everything cached about the parent refers to the old demand set and
+            # is recomputed here; `best_*` and `solved_gen` are RESET rather than
+            # carried, because "best" and "solved" are claims about a denominator
+            # (`total_hits`) that just changed. Carrying a stage-1 `best_hits` of
+            # 256/256 into a stage-2 world of /512 would report a solved run that
+            # never solved anything.
+            view1 = as_cgp(parent)
+            stage1_active = cgp.phenotype(view1, n_in, gate_set, groups).n_active
+            stage1_hits, stage1_solved_gen = int(p_hits), int(solved_gen)
+            n_scored = new_scored
+            total_hits = cgp.max_hits(n_scored, n_patterns)
+            target = targets[goal][:n_scored]
+            p_score, p_hits = score(parent, target)
+            evals += 1
+            best_geno, best_hits = parent.copy(), p_hits
+            solved_gen = -1
+            print(f"[seed {seed}] gen {gen}: STAGE -> scoring {n_scored} outputs "
+                  f"(hits {p_hits}/{total_hits})", flush=True)
         new_goal = _goal_at(cfg, gen)
         if new_goal != goal:
             # The goal moved: the parent's stored score refers to the old target and
             # must be recomputed before any comparison against offspring.
             hits_before = p_hits            # its level on the goal it just mastered
-            goal, target = new_goal, targets[new_goal]
+            goal, target = new_goal, targets[new_goal][:n_scored]
             p_score, p_hits = score(parent, target)
             evals += 1
+            # Same reasoning as the stage change above: "best" is a claim about a
+            # scoring rule that just changed, so it is RESET rather than carried.
+            # Carried across a switch it becomes a maximum over two different goals,
+            # which is not an accuracy -- mvg-and-or is asymmetric (OR is true on far
+            # more patterns than AND), so the easier goal would win it every time and
+            # the number would describe the schedule instead of the lineage.
+            best_geno, best_hits = parent.copy(), p_hits
 
             # An epoch that ran out before recovering is RIGHT-CENSORED, not dropped
             # and not recorded as "recovered at E". Either shortcut would bias the
@@ -711,7 +787,7 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
         # only breaks once post_solve_gens more generations of (elitist, so
         # score-preserving) neutral drift have run. post_solve_gens=0 (default)
         # reduces to the original immediate-halt behaviour.
-        if (cfg.stop_on_solution and p_hits == total_hits
+        if (cfg.stop_on_solution and n_scored == n_out and p_hits == total_hits
                 and gen >= solved_gen + cfg.post_solve_gens):
             break
 
@@ -808,6 +884,9 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
 
     c = pheno.counts()
     result = dict(seed=seed, best_hits=int(best_hits),
+                  **_spec_columns(view), stage1_gens=int(cfg.stage1_gens),
+                  stage1_solved_gen=stage1_solved_gen, stage1_active=stage1_active,
+                  stage1_hits=stage1_hits,
                   best_acc=best_hits / total_hits, final_hits=int(p_hits),
                   solved_gen=int(solved_gen), gens_run=int(gen + 1),
                   evals=int(evals), active_nodes=pheno.n_active,
@@ -817,6 +896,11 @@ def run_seed(cfg: RunConfig, ctx: dict, seed: int, out: pathlib.Path, run: str):
                   gates=" ".join(f"{r['gate']}x{r['count']}"
                                  for r in final_gates if r["count"]),
                   seconds=round(time.time() - t_seed, 2))
+    if cfg.mvg:
+        # `best_hits`/`best_acc` are reset at every switch (see the loop), so they
+        # describe the FINAL goal epoch only. Name that goal, so an MVG "best" can
+        # never be read as a goal-free accuracy.
+        result.update(best_goal=goal)
     if cfg.ecgp:
         # Genotype length is not constant under ECGP -- compress shrinks it and expand
         # grows it -- so it is reported rather than assumed to be `--nodes`.

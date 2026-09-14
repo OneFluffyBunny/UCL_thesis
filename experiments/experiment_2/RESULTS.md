@@ -432,15 +432,126 @@ is equally good on the L = R and L ≠ R patterns of the old goal. The compresse
 arm sits at 0.438, better on the half the switch flips. Reading in the exp_1
 section.
 
+## retina/and FG vs and/or MVG, n_hidden=20, 5 seeds each — apples-to-apples with NDP (2026-09-08)
+
+Run to directly compare against 5 FG + 5 MVG runs just done on NDP (`../../NDP`,
+`environment: KA_retina`, which duplicates this same stand-in `retina` task —
+see `../shared_tasks.py`). NDP's configs confirmed `balanced_fitness: true` and
+`operation: and` (FG) / `mvg_ops: [and, or]` (MVG), so this reproduces the same
+task/op/metric here, with CMA-ES direct encoding instead of NDP's developmental
+growth. `--no-early-stop` used on **both** arms (required for a fair
+FG-vs-MVG comparison — otherwise FG exits the moment it solves while MVG runs
+the full budget, confounding any density/generations comparison).
+
+```
+python train.py --task retina --operation and --n-hidden 20 --n-seeds 5 --fitness margin --no-early-stop --generations 2000 --no-open
+
+python train.py --task retina --mvg --mvg-ops and,or --switch-interval 20 --n-hidden 20 --n-seeds 5 --fitness margin --no-early-stop --generations 2000 --no-open
+```
+
+### FG (`and` only)
+
+| seed | gen solved | best-DNA density | final-DNA density |
+|---|---|---|---|
+| 0 | 250 | 90.4% | 94.5% |
+| 1 | 200 | 87.5% | 94.5% |
+| 2 | 280 | 88.8% | 95.7% |
+| 3 | 270 | 88.4% | 93.8% |
+| 4 | 210 | 89.5% | 95.5% |
+
+5/5 solved cleanly — same dense/unstructured pattern as the earlier retina/xor FG run.
+
+### MVG (`and` ↔ `or`, switch every 20 gens)
+
+> **Code fix 2026-09-10 — the tables here were already right; `train.py` was not.**
+> The caveat below was being handled by hand, run after run: `best` is a maximum
+> across goal switches, and `final` is the endpoint scored on whichever goal the
+> LAST generation ran — the same goal in every seed, since the schedule is
+> deterministic — so an MVG `final` and an FG `final` are different tasks.
+> `train_seed` now scores the endpoint genome against **every** goal the run could
+> face and returns `acc_by_op`, and the multi-seed summary ranks and averages on
+> the matched goal (`--operation`, i.e. AND) rather than on `final`. For a fixed
+> goal the dict has one entry and nothing changes. No re-training needed for the
+> tables below, which were already split per op.
+
+Per-op best-in-population accuracy across all 2000 logged generations (the
+single reported "best accuracy" is misleading on its own, same caveat as the
+xor/and run above — it only reflects whichever op happened to be active):
+
+| seed | AND: min/mean/max | OR: min/mean/max | % gens at 1.000 (AND / OR) |
+|---|---|---|---|
+| 0 | 0.693 / 0.858 / 1.000 | 0.643 / 0.835 / 1.000 | 31% / 27% |
+| 1 | 0.698 / 0.856 / 1.000 | 0.643 / 0.833 / 1.000 | 38% / 40% |
+| 2 | 0.698 / 0.855 / 1.000 | 0.646 / 0.837 / 1.000 | 27% / 38% |
+| 3 | 0.705 / 0.854 / 1.000 | 0.654 / 0.838 / 1.000 | 2% / 2% |
+| 4 | 0.699 / 0.858 / 1.000 | 0.643 / 0.832 / 1.000 | 19% / 17% |
+
+**Confirms the "and/or is the gentle pairing" hypothesis from the xor/and run
+above.** Unlike xor/and (xor never once hit 1.0 in 300 logged generations,
+crashing below chance on every switch), here **both AND and OR repeatedly hit
+exactly 1.000** in most seeds, and the post-switch dip (~0.64–0.70) stays
+above chance rather than crashing below it.
+
+**But still no real convergence over the run:** early-half (gen<1000) vs.
+late-half (gen≥1000) per-op means are essentially flat (e.g. seed 0 AND:
+0.862 early → 0.855 late) — 2000 generations of switching doesn't narrow the
+oscillation into a stable joint solution; it's a steady-state wobble from
+early on.
+
+**Density — MVG did not go sparser than FG. If anything, slightly denser:**
+
+| | FG (best-DNA) | FG (final-DNA) | MVG (best-DNA) | MVG (final-DNA) |
+|---|---|---|---|---|
+| density range | 87.5–90.4% | 93.8–95.7% | 87.1–93.6% | 96.1–97.7% |
+
+**Conclusion: no evidence that goal-switching pressure alone pushes an
+unconstrained direct encoding toward a sparser/modular solution.** Both arms
+converge dense; MVG's final density is if anything the highest number in the
+table. Consistent with there being no structural bias toward economizing
+connections in this encoding — see "Open threads" below for the fan-in-cap /
+edge-budget constraint this motivates.
+
+### Weight-magnitude structure of the (dense) FG/xor solutions — checked directly
+
+Loaded the 5 saved `retina_seed{0..4}_best_dna.eqx` (the earlier retina/xor FG
+run) and histogrammed `|weight|` across all 560 possible edges per seed. **Not
+a bimodal "some strong, rest dead" split, and not a uniform blob of saturated
+weights either — a graded continuum:**
+
+| \|w\| bucket | avg. fraction of edges (5 seeds) |
+|---|---|
+| < 0.05 (below prune threshold) | ~7% |
+| 0.05–0.2 | ~24% |
+| 0.2–0.5 | ~38% |
+| 0.5–1.0 | ~29% |
+| 1.0–2.0 | ~5% |
+| > 2.0 | ~0% |
+
+The ~92–94% "density" figure is real (only ~7% of edges are near-zero), and
+the rest spread smoothly from small to moderate magnitude with a peak around
+0.2–0.5 — nothing in the magnitude distribution itself hints at module
+boundaries (no small set of dominant edges standing out against a sea of
+near-zero noise).
 
 ## Open threads
 
 - Run `--mvg --mvg-ops xor,or --switch-interval 20 --generations 2000` — the
   gentler xor pairing (3/4 truth-table agreement, like the classic and/or
   pair), to separate "switching pressure helps" from "xor/and are adversarial."
+  **Superseded by the and/or run above** (same 3/4-agreement gentleness,
+  already run) — xor/or itself is now lower priority unless AND/OR-specific
+  behavior needs ruling out.
 - ~~Once a modularity metric exists, score these saved DNAs directly rather
   than inferring from density.~~ **DONE 2026-09-12** — `shared_brain_metrics.py`
   + `analysis/run_all.py`; the four metrics are in the 4-arm study above.
 - Match the evaluation budget across encodings (rerun this study at 10k
   generations, or experiment 1 at 5k) so the cross-encoding modularity claim in
   section 6 rests on a matched comparison.
+- ~~**No connectivity constraint existed in this model at all**~~ **Addressed 2026-09-12** by the synaptic-budget arms above (sections 2 and 5). Original note: — every one of
+  the ~560–581 possible edges is free. `kashtan_alon/` (the faithful KA 2005
+  reproduction) shows removing its fan-in cap drives density to the complete
+  graph the same way exp 2 does here, and that the cap is likely load-bearing
+  for its one clean MVG>FG (Q_m) result. Adding a KA-style per-neuron fan-in
+  cap (or a flat total-edge budget) to `shared_direct_model.py` is the natural
+  next step before concluding direct encoding + MVG "doesn't do modularity" —
+  right now it hasn't been tested under any constraint that would let it.

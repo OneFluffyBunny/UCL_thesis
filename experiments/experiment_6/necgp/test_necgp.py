@@ -186,6 +186,164 @@ def test_prune_keeps_transitively_nested_modules() -> None:
     print("ok  prune_modules keeps modules that are alive only via nesting")
 
 
+def test_is_trivial_module_hand_built_nested_case() -> None:
+    """The nested generalisation of plain ECGP's trivial-module check.
+
+    A is trivial on its own (one active NAND, plus a dead sibling). B does nothing
+    but forward to A -- no primitive nodes of its own -- so it must ALSO be
+    trivial, however much nesting depth (`Module.depth`) it carries. C nests A too,
+    but then combines A's output with a fresh input through a real gate of its
+    own: two active primitives once fully flattened, so C is NOT trivial.
+
+    Structural only -- `func` ids are arbitrary primitive indices, since
+    `is_trivial_module` counts nodes, it does not evaluate them.
+    """
+    A = ecgp.Module(mid=100, n_in=2, func=[0, 0], ntype=[0, 0],
+                    conn=[[0, 1], [0, 0]], cout=[[0, 0], [0, 0]],
+                    out=[2], ocout=[0], depth=1)
+    assert ecgp.is_trivial_module(A, {A.mid: A})
+
+    # B's only body node is a nested call to A; B adds no gate of its own.
+    B = ecgp.Module(mid=101, n_in=2, func=[A.mid], ntype=[2],
+                    conn=[[0, 1]], cout=[[0]], out=[2], ocout=[0], depth=2)
+    modules = {A.mid: A, B.mid: B}
+    assert ecgp.module_active_primitive_count(B, modules) == 1
+    assert ecgp.is_trivial_module(B, modules)
+
+    # C nests A, then feeds A's output and a fresh input into one more real gate.
+    C = ecgp.Module(mid=102, n_in=2, func=[A.mid, 0], ntype=[2, 0],
+                    conn=[[0, 1], [2, 1]], cout=[[0, 0], [0, 0]],
+                    out=[3], ocout=[0], depth=2)
+    modules[C.mid] = C
+    assert ecgp.module_active_primitive_count(C, modules) == 2
+    assert not ecgp.is_trivial_module(C, modules)
+    print("ok  is_trivial_module (nested): forward-only wrapper trivial, "
+          "wrapper-plus-a-gate not")
+
+
+def test_is_trivial_module_matches_independent_flatten(n_trials: int = 40) -> None:
+    """`module_active_primitive_count` must agree with an independent route: wrap
+    the module alone in a synthetic one-node individual and run it through the
+    already-tested `flatten` + `cgp.active_nodes`, over many evolved individuals
+    (nesting turned on) so both trivial and non-trivial, nested and flat, bodies
+    actually get exercised.
+    """
+    rnd = random.Random(8)
+    p = ecgp.Params(compress=0.6, expand=0.1, module_point=0.1, add_input=0.05,
+                    remove_input=0.05, add_output=0.05, remove_output=0.05,
+                    max_module_size=5, mutation_rate=0.05, nest_decay=0.6)
+    ind = ecgp.random_individual(rnd, 50, N_IN, 1, N_PRIM)
+    checked = seen_trivial = seen_nontrivial = seen_nested = 0
+    for gen in range(800):
+        ind = ecgp.mutate(ind, rnd, N_IN, N_PRIM, p)
+        ecgp.prune_modules(ind)
+        if gen % 4 != 0:
+            continue
+        for mid, mod in ind.modules.items():
+            synth = ecgp.Individual(
+                func=[mid], ntype=[1],
+                conn=[list(range(mod.n_in))], cout=[[0] * mod.n_in],
+                ogene=[mod.n_in] * mod.n_out, ocout=list(range(mod.n_out)),
+                modules=dict(ind.modules), next_id=mid + 1)
+            flat = ecgp.flatten(synth, mod.n_in)
+            want = len(cgp.active_nodes(flat, mod.n_in, GATE_SET))
+            got = ecgp.module_active_primitive_count(mod, ind.modules)
+            assert got == want, f"module {mid}: {got} != {want} (independent flatten)"
+            assert ecgp.is_trivial_module(mod, ind.modules) == (want <= 1)
+            checked += 1
+            seen_trivial += want <= 1
+            seen_nontrivial += want > 1
+            seen_nested += mod.depth > 1
+    assert checked > 0, "no modules were ever created -- the test proved nothing"
+    assert seen_trivial > 0 and seen_nontrivial > 0, \
+        (f"need both kinds to exercise the check "
+         f"(trivial={seen_trivial}, nontrivial={seen_nontrivial})")
+    assert seen_nested > 0, "never checked a nested (depth>1) module -- test is too shallow"
+    print(f"ok  is_trivial_module agrees with independent flatten+active_nodes on "
+          f"{checked} modules ({seen_trivial} trivial, {seen_nontrivial} nontrivial, "
+          f"{seen_nested} of them nested)")
+
+
+def test_is_fake_module_hand_built_nested_case() -> None:
+    """Nested generalisation of `test_is_trivial_module_hand_built_nested_case`,
+    plus the case that check alone does not catch: two active primitives that
+    both read straight off the module's own inputs -- one a plain gate, one a
+    nested call to trivial module A -- never interact once flattened, so the
+    whole thing is fake despite `module_active_primitive_count == 2` (not
+    trivial).
+    """
+    A = ecgp.Module(mid=200, n_in=2, func=[0, 0], ntype=[0, 0],
+                    conn=[[0, 1], [0, 0]], cout=[[0, 0], [0, 0]],
+                    out=[2], ocout=[0], depth=1)
+
+    # C: nests A, then combines A's output with a fresh input -- chained, real.
+    C = ecgp.Module(mid=201, n_in=2, func=[A.mid, 0], ntype=[2, 0],
+                    conn=[[0, 1], [2, 1]], cout=[[0, 0], [0, 0]],
+                    out=[3], ocout=[0], depth=2)
+    modules = {A.mid: A, C.mid: C}
+    assert ecgp.module_has_interaction(C, modules)
+    assert not ecgp.is_fake_module(C, modules)
+
+    # D: a plain gate and a nested call to A, both reading the module's OWN
+    # inputs directly, neither depending on the other -- parallel, not real.
+    D = ecgp.Module(mid=202, n_in=2, func=[0, A.mid], ntype=[0, 2],
+                    conn=[[0, 1], [0, 1]], cout=[[0, 0], [0, 0]],
+                    out=[2, 3], ocout=[0, 0], depth=2)
+    modules[D.mid] = D
+    assert not ecgp.is_trivial_module(D, modules), "fixture must NOT be trivial (2 active)"
+    assert not ecgp.module_has_interaction(D, modules)
+    assert ecgp.is_fake_module(D, modules), \
+        "a plain gate plus an independent nested call must be fake"
+    print("ok  is_fake_module (nested): chained real, gate+independent-nested-call fake")
+
+
+def test_is_fake_module_matches_independent_flatten_edge_check(n_trials: int = 40) -> None:
+    """`module_has_interaction`'s edge scan must agree with an independent route:
+    wrap the module alone in a synthetic one-node individual, flatten via the
+    already-tested `flatten`, find active nodes with `cgp.active_nodes`, then
+    check by hand whether any active node's connection targets another active
+    node. Run under heavy nested mutation so interacting, parallel, and nested
+    bodies all actually get exercised.
+    """
+    rnd = random.Random(9)
+    p = ecgp.Params(compress=0.6, expand=0.1, module_point=0.1, add_input=0.05,
+                    remove_input=0.05, add_output=0.05, remove_output=0.05,
+                    max_module_size=5, mutation_rate=0.05, nest_decay=0.6)
+    ind = ecgp.random_individual(rnd, 50, N_IN, 1, N_PRIM)
+    checked = seen_interacting = seen_parallel = seen_nested = 0
+    for gen in range(800):
+        ind = ecgp.mutate(ind, rnd, N_IN, N_PRIM, p)
+        ecgp.prune_modules(ind)
+        if gen % 4 != 0:
+            continue
+        for mid, mod in ind.modules.items():
+            synth = ecgp.Individual(
+                func=[mid], ntype=[1],
+                conn=[list(range(mod.n_in))], cout=[[0] * mod.n_in],
+                ogene=[mod.n_in] * mod.n_out, ocout=list(range(mod.n_out)),
+                modules=dict(ind.modules), next_id=mid + 1)
+            flat = ecgp.flatten(synth, mod.n_in)
+            active = set(cgp.active_nodes(flat, mod.n_in, GATE_SET))
+            want = any(flat.conn[2 * b + k] - mod.n_in in active
+                      for b in active for k in (0, 1)
+                      if flat.conn[2 * b + k] >= mod.n_in)
+            got = ecgp.module_has_interaction(mod, ind.modules)
+            assert got == want, f"module {mid}: {got} != {want} (independent edge check)"
+            assert ecgp.is_fake_module(mod, ind.modules) == (not want)
+            checked += 1
+            seen_interacting += want
+            seen_parallel += not want
+            seen_nested += mod.depth > 1
+    assert checked > 0, "no modules were ever created -- the test proved nothing"
+    assert seen_interacting > 0 and seen_parallel > 0, \
+        (f"need both kinds to exercise the check "
+         f"(interacting={seen_interacting}, parallel/fake={seen_parallel})")
+    assert seen_nested > 0, "never checked a nested (depth>1) module -- test is too shallow"
+    print(f"ok  module_has_interaction agrees with independent flatten+edge-check on "
+          f"{checked} modules ({seen_interacting} interacting, {seen_parallel} not, "
+          f"{seen_nested} nested)")
+
+
 if __name__ == "__main__":
     test_structural_invariants_survive_heavy_mutation()
     test_evaluate_matches_flatten_when_nested()
@@ -194,4 +352,8 @@ if __name__ == "__main__":
     test_expand_undoes_exactly_one_level()
     test_nested_into_module_is_protected_from_interface_ops()
     test_prune_keeps_transitively_nested_modules()
+    test_is_trivial_module_hand_built_nested_case()
+    test_is_trivial_module_matches_independent_flatten()
+    test_is_fake_module_hand_built_nested_case()
+    test_is_fake_module_matches_independent_flatten_edge_check()
     print("\nall tests passed")

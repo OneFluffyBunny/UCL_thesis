@@ -312,6 +312,144 @@ def test_module_signature_identifies_the_function() -> None:
     print("ok  signatures identify functions across three encodings of XOR")
 
 
+def test_is_trivial_module_hand_built_cases() -> None:
+    """Hand-built modules with a known active-node count, both kinds.
+
+    A module whose `out` reads a single node -- however many other body nodes it
+    declares, active or not -- is trivial. A module where two active nodes chain
+    (one reads the other) is not, even if both nodes use the same primitive.
+    """
+    gate_set, _, _ = _ctx()
+    gid = {g.name.upper(): i for i, g in enumerate(gate_set)}
+    NA = gid["NAND"]
+
+    # node0 = NAND(p0, p1), active; node1 = NAND(p0, p0), never read by `out`.
+    one_active_with_dead_sibling = ecgp.Module(
+        mid=0, n_in=2, func=[NA, NA], conn=[0, 1, 0, 0], out=[2])
+    assert ecgp.module_active_node_count(one_active_with_dead_sibling) == 1
+    assert ecgp.is_trivial_module(one_active_with_dead_sibling)
+
+    # node0 = NAND(p0, p0) = NOT(p0); dummy inputs p1..p3 never read. Still one gate.
+    not_via_self_nand_dummy_inputs = ecgp.Module(
+        mid=1, n_in=4, func=[NA], conn=[0, 0], out=[4])
+    assert ecgp.module_active_node_count(not_via_self_nand_dummy_inputs) == 1
+    assert ecgp.is_trivial_module(not_via_self_nand_dummy_inputs)
+
+    # node0 = NAND(p0,p1); node1 = NAND(p0, node0) -- a->b via two chained, both
+    # active, gates. Two real gates: not trivial.
+    two_chained_active = ecgp.Module(
+        mid=2, n_in=2, func=[NA, NA], conn=[0, 1, 0, 2], out=[2, 3])
+    assert ecgp.module_active_node_count(two_chained_active) == 2
+    assert not ecgp.is_trivial_module(two_chained_active)
+
+    # node0 = NAND(p0,p3); node1 = NAND(p1,p2) -- two INDEPENDENT active gates.
+    # Not trivial either: no single primitive reproduces both outputs at once.
+    two_independent_active = ecgp.Module(
+        mid=3, n_in=4, func=[NA, NA], conn=[0, 3, 1, 2], out=[2, 3])
+    assert ecgp.module_active_node_count(two_independent_active) == 2
+    assert not ecgp.is_trivial_module(two_independent_active)
+    print("ok  is_trivial_module: 4 hand-built cases (2 trivial, 2 not)")
+
+
+def test_is_trivial_module_matches_independent_active_walk(n_trials: int = 80) -> None:
+    """`module_active_node_count`'s backward walk must agree with an independent
+    route: reinterpret the module body as a plain `cgp.Genotype` -- a direct field
+    relabelling, since bodies are primitives only -- and count active nodes with
+    the already-tested `cgp.active_nodes`. Run over many evolved modules so both
+    trivial and non-trivial bodies actually get exercised, not just hand-picked
+    ones.
+    """
+    gate_set, _, _ = _ctx()
+    rnd = random.Random(7)
+    checked = seen_trivial = seen_nontrivial = 0
+    for _ in range(n_trials):
+        ind = _evolve(rnd, gate_set, n_gen=60)
+        for mid, mod in ind.modules.items():
+            body = cgp.Genotype(func=mod.func[:], ntype=[0] * len(mod.func),
+                                conn=mod.conn[:], cout=[0] * len(mod.conn),
+                                ogene=mod.out[:], ocout=[0] * len(mod.out), arity=2)
+            want = len(cgp.active_nodes(body, mod.n_in, gate_set))
+            got = ecgp.module_active_node_count(mod)
+            assert got == want, f"module {mid}: {got} != {want} (independent walk)"
+            assert ecgp.is_trivial_module(mod) == (want <= 1)
+            checked += 1
+            seen_trivial += want <= 1
+            seen_nontrivial += want > 1
+    assert checked > 0, "no modules were ever created -- the test proved nothing"
+    assert seen_trivial > 0 and seen_nontrivial > 0, \
+        (f"need both kinds to exercise the check "
+         f"(trivial={seen_trivial}, nontrivial={seen_nontrivial})")
+    print(f"ok  is_trivial_module agrees with cgp.active_nodes on {checked} modules "
+          f"({seen_trivial} trivial, {seen_nontrivial} nontrivial)")
+
+
+def test_is_fake_module_hand_built_cases() -> None:
+    """Same building blocks as `test_is_trivial_module_hand_built_cases`, plus the
+    case trivial does not catch: `is_fake_module` must be a strict superset --
+    true whenever the module is trivial, and ALSO true for two active gates that
+    never interact (both read straight off the module's own inputs), even though
+    that case clears the `is_trivial_module` bar.
+    """
+    gate_set, _, _ = _ctx()
+    gid = {g.name.upper(): i for i, g in enumerate(gate_set)}
+    NA = gid["NAND"]
+
+    one_active_with_dead_sibling = ecgp.Module(
+        mid=0, n_in=2, func=[NA, NA], conn=[0, 1, 0, 0], out=[2])
+    assert ecgp.is_fake_module(one_active_with_dead_sibling)
+
+    # node0 = NAND(p0,p1); node1 = NAND(p0, node0) -- node1 chains node0.
+    two_chained_active = ecgp.Module(
+        mid=2, n_in=2, func=[NA, NA], conn=[0, 1, 0, 2], out=[2, 3])
+    assert ecgp.module_has_interaction(two_chained_active)
+    assert not ecgp.is_fake_module(two_chained_active)
+
+    # node0 = NAND(p0,p3); node1 = NAND(p1,p2) -- neither reads the other: two
+    # gates in parallel, not a real module, even though not_trivial (count=2).
+    two_independent_active = ecgp.Module(
+        mid=3, n_in=4, func=[NA, NA], conn=[0, 3, 1, 2], out=[2, 3])
+    assert not ecgp.is_trivial_module(two_independent_active)
+    assert not ecgp.module_has_interaction(two_independent_active)
+    assert ecgp.is_fake_module(two_independent_active), \
+        "two independent, non-interacting gates must be fake despite not being trivial"
+    print("ok  is_fake_module: chained gates real, independent-parallel gates fake "
+          "(even though not `is_trivial_module`)")
+
+
+def test_is_fake_module_matches_independent_edge_check(n_trials: int = 80) -> None:
+    """`module_has_interaction`'s edge scan must agree with an independent route:
+    reinterpret the module body as a plain `cgp.Genotype`, find its active nodes
+    with the already-tested `cgp.active_nodes`, then check by hand whether any
+    active node's connection targets another active node. Run over many evolved
+    modules so both interacting and purely-parallel bodies actually get exercised.
+    """
+    gate_set, _, _ = _ctx()
+    rnd = random.Random(8)
+    checked = seen_interacting = seen_parallel = 0
+    for _ in range(n_trials):
+        ind = _evolve(rnd, gate_set, n_gen=60)
+        for mid, mod in ind.modules.items():
+            body = cgp.Genotype(func=mod.func[:], ntype=[0] * len(mod.func),
+                                conn=mod.conn[:], cout=[0] * len(mod.conn),
+                                ogene=mod.out[:], ocout=[0] * len(mod.out), arity=2)
+            active = set(cgp.active_nodes(body, mod.n_in, gate_set))
+            want = any(body.conn[2 * b + k] - mod.n_in in active
+                      for b in active for k in (0, 1)
+                      if body.conn[2 * b + k] >= mod.n_in)
+            got = ecgp.module_has_interaction(mod)
+            assert got == want, f"module {mid}: {got} != {want} (independent edge check)"
+            assert ecgp.is_fake_module(mod) == (not want)
+            checked += 1
+            seen_interacting += want
+            seen_parallel += not want
+    assert checked > 0, "no modules were ever created -- the test proved nothing"
+    assert seen_interacting > 0 and seen_parallel > 0, \
+        (f"need both kinds to exercise the check "
+         f"(interacting={seen_interacting}, parallel/fake={seen_parallel})")
+    print(f"ok  module_has_interaction agrees with an independent edge check on "
+          f"{checked} modules ({seen_interacting} interacting, {seen_parallel} not)")
+
+
 if __name__ == "__main__":
     test_empty_module_list_matches_cgp()
     test_evaluate_matches_flattened()
@@ -324,4 +462,8 @@ if __name__ == "__main__":
     test_fitness_matches_cgp_contract()
     test_active_nodes_are_exactly_the_ones_that_matter()
     test_module_signature_identifies_the_function()
+    test_is_trivial_module_hand_built_cases()
+    test_is_trivial_module_matches_independent_active_walk()
+    test_is_fake_module_hand_built_cases()
+    test_is_fake_module_matches_independent_edge_check()
     print("\nall tests passed")
