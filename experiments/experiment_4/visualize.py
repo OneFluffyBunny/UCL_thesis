@@ -120,8 +120,12 @@ def _figsize(pheno: cgp.Phenotype, n_in: int) -> tuple[float, float]:
 def _render(ax, g, pheno: cgp.Phenotype, gates, n_in: int,
             title: str = "", split: int | None = None,
             origin: list[str] | None = None, colour_cones: bool = False,
-            mod_colour: dict[str, str] | None = None, scale: float = 1.0) -> list:
+            mod_colour: dict[str, str] | None = None, scale: float = 1.0,
+            node_colours: dict[int, str] | None = None) -> list:
     """Draw one circuit into an existing axes; return its gate-label text artists.
+
+    `node_colours` (node index -> colour) overrides the fill of those gates, for
+    colourings computed outside this module (e.g. per-gate circuit purity).
 
     The labels come back so the caller can hand them to `_fit_labels` once the layout
     is final.
@@ -184,6 +188,8 @@ def _render(ax, g, pheno: cgp.Phenotype, gates, n_in: int,
         # carry a name that invited reading the module as equal to that gate.
         label = tag if tag else gates[g.func[j]].name.upper()
         col = CLS_COLOUR[pheno.cls[j]] if colour_cones else (mc or NEUTRAL)
+        if node_colours and j in node_colours:
+            col = node_colours[j]
 
         ax.add_patch(FancyBboxPatch((x - BOX_HW, y - 0.19), 2 * BOX_HW, 0.38,
                                     boxstyle="round,pad=0.05",

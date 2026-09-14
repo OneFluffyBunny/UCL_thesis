@@ -78,6 +78,13 @@ RECOVERY_FIELDS = ["seed", "epoch", "gen", "goal", "hits_before", "hits_after",
 GATE_FIELDS = ["seed", "gen", "goal", "gate", "count", "copies", "kind",
                "nodes", "ins", "outs", "label", "sig", "expr"]
 
+# The champion AFTER selection at generation `gen` (--archive-interval /
+# --dense-archive), as a plain CGP genotype (flattened under ECGP). func / conn /
+# ogene are space-separated ints; ntype, cout and ocout are all zero in a CGP
+# genotype and are not stored. `pop_mean_hits` is the mean over the parent and its
+# offspring on the active goal, the analogue of Kashtan-Alon's `mean_fit`.
+ARCHIVE_FIELDS = ["gen", "goal", "hits", "pop_mean_hits", "func", "conn", "ogene"]
+
 # Below this estimated total runtime, spawning processes costs more than it saves.
 # Windows has no fork: every worker starts a fresh interpreter and re-imports
 # matplotlib, which measures ~0.5-1 s each.
@@ -253,6 +260,7 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
     gate_path = out / f"{run}_seed{seed}_gates.csv"
     ckpt_path = out / f"{run}_seed{seed}_ckpt.pkl"
     result_path = out / f"{run}_seed{seed}_result.json"
+    archive_path = out / f"{run}_seed{seed}_archive.csv"
     frames = out / "frames"
 
     if cfg.resume and result_path.exists():
@@ -325,6 +333,14 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
         writer = csv.DictWriter(csv_f, fieldnames=LOG_FIELDS)
         gate_f = gate_path.open("a", newline="", encoding="utf-8")
         gate_w = csv.DictWriter(gate_f, fieldnames=GATE_FIELDS)
+        if archive_path.exists():
+            # rows past the checkpoint belong to generations about to be re-run
+            with archive_path.open(newline="", encoding="utf-8") as f:
+                kept = [r for r in csv.DictReader(f) if int(r["gen"]) < start_gen]
+            with archive_path.open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=ARCHIVE_FIELDS)
+                w.writeheader()
+                w.writerows(kept)
         print(f"[seed {seed}] RESUME from gen {start_gen}/{cfg.generations} "
               f"(hits {p_hits}/{n_patterns})", flush=True)
     else:
@@ -342,8 +358,31 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
         gate_f = gate_path.open("w", newline="", encoding="utf-8")
         gate_w = csv.DictWriter(gate_f, fieldnames=GATE_FIELDS)
         gate_w.writeheader()
+        if archive_path.exists() and (cfg.archive_interval or cfg.dense_windows):
+            archive_path.unlink()
 
     draw_frames = cfg.viz and seed < cfg.viz_seeds
+
+    archive_on = bool(cfg.archive_interval or cfg.dense_windows)
+    if archive_on:
+        new_file = not archive_path.exists()
+        arch_f = archive_path.open("a", newline="", encoding="utf-8")
+        arch_w = csv.DictWriter(arch_f, fieldnames=ARCHIVE_FIELDS)
+        if new_file:
+            arch_w.writeheader()
+
+    def archive_due(gen: int) -> bool:
+        return bool((cfg.archive_interval and (gen + 1) % cfg.archive_interval == 0)
+                    or any(lo <= gen < hi for lo, hi in cfg.dense_windows))
+
+    def archive_row(gen: int, pop_mean: float) -> None:
+        # reads state only -- no rnd draws, so the search is unchanged
+        v = as_cgp(parent)
+        arch_w.writerow(dict(gen=gen, goal=goal, hits=p_hits,
+                             pop_mean_hits=round(pop_mean, 3),
+                             func=" ".join(map(str, v.func)),
+                             conn=" ".join(map(str, v.conn)),
+                             ogene=" ".join(map(str, v.ogene))))
     t_interval = time.time()
     t_seed = time.time()
 
@@ -516,6 +555,8 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
         o_scored = [score(g, target) for g in kids]
         evals += n_off
 
+        pop_mean = (p_hits + sum(h for _, h in o_scored)) / cfg.popsize
+
         # Step 4 -- selection with the neutral tie-break.
         o_scores = [s for s, _ in o_scored]
         top = max(o_scores)
@@ -551,6 +592,9 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
             recoveries.append(rec_open)
             rec_open = None
 
+        if archive_on and archive_due(gen):
+            archive_row(gen, pop_mean)
+
         # Under MVG rows land at the END of each goal epoch, so every row is the same
         # object -- a goal the lineage has had a full epoch to adapt to -- and rows
         # line up with the switches (same convention as experiment 1, ed70189).
@@ -558,6 +602,8 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
             log_row(gen)
 
         if cfg.checkpoint_interval and (gen + 1) % cfg.checkpoint_interval == 0:
+            if archive_on:
+                arch_f.flush()          # every archived row <= the checkpoint is on disk
             save_checkpoint(ckpt_path, gen + 1, rnd, parent, p_score, p_hits,
                             best_geno, best_hits, solved_gen, evals, goal,
                             recoveries, rec_open)
@@ -568,6 +614,8 @@ def run_seed(cfg: RunConfig, seed: int, gate_set, in_masks, mask, n_in,
     log_row(gen)                                # endpoint row
     csv_f.close()
     gate_f.close()
+    if archive_on:
+        arch_f.close()
 
     # The budget ended mid-epoch: censored, same as a switch arriving too soon.
     if rec_open is not None:

@@ -64,6 +64,9 @@ class RunConfig:
     colour_cones: bool
     # parallelism
     workers: int
+    # champion archive (output only; see --archive-interval)
+    archive_interval: int = 0
+    dense_windows: tuple[tuple[int, int], ...] = ()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -168,6 +171,15 @@ def build_parser() -> argparse.ArgumentParser:
                         "--mvg rows are emitted at the end of each goal epoch instead")
     g.add_argument("--save-best", action="store_true",
                    help="write the best genotype of each seed to the run directory")
+    g.add_argument("--archive-interval", type=int, default=0,
+                   help="write the champion genotype every K generations to "
+                        "<run>_seed<k>_archive.csv (0 = off). OUTPUT ONLY: it reads "
+                        "state the loop already has and draws no random numbers, so "
+                        "a seed's search is identical with or without it.")
+    g.add_argument("--dense-archive", type=str, default="",
+                   help="lo:hi,lo:hi -- also archive EVERY generation in these "
+                        "half-open windows, with the population's mean hits (the "
+                        "switch-window figure needs per-generation resolution)")
     g.add_argument("--tag", type=str, default="",
                    help="suffix appended to the run directory name")
 
@@ -268,6 +280,18 @@ def parse(argv=None) -> RunConfig:
     # it would end a run at whichever goal happened to be easy.
     stop = args.stop_on_solution and not args.mvg
 
+    windows = []
+    for part in filter(None, (w.strip() for w in args.dense_archive.split(","))):
+        try:
+            lo, hi = (int(v) for v in part.split(":"))
+        except ValueError:
+            raise SystemExit(f"--dense-archive: bad window {part!r} (want lo:hi)")
+        if not 0 <= lo < hi:
+            raise SystemExit(f"--dense-archive: window {part!r} needs 0 <= lo < hi")
+        windows.append((lo, hi))
+    if args.archive_interval < 0:
+        raise SystemExit("--archive-interval must be >= 0")
+
     del gate_set
     return RunConfig(
         nodes=args.nodes, mutation_rate=args.mutation_rate,
@@ -288,4 +312,5 @@ def parse(argv=None) -> RunConfig:
         viz=args.viz, viz_seeds=max(0, args.viz_seeds), grid=args.grid,
         grid_seed=args.grid_seed, colour_cones=args.colour_cones,
         workers=max(0, args.workers),
+        archive_interval=args.archive_interval, dense_windows=tuple(windows),
     )

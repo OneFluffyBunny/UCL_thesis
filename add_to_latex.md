@@ -1706,6 +1706,33 @@ existing flag); seed MVG from a solved FG circuit (separates "can't find" from
 "can't hold"; needs `--init-from`); a real population with tournament selection
 (tests 1; new code, departs from the CGP paper's Table II).
 
+### Roadmap: from standard CGP to KA's population GA (2026-09-14)
+
+**Step 1 — standard CGP, (1+4) ES** (`train.py`, CGP paper's Table II; `runs/fgmvg50`).
+5 FG + 5 MVG, 50 nodes, E=2000, 800k generations. FG solves (1.000, purity
+0.82–0.90); MVG plateaus at 0.84 for the whole run (purity 0.25–0.81, 0/200 AND
+epochs perfect, recovery 250–420 gens). At matched accuracy the arms have equal
+purity → a null, attributed to the single lineage (explanation 1 above).
+
+**Step 2 — same circuits, KA's GA** (`train_pop.py`, mirrors `kashtan_alon/ga.py`;
+`runs/fgmvg50_pop`). Only the search loop changes: population 600, top 150 copied
+unchanged, 450 children of two random elite parents, crossover p=0.5 (per node:
+each node's function + inputs from parent A or B — our CGP translation of KA's
+per-neuron crossover), mutation p=0.5 (CGP's own 3% point mutation). MVG, E=2000,
+100k generations, 5 seeds: **acc(AND) 1.000 in 4/5 (seed 0: 0.906, solved then
+collapsed at ~60k), purity 1.00 in 5/5, median 16 gates; recovery after a switch
+2–4 generations**; perfect AND epochs 22/20/8/1/12 of 25. The circuits are
+textbook-modular: a pure left detector and a pure right detector joined only at
+the output gate, so AND↔OR is a one-gate change.
+
+**Not yet attributable to MVG.** (a) FG was run with the (1+4) ES only — the GA
+alone might yield purity 1.00; (b) the GA used ~34M evaluations/seed vs 3.2M for
+(1+4) MVG (though (1+4) MVG was flat at 0.84 for all 800k generations, so budget
+alone is an unlikely explanation for the accuracy gap).
+
+**Next:** FG with the GA (the missing control, ~19 min); then E (KA's 20 vs 2000)
+and pc=0 (does crossover matter?).
+
 ---
 
 ## General observations (across all experiments)
