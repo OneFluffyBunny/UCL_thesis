@@ -1453,44 +1453,236 @@ though it is one seed.**
 
 ---
 
-## Experiment 4/6 — CGP, ECGP, and necgp (nesting extension)
+## Module acquisition and reuse — ECGP, nested ECGP, SMCGP (experiments 4 and 6)
 
-Brief scratch section on the Boolean-circuit arm; expand later.
+**Status for the writeup (2026-09-15).** This line of work does not get a standalone
+results section. Several ideas looked promising, but none produced results strong
+enough to carry one: what we have is a set of mechanisms built and verified, a few
+suggestive effects that never reached significance, and a detailed diagnosis of why
+the encodings we tried cannot yet show the phenomenon we wanted. Use it as a
+"what we tried, what we learned, what would come next" subsection, not as a claim.
+Lab notebooks: `experiments/experiment_4/RESULTS.md`, `experiments/experiment_6/RESULTS.md`.
 
-- **CGP vs ECGP (experiment_4, ⚠️ frozen).** Both evolve Boolean circuits on
-  the KA retina task, pure Python, no gradients. ECGP adds two operators over
-  plain CGP: `compress` (bundle a window of genome-adjacent nodes into a
-  reusable module, callable by id) and `expand` (inline a module call back to
-  primitives). Modules may **not** contain modules — a body is always
-  primitives-only.
-- **necgp (experiment_6) relaxes that restriction**: a module's body may
-  itself call another module, gated by a decaying probability (`nest_decay`)
-  so deep nesting stays comparatively rare. Built to test whether evolution
-  keeps/reuses/builds-on modules given the option, rather than only calling
-  flat ones.
-- **Nesting's generation-count win is a real direction, not a significant
-  effect.** Single-seed run: 32% fewer generations to solve, nested vs flat.
-  9-seed paired sweep (same seed, nested vs flat): nested wins 6/9, mean
-  paired diff −17.8k generations, but Wilcoxon p = 0.16 — does not reach
-  significance at n=9.
-- **A large fraction of "modules," nested or not, do no real computation.**
-  Decomposing a solved circuit (drawing each real module's own internals,
-  walking the active circuit recursively through nesting so a module only
-  ever reached via another module's body is still counted) found 6 of 15
-  reachable module types (40%) — and 24 of 64 actual module calls in the
-  active circuit (37.5%) — are to modules with **zero internal gate
-  interaction**: a single primitive, or several primitives that never chain,
-  wrapped in module packaging. Root cause: ECGP's `compress` groups nodes
-  that are **adjacent in genome position**, not nodes that are **connected in
-  the phenotype's data-dependency graph** — position and data-flow are
-  different things, and compress only looks at the former. Nesting doesn't
-  fix this; it just gives the same failure mode a second layer to occur in.
-- **Read: this is a structural problem with the compression mechanism, not a
-  tuning problem.** Neither the generation-count trend nor the module
-  structure supports a behavioural-modularity claim for ECGP/necgp as built.
-  A phenotype-driven compression operator (select connected subgraphs of the
-  *active* circuit by real data dependency, not genome position) is the
-  candidate fix under discussion — write up once implemented and tested.
+### What we were after
+
+Structural modularity (Q, Q_m, purity) is read off a *final* network. The question
+here was different: **behavioural modularity in the gene-duplication sense** —
+evolution finds a useful sub-circuit (a "new gate"), keeps it, and *reuses* it
+elsewhere; ideally the copies later *diverge* to serve different roles (Ohno's
+duplication-then-divergence; for network motifs, Conant & Wagner 2003).
+
+Two framings, both from experiment 4's README:
+- **Rediscovery vs persistence.** A modular final network is compatible with (a)
+  modular solutions being re-found from scratch after every goal switch, or (b) a
+  sub-structure found once, kept, and redeployed. A snapshot cannot tell them apart.
+  Behavioural modularity is claim (b).
+- **Why Boolean circuits.** In Cartesian Genetic Programming (CGP) a module is an
+  explicit, named, countable object — its birth, calls and death can be logged,
+  which is impossible in a weight matrix. The KA retina (`retina_ka2005`, 8 pixels)
+  is a natural test: its optimum contains **the same sub-circuit twice** (a left and a
+  right object detector with identical function on disjoint inputs), so a reuse
+  mechanism has something concrete to reuse.
+
+### The task, written as logic (useful for the thesis)
+
+KA's object rule for one 2×2 block ("≥3 of 4 pixels on, or 1–2 on only in the outer
+column") is exactly, checked on all 16 cases:
+
+  object(outer₁, outer₂, inner₁, inner₂) = **(inner₁ XOR inner₂) ? (outer₁ AND outer₂) : (outer₁ OR outer₂)**
+
+Left and right blocks use the same rule mirrored, so in a graph encoding (where any
+gate may read any input in any order) the two halves are *one* function called on
+two input orderings. Our CGP runs used goal `L XOR R` (balanced, no shortcut) or
+`L AND R` (KA's goal, which has the 0.848 one-side shortcut).
+
+**Size of the reusable parts from NAND alone** — exhaustive search for the minimum
+number of 2-input NAND gates computing each function of ≤4 inputs (functions that
+differ only by input order counted once; `necgp_pairwise/analysis/nand_min.py`, 2026-09-15):
+
+| min NANDs | new functions | named examples |
+|---|---:|---|
+| 1 | 2 | NOT, NAND |
+| 2 | 4 | AND, a OR NOT b, constant 1 |
+| 3 | 10 | OR, a AND NOT b, NAND3 |
+| 4 | 23 | **XOR**, NOR, AND3, MUX |
+| 5 | 54 | XNOR |
+| 6 | 124 | OR3, MAJ3, AND4 |
+| 7 | 256 | NOR3 |
+| ≥ 8 | — | **the KA object detector**, 3-input parity, OR4 |
+
+So a full NAND-only solution naturally contains XOR three times (inside each half and
+at the top) and the object detector (≥ 8 NANDs) twice. These are the reuse targets.
+(With AND/OR/NAND/NOR, experiment 4 notes a 9-gate half-detector and a 19-gate
+minimal circuit.)
+
+### Mechanisms built
+
+| mechanism | where | what it adds | status |
+|---|---|---|---|
+| **CGP** (Miller) | exp 4 | baseline: fixed-length genome of gates, (1+4) ES with neutral drift | frozen, fully measured |
+| **ECGP** (Walker & Miller, IEEE TEVC 2008) | exp 4 | `compress`: wrap a random run of genome-adjacent gates into a module callable by id; `expand`: inline it back; mutation can point any gate at a module id; modules may not contain modules | built to a verbatim spec (`PAPER_SPEC.md`), run FG and MVG |
+| **SMCGP** (Harding, Miller & Banzhaf, CEC 2009) | exp 6 | self-modifying CGP: the genome also contains 13 graph-rewriting operators (duplicate, delete, move, …) applied during development; no named modules — repetition comes from DUP-style copying | built and tested; verified to search on 2-input parity only |
+| **necgp** (our extension) | exp 6 | ECGP with nesting allowed: a module may contain modules, each extra level accepted with probability `nest_decay^(depth−1)` (0.5) | built, 10-seed sweep |
+| **necgp_pairwise** (our variant) | exp 6 | compress merges exactly one genome-adjacent *pair*, rejected unless the pair genuinely interacts; no mutation inside module bodies, no interface operators; cap on a module's total NAND count (5) | built, 5 seeds, full history logging |
+
+Modular CGP (Walker & Miller's own nesting extension) was the natural target but its
+sources (Walker's 2008 PhD thesis; Ch. 3 of *Cartesian Genetic Programming*, Springer
+2011) were unreachable, so necgp is an original extension, not a reproduction.
+
+### What we learned
+
+**1. Evolution does invent genuine new gates from NAND — but does not keep them.**
+Experiment 4, ECGP, NAND-only, retina/AND, 12 seeds: 11/12 seeds actively used a
+module computing `a OR NOT b` and 7/12 a genuine AND module — functions no single
+NAND node can compute. But at the solved genotype only 1/12 seeds still had a genuine
+2-input/1-output module; the rest had expanded them back into raw NANDs. Modules acted as **scaffolding used to
+cross a plateau, not as a kept vocabulary.**
+
+**2. ECGP's speed effects are small, inconsistent, and not attributable to reuse.**
+- 4-gate set, 50 nodes, fixed goal: ECGP solved in fewer generations on 9/12 seeds
+  (median 24.5k vs 37.1k) — Walker & Miller's direction, not significant.
+- NAND-only, 100 nodes: **reversed** — ECGP median 56.6k vs CGP 38.1k. Confounded:
+  with one primitive, a CGP function mutation is a no-op, so the arms are not
+  step-size matched.
+- Four candidate explanations for any ECGP advantage were never separated: a wider
+  function alphabet, protection of module contents from mutation, a shorter genome
+  (smaller mutation steps), and genuine reuse. The census favoured protection and step
+  size. The **knock-out control** (replace a module call with a random one, check
+  fitness drops) was designed but never run, in any codebase.
+
+**3. Under goal switching (MVG), ECGP shows no persistence (experiment 4).**
+`and`↔`or` every 2000 generations, 16 seeds, 800k generations:
+- The predicted signature of persistence — recovery time shrinking over successive
+  switches — never appears (trend ≈ 0 at 50 and 400 nodes). **H1 (persistence and
+  reuse across switches) is falsified** in this setup.
+- At 400 nodes ECGP is *worse* than CGP (0/16 vs 5/16 solved). Hypothesis, untested:
+  by run end ~90% of the genome sits inside slowly-mutating modules, starving neutral
+  drift.
+- ECGP does recover faster to the same plateau (30–40%) — consistent with protection,
+  not memory.
+- Only ~⅓ of MVG modules are actually called ≥2× in the final circuit, vs ~¾ under a
+  fixed goal (measured before the fake-module and neutral-swap artefacts below were
+  known, so both numbers are upper bounds).
+
+**4. Module counts overstate reuse — the encodings manufacture "modules".**
+- *Churn:* 63% of ECGP modules are seen at only one log point; 31% compute exactly one
+  primitive (4-gate set).
+- *Fake modules:* ECGP's `compress` wraps genome-adjacent gates, but genome position
+  says nothing about wiring, so many modules are gates that never feed each other.
+  NAND-only ECGP seed 0: 80% of module calls in the solved circuit went to fake
+  modules; necgp seed 0: 37.5%. Nesting does not fix this; it adds a second layer where
+  it can happen.
+- *Genome adjacency is a tiny window:* in necgp_pairwise's evolved circuits, only
+  **6.3%** of used gate→gate wires join genome-adjacent gates, so only those can ever
+  be merged. A compress attempt succeeds 0.62% of the time, and merges two gates the
+  circuit actually uses 0.26% of the time (58% of successes involve a gate the circuit
+  does not use).
+- *Takeover by mutation bias, not selection (necgp_pairwise):* final circuits are
+  almost entirely module calls (e.g. 50 module calls vs 4 NANDs). Mechanics: none of
+  the 5 final circuits contains a single call created by `compress` (those are the
+  only ones `expand` can undo); calls created by mutation can never be expanded; and mutation picks a gate's
+  function uniformly from {NAND, M1, …, Mk}, so with 8 modules NAND is drawn 1 time in 9.
+- *NANDs in disguise:* swapping a NAND for a module is usually neutral. The old two
+  wires become the module's first inputs, extra inputs get random wires, and readers
+  keep reading output 0 — which, for a module like `(A NAND B) NAND C` that exposes its
+  inner gate, *is* the old NAND. Measured: **34%** of active module calls are only ever
+  read at outputs equal to a plain NAND of their first two wires.
+- *Interfaces don't match:* modules are not 2-in/1-out gates. necgp_pairwise modules
+  have 3–4 inputs and 1–2 outputs; a swap pads or trims wires and redirects outputs,
+  so reusing a module *correctly* requires the function change plus 2–4 wires landing
+  on the right signals at once.
+- *Re-invention instead of reuse:* the same small function, NAND(NAND(a,b),c), recurs
+  under many module ids (8 of 9 ids in one seed) — the smallest interacting pair the
+  pairwise operator can make, re-wrapped rather than re-called. No XOR module appeared
+  in any seed.
+
+**5. Nesting: suggestive, not established (experiment 6, necgp).**
+- 10 seeds, nested vs nesting disabled, same seed: nested needed fewer generations on
+  6/9 seeds where both solved (median 78k vs 101k), Wilcoxon p = 0.16. One further seed
+  was solved only by the nested run.
+- Deep nesting does happen (a module nesting a module nesting a module in solved
+  circuits; depth 5 transiently), and one
+  smoke run showed a module whose body called the same sub-module **twice** — reuse
+  inside a module, the phenotype we were looking for. One seed, measured before the
+  fake-module check existed; not followed up.
+
+**6. Making modules honest was achievable; making them useful was not.**
+necgp_pairwise reached **0% fake modules by construction** (5/5 seeds solved in its
+first run; 4/5 in the re-run after a reproducibility fix) while still solving the
+task, and modules persist to the end of the run. But persistence is explained by the
+mechanics in point 4, the modules are tiny (2–4 NANDs), and the size cap of 5 NANDs
+rules out the object detector (≥ 8) as a single module.
+
+**7. Circuit size: bloat is neutral wandering, and parsimony pressure backfires
+(experiment 4).** ECGP circuits grow before solving (mean 15.8 → 35.3 active gates)
+and after solving wander over a 2–3× range with no trend. A tie-break favouring
+smaller circuits left final size unchanged (median 33) and slowed search by 56% —
+narrowing neutral drift costs evolvability, as Yu & Miller 2001 / Vassilev & Miller
+2000 predict. Relevant because "prefer compact genomes" is the obvious lever for
+selecting reuse.
+
+**8. SMCGP was never pointed at the question.** Its development is keyed to a growing
+number of inputs (the paper's parity curriculum), which the fixed 8-input retina does
+not have. It searches (3/6 seeds improved on 2-input parity) but slower than the
+paper reports, and was never run on the retina or analysed for reuse.
+
+### Never observed, never measured
+
+- **Duplication followed by divergence: no evidence, in any experiment.** No codebase
+  records which module was copied from which (a module lineage field was flagged in
+  experiment 4 and never built), and necgp_pairwise forbids body mutation, so
+  divergence is impossible there by design.
+- **Causal evidence that any module is load-bearing:** no knock-out test was ever run.
+- **A no-module baseline for how often the same function recurs** in plain CGP.
+
+### Promising ideas without results (future work)
+
+- **Compress along real wires, with genome reordering.** Pick a wire the circuit
+  actually uses and make its two gates adjacent by a legal reordering (a CGP genome can
+  be topologically re-sorted without changing the circuit). Measured on evolved
+  circuits: a legal reordering exists for 77% of non-adjacent used wires (71% within the
+  size cap), vs 6.3% reachable today. The other 23% have a second path between the two
+  gates and need a larger module.
+- **Grow a whole small gate in one step:** wrap a connected group of 2–5 used gates
+  (e.g. an XOR) in one event instead of a chain of lucky nested merges.
+- **Balance function sampling:** NAND half the time, a module otherwise, so modules
+  cannot take over by sampling bias.
+- **Duplicate a call together with its wiring** — the closer analogue of gene
+  duplication, avoiding the need for several coincident wire mutations.
+- **A gene-library CGP** (the cleanest design we reached): a small library of genes,
+  each a tiny circuit with a *fixed* interface (e.g. 4 inputs, 1 output) so any gate
+  can swap to any gene without re-wiring; mutation of a gene's body changes every call
+  site at once (the payoff of reuse); an explicit **duplication** operator copies a gene
+  to a new slot, records its parent, and moves one call site to the copy (neutral at
+  birth, then free to diverge). Paired with a task switch in which only the *left*
+  object rule changes, a shared gene becomes a liability and duplication-then-divergence
+  becomes the predicted route — a falsifiable test. Closest precedent: Koza's
+  architecture-altering operations / subroutine duplication in genetic programming
+  (Koza 1995) `[citation to verify]`.
+- **Population GA instead of (1+4).** KA's elite-150-of-600 GA with crossover solved
+  MVG on plain 50-node CGP (4/5 seeds) where (1+4) plateaued at 0.84 (see "Roadmap: from standard CGP to KA's
+  population GA"). A population can carry variants with and without a new module while
+  it proves itself. For ECGP, crossover needs module ids shared across individuals
+  (e.g. a module's id is its truth table).
+- **Instrumentation that any follow-up needs:** module lineage, "calls whose outputs
+  are actually read" instead of raw call counts, and the knock-out test.
+
+### Takeaway
+
+Explicit module machinery in CGP produces genuine compositions from a single primitive,
+but in every variant we built, the observed module counts and persistence are
+explained by how the operators work (genome adjacency, neutral swaps, sampling bias,
+protection from mutation) rather than by selection for reuse. The behavioural-
+modularity phenomenon we were after — a module found, kept, reused, and later
+diverged — was not observed, and the diagnosis says why: it needs an encoding in which
+reuse is correctly wired from the start and duplication is an explicit, neutral step.
+That is a design result, not an empirical one.
+
+*Provenance of the 2026-09-15 numbers* (NAND-minimum table, 6.3% adjacency,
+0.62%/0.26% compress success, 77%/71% legal reordering, takeover counts, 34% disguised
+NANDs, module interface sizes): `experiments/experiment_6/necgp_pairwise/analysis/`
+(one script each, see its README), run on `necgp_pairwise/runs/base/` (5 seeds, 234
+snapshots); recorded in `experiments/experiment_6/RESULTS.md`, 2026-09-15 entry.
 
 ---
 

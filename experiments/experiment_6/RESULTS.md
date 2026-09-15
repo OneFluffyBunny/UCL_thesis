@@ -461,3 +461,28 @@ config; 56 s wall for all five):
 
 Next (from the review that motivated this): flat-CGP null for how often the same
 function recurs without modules, and a knock-out test on the busiest module.
+
+## 2026-09-15 — necgp_pairwise: why modules are not kept (post-hoc measurements, no new runs)
+
+Measured on the 2026-09-14 `runs/base` (5 seeds, 300k generations, snapshots every
+1000). Scripts and exact commands: `necgp_pairwise/analysis/` (README there). Interpretation
+lives in `add_to_latex.md`, section "Module acquisition and reuse".
+
+- **Compress rarely has anything to glue.** 36.7 of 100 nodes are active; only 6.3% of
+  used gate->gate wires join genome-adjacent nodes, which is all `compress` can merge.
+  0.62% of `compress` attempts succeed, 0.26% with both gates active.
+- **Reordering would open most wires.** Of the 16,245 non-adjacent used wires, 76.7%
+  can be made adjacent by some reorder that keeps the circuit; 70.6% also fit the
+  5-NAND cap. Moving just one end: 53.1%.
+- **Calls made by compress do not survive; calls made by mutation take over.** No final
+  active circuit contains a compress-made call (type 1). Type-2 calls: 50/26/26/36/44
+  against 4/3/1/1/6 NANDs (seeds 0-4). Point mutation swaps NAND<->module freely
+  (seed 1 final, 200k mutations: NAND->module 4,524, module->NAND 4,812,
+  module->module 32,936) and rewires inputs (input 2->5: 187).
+- **Many of those calls are NANDs in disguise.** 2,416 of 7,076 active type-2 calls
+  (34%) are read only at outputs equal to NAND of their first two wires. Module
+  interfaces are 3-4 inputs: (3,2) 563, (4,2) 334, (3,1) 103, (4,1) 65.
+- **Size of reusable parts, NAND only** (exhaustive, <=4 inputs): XOR/MUX/AND3/NOR 4
+  gates, XNOR 5, OR3/MAJ3 6, NOR3 7; the KA object detector needs more than 7.
+
+Still not done: flat-CGP null, knock-out of the busiest module, module lineage.
