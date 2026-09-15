@@ -1832,6 +1832,148 @@ alone is an unlikely explanation for the accuracy gap).
 **Next:** FG with the GA (the missing control, ~19 min); then E (KA's 20 vs 2000)
 and pc=0 (does crossover matter?).
 
+**Step 3 — the FG control and the switch interval** (all GA, 50 nodes, 100k gens;
+`runs/fgmvg50_ga_fg`, `fgmvg50_pop_E20`, `fgmvg50_pop_E200`; figure pairings in
+`runs/study_ga_E2000`, `runs/study_ga_E200`).
+
+| arm (5 seeds) | end acc(AND) = 1 | end purity | solved circuits' purity, 2nd half |
+|---|---|---|---|
+| FG | 3/5 | 0.60, 0.69, 0.85, 0.92, 0.92 | 0.60–0.92, **never 1.00** (0/36 samples) |
+| MVG E=2000 | 4/5 | 1.00 ×5 | **1.00** (33/34 samples) |
+| MVG E=200 | 1/5 (2 more hold 1.000 in the 2nd half but end at 0.94/0.97) | 1.00 ×5 | 1.00 (23/23) |
+| MVG E=20 (seed 3 only) | never solved (best 242/256) | 0.72 | — |
+
+- **The GA alone does not produce purity 1.00; MVG does.** Solved-vs-solved (so
+  no accuracy confound): FG 0.60–0.92, MVG 1.00. FG seed 4 and MVG E=2000 seed 4 are
+  the same run until generation 2000 (both solved at 1,085), then diverge to
+  purity 0.60 vs 1.00. End purity MVG > FG in every seed pair (U=0, p≈0.008) at
+  both E=2000 and E=200. MVG solutions are also smaller (16 vs 18–19 gates).
+- **Shorter E costs accuracy, not modularity.** E=2000 and E=200 are both
+  fully pure; shorter E solves less often (E=2000 4/5, E=200 1/5 at the end, E=20
+  0/1). Consistent with KA's E=20 failing here: with 150 elites and 20-generation
+  epochs the population can hold AND- and OR-specialists side by side (half of all
+  switches cause no drop, yet the AND champion scores ~0.5 on OR) — hypothesis, not
+  yet measured.
+- **Recovery after a switch is 1–2 generations** (median) at both E=2000 and E=200.
+
+**Thesis figures (promoted 2026-09-15):** `latex_figures/experiment_4_fgmvg/` — the
+circuits grid, aggregate progress and seed-0 switch windows for **GA, E=2000**, with a
+README carrying regeneration commands, per-panel numbers and caveats; the same folder
+holds the (1+4) ES baseline set (`*_es1p4*.png`, `runs/fgmvg50`). The E=200 set in
+`runs/study_ga_E200/figures` predates the restyle and was not promoted.
+
+### (1+4) ES vs KA's GA — what actually differs
+
+Everything except the search loop is shared: `cgp.py` genotype (50 nodes, arity 2,
+1 output), gates `and,nand,or,nor`, `retina_ka2005`, raw accuracy, `cgp.mutate` at 3%
+of gene slots, the MVG schedule (`train._goal_at`) and the archive/recovery formats.
+
+| | (1+4) ES — `train.py` (CGP paper, Table II) | KA GA — `train_pop.py` (`kashtan_alon/ga.py`) |
+|---|---|---|
+| population | 5: one parent + 4 offspring | 600 |
+| who survives | the single best (offspring win ties → neutral drift) | top 150 copied unchanged (offspring win ties) |
+| parents | always the one parent | two elites drawn uniformly per child |
+| recombination | none | per-node uniform crossover, p = 0.5 |
+| mutation | every offspring, 3% of genes | p = 0.5 per child, same 3% operator (else clone/crossover only) |
+| lineages alive | 1 | up to 150 elite lineages |
+| evaluations / generation | 4 | ~338 (450 children minus unmutated clones, whose score is reused) |
+| generations run | 800,000 | 100,000 |
+| evaluations / seed | 3.2M | ~33.8M (10.5x more) |
+| wall time / seed | not compared | 18–21 min (~10–12 ms/gen), 5 seeds in parallel, CPython |
+| memory of past goals | none beyond one parent | 150 elites, so variants fit to the previous goal can persist |
+| MVG result (E=2000) | never holds a solution (0.81–0.85 at last AND epoch, 0/5 solved); purity 0.25–0.81 | 4/5 solved; purity **1.00 in 5/5** |
+| FG result | 5/5 solved; purity 0.82–0.90 | 3/5 solved at 100k; purity 0.60–0.92 |
+| recovery after a switch | 250–420 generations | 1–2 generations (median) |
+
+Two readings the thesis must keep apart. (a) **The GA is not just "more budget".**
+(1+4) MVG was flat at ~0.84 for all 800k generations, so 10x evaluations is an
+unlikely explanation for solving. (b) **The GA alone is not the modularity effect.**
+Under the same GA FG circuits are never fully pure; only MVG gives 1.00. The (1+4)
+null is therefore a statement about a single lineage, not about CGP circuits: KA's
+mechanism (modular variants recover faster *and there is a population to select
+among*) needs the population.
+
+**How the modular switch shows up in a population (MVG seed 0, E=2000).** The AND
+champion at 97,999 scores AND 232 / OR 120; the same circuit with its output gate
+changed to OR scores AND 136 / OR 232 (NAND: 24/136; NOR: 120/24). No circuit can score
+232 on both goals (hits_AND + hits_OR = 2a + 128 <= 384). At the switch to OR
+(98,000) that output-flipped variant was already in the population, so the
+champion's score did not drop (recovery 0), while the population mean fell 220.9 →
+127.3. At 96,000 (→ AND) no such variant was present: 232 → 200, recovered in 4
+generations. Recovery is a one-gate change at the output because the circuit is a
+pure left detector and a pure right detector joined only there. This is why some
+switches show no dip in the champion accuracy (e.g. 18,000 and 98,000 for seed 0).
+
+### Replicating the GA study exactly
+
+Environment: conda env `lndp`, CPython (not PyPy); `train_pop.py` and `cgp.py` as of
+commit `7dffb55` (`train.py` is frozen and only imported). Run from
+`experiments/experiment_4/`. Call the env's python directly when running arms in
+parallel (`conda run` is not parallel-safe), with `PYTHONIOENCODING=utf-8`.
+
+```
+# FG, 5 seeds (seeds 0-4, one worker each)
+python train_pop.py --generations 100000 --log-interval 1000 --out-dir runs/fgmvg50_ga_fg
+# MVG, E=2000 / E=200 / E=20 (E=20: seed 3 only)
+python train_pop.py --mvg --switch-interval 2000 --generations 100000 --log-interval 1000 --out-dir runs/fgmvg50_pop
+python train_pop.py --mvg --switch-interval 200  --generations 100000 --log-interval 1000 --out-dir runs/fgmvg50_pop_E200
+python train_pop.py --mvg --switch-interval 20   --generations 100000 --log-interval 1000 --seed 3 --n-seeds 1 --workers 1 --out-dir runs/fgmvg50_pop_E20
+```
+
+Defaults used (and recorded in each `config.json`): `--task retina_ka2005 --operation
+and --gates and,nand,or,nor --nodes 50 --mutation-rate 0.03 --fitness raw --mvg-ops
+and,or --pop 600 --n-elite 150 --pc 0.5 --pm 0.5 --archive-interval 1
+--checkpoint-interval 1000 --workers 5`. Seeds are `random.Random(seed)`, one per
+seed process, so results do not depend on the worker count. Note: the E value is **not
+in the run name** (`cgppop_retina_ka2005_mvg-and-or_n50_S600L150_g100000`), hence one
+output directory per E. Checkpoints resume automatically (rerun the same command).
+
+**Verified reproducible (2026-09-15):** rerunning seed 0 of FG and of MVG E=2000 for
+2,500 generations with the committed code gives archive rows (champion genotype, hits,
+population mean, every generation) identical to the stored runs, including the MVG
+switch at generation 2,000.
+
+Per seed, each run directory holds `log.csv` (every 1000 gens: champion hits, population
+mean, active gates, elites tied at best, evaluations, ms/gen), `archive.csv` (every
+generation: champion genotype + population mean — enough to redraw every figure with
+no replay), `recovery.csv` (per switch: hits before/after, drop, gens to recover,
+censored) and `result.json`. `archive.csv` is ~100k rows per seed.
+
+Figures: pair the arms with a `study.json` (`{"fg": "<fg run dir>", "mvg": "<mvg run
+dir>"}`, relative to the study folder), e.g. `runs/study_ga_E2000/study.json`, then from
+`experiments/experiment_4/analysis/`:
+
+```
+python fig_fgmvg_circuits.py --root ../runs/study_ga_E2000
+python fig_fgmvg_progress.py --root ../runs/study_ga_E2000 --every 200
+python fig_fgmvg_windows.py  --root ../runs/study_ga_E2000 --seed 0 --windows 0:6000,15000:21000,94000:100000
+```
+
+Windows: early (0–6000), FG seed 0's solve (17,461, inside 15000–21000) and the last
+6000 generations. Purity is `qmetrics.circuit_purity` on the active phenotype, output
+gate excluded; the MVG circuit is the last AND-epoch champion (generation 97,999).
+
+**(1+4) baseline for comparison** (`runs/fgmvg50`), from its `config.json`:
+`python train.py --task retina_ka2005 --operation and --gates and,nand,or,nor --nodes 50
+--mutation-rate 0.03 --fitness raw [--mvg --mvg-ops and,or --switch-interval 2000]
+--popsize 5 --generations 800000 --no-stop-on-solution --n-seeds 5 --archive-interval 100 --dense-archive
+0:6000,86000:92000,792000:798000 --tag arch --out-dir runs/fgmvg50`.
+
+### Open threads for the GA study
+
+- **n = 5 per arm, one genotype size (50 nodes), one task.** The purity split is
+  total (U = 0) but rests on 10 runs.
+- **Crossover not ablated** (pc = 0): is recombination of modules part of the effect,
+  or is population + elitism enough?
+- **FG at 100k generations solves only 3/5**; a longer FG run would show whether
+  unsolved FG seeds end purer once solved (the solved-vs-solved comparison already
+  says no, but on 3 seeds).
+- **E=20 is a single seed.** The "coexisting AND- and OR-specialists" explanation is
+  not measured; logging per-switch how many elites are specialists would test it.
+- **Budget is not matched to the (1+4) runs** (10.5x evaluations), see (a) above.
+- **The runs' `config.json` has no commit hash**; reproducibility rests on the
+  2,500-generation check above.
+
 ---
 
 ## Preliminary modularity results — circuit purity across experiments

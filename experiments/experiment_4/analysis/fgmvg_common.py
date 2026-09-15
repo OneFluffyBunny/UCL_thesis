@@ -131,8 +131,19 @@ class Arm:
 
 
 def load_study(root: pathlib.Path) -> tuple[Arm, Arm]:
-    """(FG arm, MVG arm) from a study root holding one run directory of each."""
-    arms = [Arm(p.parent) for p in sorted(root.glob("*/config.json"))]
+    """(FG arm, MVG arm) from a study root holding one run directory of each.
+
+    Or from `root/study.json` = {"fg": "<run dir>", "mvg": "<run dir>"} (paths
+    relative to root), which pairs run directories living elsewhere without copying
+    their archives. Figures are then written to `root/figures`.
+    """
+    spec = root / "study.json"
+    if spec.exists():
+        s = json.loads(spec.read_text(encoding="utf-8"))
+        dirs = [(root / s["fg"]).resolve(), (root / s["mvg"]).resolve()]
+    else:
+        dirs = [p.parent for p in sorted(root.glob("*/config.json"))]
+    arms = [Arm(d) for d in dirs]
     fg = [a for a in arms if not a.mvg]
     mvg = [a for a in arms if a.mvg]
     if len(fg) != 1 or len(mvg) != 1:

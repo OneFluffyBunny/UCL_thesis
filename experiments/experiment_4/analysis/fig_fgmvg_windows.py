@@ -70,12 +70,11 @@ def main(argv=None) -> int:
     fg, mvg = load_study(args.root)
     E = mvg.E
     windows = [tuple(int(v) for v in w.split(":")) for w in args.windows.split(",")]
-    rows_spec = [("acc_active", "champion accuracy\n(active goal)"),
-                 ("pop_mean", f"population mean accuracy\n(active goal, "
-                              f"{args.smooth}-gen mean)"),
+    rows_spec = [("acc_active", "champion accuracy"),
+                 ("pop_mean", "population mean accuracy"),
                  ("purity", "champion circuit purity")]
-    styles = {"FG": dict(color="#2563eb", label=f"FG seed {args.seed}, {fg.alg}"),
-              "MVG": dict(color="#dc2626", label=f"MVG seed {args.seed}, {mvg.alg}")}
+    styles = {"FG": dict(color="#2563eb", label="FG (L AND R)"),
+              "MVG": dict(color="#dc2626", label=f"MVG (AND <-> OR, every {E} gens)")}
 
     fig, axes = plt.subplots(len(rows_spec), len(windows),
                              figsize=(5.2 * len(windows), 8.5), squeeze=False,
@@ -104,7 +103,7 @@ def main(argv=None) -> int:
             ax.set_xlim(lo, hi)
             ax.grid(alpha=0.25)
             if r == 0:
-                ax.set_title(f"generations {lo:,}-{hi:,}\n(shaded = MVG OR epoch)")
+                ax.set_title(f"generations {lo:,}–{hi:,}")
             if r == len(rows_spec) - 1:
                 ax.set_xlabel("generation")
         print(f"window {lo}-{hi}: MVG seed {args.seed} switches")
@@ -122,9 +121,7 @@ def main(argv=None) -> int:
             ax.axhline(0.75, color="#9ca3af", lw=0.8, ls=":")
     axes[2][0].set_ylim(0, 1.02)
     axes[0][0].legend(loc="lower right", fontsize=9)
-    fig.suptitle(f"Experiment 4, CGP (50 nodes): per-generation windows, FG vs MVG "
-                 f"seed {args.seed}\n(MVG switches every {E} gens; dotted = 0.75, "
-                 f"constant output)", fontsize=12)
+    fig.suptitle(f"CGP — FG vs MVG, seed {args.seed}", fontsize=13)
     fig.tight_layout()
     out = args.out or args.root / "figures" / f"windows_fg_vs_mvg_seed{args.seed}.png"
     out.parent.mkdir(parents=True, exist_ok=True)

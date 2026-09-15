@@ -48,7 +48,9 @@ from __future__ import annotations
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgb
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Patch
+from matplotlib.path import Path
 
 import cgp
 
@@ -60,8 +62,8 @@ EDGE = "#5D6D7E"
 INPUT_SPLIT_GAP = 0.9      # extra y-gap between the left-4 and right-4 pixels
 
 
-def _layout(pheno: cgp.Phenotype, n_in: int, split: int | None):
-    """label -> (x, y). x = depth (inputs at 0), y = spread within a depth column."""
+def _layout(pheno: cgp.Phenotype, n_in: int, split: int | None, x_gap: float = 1.0):
+    """label -> (x, y). x = depth * x_gap (inputs at 0), y = spread within a depth column."""
     pos: dict[int, tuple[float, float]] = {}
 
     for i in range(n_in):
@@ -80,7 +82,7 @@ def _layout(pheno: cgp.Phenotype, n_in: int, split: int | None):
         nodes.sort(key=lambda j: (sum(pheno.cone[j]) / len(pheno.cone[j])
                                   if pheno.cone[j] else n_in / 2))
         for r, j in enumerate(nodes):
-            pos[n_in + j] = (float(d), (len(nodes) - 1) / 2.0 - r)
+            pos[n_in + j] = (float(d) * x_gap, (len(nodes) - 1) / 2.0 - r)
     return pos
 
 
@@ -139,11 +141,20 @@ def _render(ax, g, pheno: cgp.Phenotype, gates, n_in: int,
             title: str = "", split: int | None = None,
             origin: list[str] | None = None, colour_cones: bool = False,
             mod_colour: dict[str, str] | None = None, scale: float = 1.0,
-            node_colours: dict[int, str] | None = None) -> list:
+            node_colours: dict[int, str] | None = None,
+            input_colours: tuple[str, str] | None = None,
+            side_arrows: bool = False, x_gap: float = 1.0) -> list:
     """Draw one circuit into an existing axes; return its gate-label text artists.
 
     `node_colours` (node index -> colour) overrides the fill of those gates, for
-    colourings computed outside this module (e.g. per-gate circuit purity).
+    colourings computed outside this module (e.g. per-gate circuit purity). Gates
+    coloured this way get a dark outline, and dark text on a light fill, since such a
+    scale can run through white. `input_colours` = (left, right) pixel colours.
+
+    `side_arrows` draws each wire as a horizontal S-curve from the RIGHT side of its
+    source box to the LEFT side of the gate it feeds (input k of a gate at its own
+    port), instead of centre to centre; pair it with `x_gap` > 1 so the columns have
+    room for the curves.
 
     The labels come back so the caller can hand them to `_fit_labels` once the layout
     is final.
@@ -158,9 +169,10 @@ def _render(ax, g, pheno: cgp.Phenotype, gates, n_in: int,
     for the whole figure -- otherwise the same module is teal in one stage and red in
     the next, and the colour stops meaning anything across time.
     """
-    pos = _layout(pheno, n_in, split)
+    pos = _layout(pheno, n_in, split, x_gap)
     max_d = max((pheno.depth[j] for j in pheno.active), default=0)
     mod_colour = {} if mod_colour is None else mod_colour
+    in_l, in_r = input_colours or (INPUT_L, INPUT_R)
 
     # ---- edges (drawn first so boxes sit on top) ----
     for j in pheno.active:
@@ -169,6 +181,21 @@ def _render(ax, g, pheno: cgp.Phenotype, gates, n_in: int,
             src = g.conn[j * g.arity + k]        # conn is flat, row-major
             if src not in pos:
                 continue                      # feeds an inactive node only
+            if side_arrows:
+                # out of the source's right edge (input box 0.26+pad, gate box
+                # BOX_HW+pad), into the target's left edge at port k
+                (xs, ys), (xt, yt) = pos[src], pos[n_in + j]
+                x0 = xs + (0.31 if src < n_in else BOX_HW + 0.05)
+                x1 = xt - BOX_HW - 0.06
+                y1 = yt + (0.09 - 0.18 * k / max(1, gate.arity - 1)
+                           if gate.arity > 1 else 0.0)
+                bend = max(0.25, 0.45 * (x1 - x0))
+                path = Path([(x0, ys), (x0 + bend, ys), (x1 - bend, y1), (x1, y1)],
+                            [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
+                ax.add_patch(FancyArrowPatch(
+                    path=path, arrowstyle="-|>", mutation_scale=9 * scale,
+                    color=EDGE, lw=1.0 * scale, alpha=0.8, zorder=1))
+                continue
             ax.add_patch(FancyArrowPatch(
                 pos[src], pos[n_in + j], arrowstyle="-|>",
                 mutation_scale=11 * scale,
@@ -179,8 +206,8 @@ def _render(ax, g, pheno: cgp.Phenotype, gates, n_in: int,
     # ---- program inputs ----
     for i in range(n_in):
         x, y = pos[i]
-        col = INPUT_L if (split is not None and i < split) else (
-            INPUT_R if split is not None else "#7F8C8D")
+        col = in_l if (split is not None and i < split) else (
+            in_r if split is not None else "#7F8C8D")
         ax.add_patch(FancyBboxPatch((x - 0.26, y - 0.17), 0.52, 0.34,
                                     boxstyle="round,pad=0.045", linewidth=1.3,
                                     facecolor="white", edgecolor=col, zorder=2))
@@ -206,17 +233,21 @@ def _render(ax, g, pheno: cgp.Phenotype, gates, n_in: int,
         # carry a name that invited reading the module as equal to that gate.
         label = tag if tag else gates[g.func[j]].name.upper()
         col = CLS_COLOUR[pheno.cls[j]] if colour_cones else (mc or NEUTRAL)
+        edge, text_col = ("#2C3E50" if is_out else col), "white"
         if node_colours and j in node_colours:
             col = node_colours[j]
+            r, gr, b = to_rgb(col)
+            edge = "#2C3E50" if is_out else "#566573"
+            text_col = "#1B2631" if 0.299 * r + 0.587 * gr + 0.114 * b > 0.6 else "white"
 
         ax.add_patch(FancyBboxPatch((x - BOX_HW, y - 0.19), 2 * BOX_HW, 0.38,
                                     boxstyle="round,pad=0.05",
                                     linewidth=2.4 if is_out else 1.3,
                                     facecolor=col, alpha=0.90,
-                                    edgecolor="#2C3E50" if is_out else col, zorder=2))
+                                    edgecolor=edge, zorder=2))
         labels.append(ax.text(x, y, label, ha="center", va="center",
                               fontsize=(7.6 if len(label) <= 5 else 6.5) * scale,
-                              color="white", fontweight="bold", zorder=3))
+                              color=text_col, fontweight="bold", zorder=3))
 
     # ---- output marker ----
     for o, j in enumerate(pheno.out_nodes):
@@ -237,7 +268,7 @@ def _render(ax, g, pheno: cgp.Phenotype, gates, n_in: int,
                   frameon=False, fontsize=8.5 * scale, bbox_to_anchor=(0.5, -0.035))
 
     ax.set_title(title, fontsize=11 * scale)
-    ax.set_xlim(-0.9, max_d + 1.7)
+    ax.set_xlim(-0.9, max_d * x_gap + 1.7)
     ys = [p[1] for p in pos.values()]
     ax.set_ylim(min(ys) - 1.15, max(ys) + 0.8)
     ax.axis("off")

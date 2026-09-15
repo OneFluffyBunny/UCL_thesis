@@ -1537,3 +1537,38 @@ gain)" (root `CLAUDE.md` established facts). Check what that prior null
 actually tested (literal complexity ramping, or something else, e.g.
 warm-start vs cold-start on one fixed target) before re-deriving
 infrastructure.
+
+## 2026-09-14/15 — FG vs MVG under Kashtan–Alon's population GA (`train_pop.py`)
+
+**Why.** Under this experiment's (1+4) ES, 5 FG + 5 MVG runs (50 nodes, E=2000, 800k
+generations, `runs/fgmvg50`) gave a null: MVG never held a solution (0.81–0.85) and,
+at matched accuracy, FG and MVG circuits were equally pure. The suspected cause is
+the single lineage: KA's mechanism selects *among* variants that differ in recovery
+speed. `train_pop.py` swaps only the search loop for KA's GA (population 600, 150
+elites, two-parent per-node crossover p=0.5, `cgp.mutate` with p=0.5); `train.py`
+is untouched, so this experiment's frozen runs are unaffected.
+
+**Result (5 seeds per arm, 100k generations, ~33.8M evaluations/seed).**
+
+| arm | end acc(AND) = 1 | end purity | solved circuits' purity, 2nd half | recovery (median) |
+|---|---|---|---|---|
+| FG | 3/5 | 0.60, 0.69, 0.85, 0.92, 0.92 | 0.60–0.92, never 1.00 | — |
+| MVG E=2000 | 4/5 | 1.00 ×5 | 1.00 | 1–2 gens |
+| MVG E=200 | 1/5 | 1.00 ×5 | 1.00 | 1–2 gens |
+| MVG E=20 (seed 3) | 0/1 (best 242/256) | 0.72 | — | — |
+
+- With a population, MVG both solves and yields fully pure circuits (a left detector
+  and a right detector meeting only at the output gate, so AND↔OR is one gate). The
+  GA alone does not: solved FG circuits are never fully pure. End purity MVG > FG in
+  every seed pair (U=0, p≈0.008).
+- Shorter E costs accuracy, not purity; KA's E=20 fails to solve here (one seed).
+- A switch can leave the champion's score unchanged because the output-flipped
+  variant is already in the population (MVG seed 0 at 98,000); the population mean
+  still dips.
+
+**Runs:** `runs/fgmvg50_ga_fg`, `runs/fgmvg50_pop` (E=2000), `runs/fgmvg50_pop_E200`,
+`runs/fgmvg50_pop_E20`; figure pairings `runs/study_ga_E2000`, `runs/study_ga_E200`.
+**Reproduced:** seed 0 of FG and MVG E=2000, first 2,500 generations, archive rows
+identical with `7dffb55` (2026-09-15). **Figures:** `latex_figures/experiment_4_fgmvg/`.
+Exact commands, the (1+4)-vs-GA comparison table and open threads:
+`add_to_latex.md`, "Roadmap: from standard CGP to KA's population GA".
