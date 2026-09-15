@@ -132,7 +132,7 @@ def raw_accuracy(pred: np.ndarray, y: np.ndarray) -> np.ndarray:
 
     This is Kashtan-Alon's own performance measure: "the percentage of correct
     answers" across every input pattern, with no class balancing. It is the
-    paper-faithful default. Beware the shortcut trap (CLAUDE.md): a constant
+    paper-faithful default. Beware the shortcut trap: a constant
     output can score high on an imbalanced goal like retina/AND."""
     return (pred == y[None, :]).astype(np.float32).mean(axis=1)
 

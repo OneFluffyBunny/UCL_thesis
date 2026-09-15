@@ -7,24 +7,20 @@ __pycache__/
 runs/
 runs_*/
 
-# PyPy interpreter + venv for experiment 5. Regenerable in one command:
-#   conda run -n lndp python experiments/experiment_5/setup_pypy.py
-# The interpreter itself is unpacked into the HOME directory, not here, so only the
-# venv needs ignoring -- but it is ~10 MB of binaries either way.
+# PyPy venv for experiment 5, rebuilt by experiments/experiment_5/setup_pypy.py
 .venv-pypy/
 
-# Throwaway analysis scripts. Deliberately unsaved -- but anything that backs a
-# COMMITTED claim (a figure in latex_figures/, a number quoted in add_to_latex.md or
-# in a docstring) must be promoted out of scratch_ into a named file first, or the
-# claim becomes unreproducible. experiments/experiment_4/analysis/ is the pattern.
+# Throwaway scripts. Anything that backs a reported number must be moved out of
+# scratch_ into a named, tracked file first.
 scratch_*
 
-# Console logs from ad-hoc runs (the run itself goes to runs/, conclusions to RESULTS.md)
+# Console logs from ad-hoc runs
 *_console.log
 
-# Locally-downloaded papers (copyrighted; keep out of a repo with a public remote)
+# Local-only material: downloaded papers (copyrighted), personal notes, editor and
+# assistant settings, the abandoned LNDP code base
 papers/
-
-# Separate / abandoned repos and local settings — not part of this repo
-LNDP/
+add_to_latex.md
+CLAUDE.md
 .claude/
+LNDP/

@@ -1,9 +1,7 @@
 """Newman's Q modularity for an evolved Kashtan-Alon network.
 
-This is the metric CLAUDE.md flags as the project's #1 missing tool. It is kept
-framework-agnostic (it takes an individual's integer weight matrices, nothing
-JAX/GA-specific) so it can later be promoted to a shared module and reused to
-score experiment 1-3 networks too.
+Framework-agnostic: it takes an individual's integer weight matrices, nothing
+GA-specific. The shared version for all experiments is `qmetrics/`.
 
 Q is computed on the UNDIRECTED connection graph over ALL neurons (inputs, hidden,
 output): nodes are wired iff the connection weight is non-zero. A greedy

@@ -4,9 +4,8 @@ This is the project's stand-in retina task, NOT Kashtan & Alon (2005)'s actual
 Fig. 5a object rule -- same formula used by experiment_1/experiment_2/experiment_3
 in the sibling UCL_thesis/experiments/shared_tasks.py, which is the canonical
 source. It is duplicated here (rather than imported cross-repo) on purpose: NDP
-is meant to be its own standalone, forkable git repo (see root CLAUDE.md), and a
-sys.path import into a sibling folder outside this repo would silently break on
-any machine that only clones NDP by itself (e.g. the remote GPU box). If the
+is also a standalone repository, and a sys.path import into a sibling folder
+would break wherever NDP is cloned on its own. If the
 formula in shared_tasks.py ever changes, update this file to match by hand.
 
     left_feature(x)  = (x0 & x1) | (x2 & x3)

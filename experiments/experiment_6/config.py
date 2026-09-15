@@ -80,5 +80,5 @@ def parse(argv=None) -> RunConfig:
     if cfg.max_inputs > PAPER_MAX_INPUTS:
         raise ValueError(f"--max-inputs {cfg.max_inputs} exceeds the paper's own "
                          f"ceiling of {PAPER_MAX_INPUTS} (exhaustive truth tables "
-                         f"become impractical beyond it -- see CLAUDE.md)")
+                         f"become impractical beyond it)")
     return cfg

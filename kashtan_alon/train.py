@@ -17,8 +17,7 @@ runs/<name>_brains.npz (see BrainArchive) -- so a metric invented later can be r
 over the whole trajectory without re-evolving it. runs/<name>_best.npz remains the
 single final/best network.
 
-Run `python train.py --help` for all flags. This is a reference reproduction; run
-long experiments in a per-experiment chat / on the GPU box, not the hub.
+Run `python train.py --help` for all flags.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Circuit purity of UNEVOLVED random circuits, as a function of active-gate count.
 
 REGENERATES `latex_figures/purity_metric/random_circuit_purity_by_size.png` and the
-by-size table quoted in `add_to_latex.md` and in `qmetrics.metrics.circuit_purity`.
+by-size table quoted in `qmetrics.metrics.circuit_purity`.
 
 The baseline any evolved purity has to be read against. Bucket by the EXACT number
 of active gates, not by a range -- the point is the shape of the drift, and ranges

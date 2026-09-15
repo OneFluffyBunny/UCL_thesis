@@ -85,7 +85,7 @@ def _module_active_body(mod: ecgp.Module) -> set[int]:
 
 
 def transitive_module_counts(parent: ecgp.Individual, n_in: int) -> Counter:
-    """Same walk as necgp/scratch_decompose_final.py: how many times each module
+    """Same walk as necgp/decompose_seed0.py: how many times each module
     id is actually called, top level OR nested inside another active module."""
     counts: Counter = Counter()
 

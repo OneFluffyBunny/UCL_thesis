@@ -1,8 +1,7 @@
 """Ablation of run_paper.py: same KA-faithful retina task, MVG vs FG, same GA
 hyperparameters as Run 5 in RESULTS.md -- with the fan-in cap REMOVED.
 
-Tests the constraint-necessity hypothesis (add_to_latex.md, "Testing whether a
-constraint is necessary for modularity"): if connectivity scarcity, not MVG
+Tests whether a constraint is necessary for modularity: if connectivity scarcity, not MVG
 alone, is what drives KA's modularity result, then removing the fan-in cap
 (the one thing that makes wiring scarce in KA's own model) should collapse
 Q_m toward the FG level or below, even under MVG.

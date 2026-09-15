@@ -1,7 +1,7 @@
 """Is purity-by-active-size confounded with GENOME size?
 
-Backs the "<=0.02 against a per-circuit SD of ~0.10" claim in `add_to_latex.md` and
-in `qmetrics.metrics.circuit_purity`.
+Backs the "<=0.02 against a per-circuit SD of ~0.10" claim in
+`qmetrics.metrics.circuit_purity`.
 
 Only active nodes are ever scored -- inactive nodes are not in the graph. But to
 cover active counts 2..50 the sampler has to sweep genome sizes, and a circuit

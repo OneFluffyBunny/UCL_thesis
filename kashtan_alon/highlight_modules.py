@@ -282,7 +282,7 @@ def draw_net_purity(ax, weight_mats, cfg, result, title, subtitle=None,
 def _sheet(draw_fn, out_name, suptitle, handles):
     """⚠️ Draws `<run>_best.npz`, the FINAL-generation champion. Generation 24,999
     is mid-OR-epoch for every MVG seed, so the MVG row shows OR solvers and the FG
-    row AND solvers. Measured cost of that mismatch (scratch_audit_final_goal.py):
+    row AND solvers. Measured cost of that mismatch (analysis/audit_final_goal.py):
     purity 0.929 vs 0.933 and Q_m +0.259 vs +0.311 against the same runs' AND
     champions -- structurally the same picture, with MVG's modularity slightly
     UNDERSTATED. analysis/paper_grid.py draws the goal-matched version."""

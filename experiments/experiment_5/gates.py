@@ -19,7 +19,7 @@ of the few optimisations that still bites in the big-brain regime.
 Each gate also carries a `slow` implementation over plain bools, used only by the
 reference evaluator in `cgp.py` that `test_cgp.py` checks the fast path against.
 
-The default set is the paper's (AND, NAND, OR, NOR) -- PAPER_SPEC.md section 8.
+The default set is the paper's (AND, NAND, OR, NOR) -- ../experiment_4/PAPER_SPEC.md section 8.
 Selecting others via `--gates` is supported but is a deviation: in particular
 adding `xor` hands the retina its combiner for free, the same effect the paper
 notes about putting half-adders into the multiplier's function set.
@@ -61,7 +61,7 @@ _REGISTRY = {
     "const1": Gate("const1", 1, lambda a, m: m,                      lambda a: True,                 OP_CONST1),
 }
 
-DEFAULT_GATES = "and,nand,or,nor"          # Table II / PAPER_SPEC.md section 8
+DEFAULT_GATES = "and,nand,or,nor"          # Table II / ../experiment_4/PAPER_SPEC.md section 8
 ALL_GATES = sorted(_REGISTRY)
 
 

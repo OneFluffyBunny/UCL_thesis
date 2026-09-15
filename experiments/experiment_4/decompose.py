@@ -13,8 +13,7 @@ subroutine rather than a gate wearing a box -- earn a decomposition panel.
 This is the general-purpose tool: it takes any already-built `ecgp.Individual` and
 draws it. Reproducing a SPECIFIC run's final individual (e.g. replaying seed 0's
 RNG because its checkpoint was deleted) is the caller's job -- see
-`scratch_decompose_final.py` for that one-off replay, which imports and calls
-`draw_decomposition` below. Import this module from anywhere in the repo that
+`analysis/decompose_seed0.py`, which replays seed 0 and calls `draw_decomposition` below. Import this module from anywhere in the repo that
 wants the same picture for a different individual/run.
 """
 

@@ -11,7 +11,7 @@ rather than just perturbing numbers:
    modules in place; the reference inlines everything and runs the already-verified
    CGP evaluator. Two independent routes to the same truth table.
 3. **Every operator leaves a structurally valid individual** -- `ecgp.validate`
-   checks the arity, reference and module bounds from PAPER_SPEC sections 1, 4 and 6,
+   checks the arity, reference and module bounds from ../experiment_4/PAPER_SPEC sections 1, 4 and 6,
    including "no nesting" and "a module output never connects to a module input".
 
 The operators are exercised at deliberately high probabilities so a few thousand

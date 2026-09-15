@@ -24,7 +24,7 @@ the Newman discovered-partition view for comparison.
 
 LAYOUT. Only the retina sits in a line, on the left, because those eight nodes
 are the ones the task actually groups. Hidden neurons are NOT drawn as a layer:
-they have no position in this model (CLAUDE.md: no physical space), so they are
+they have no position in this model, so they are
 placed by a spring layout with the inputs and the output pinned, letting
 connectivity alone decide where each one lands. The output neuron sits to the
 right of them all. The layout is seeded, so the same brain always draws the same

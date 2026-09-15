@@ -34,7 +34,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -44,8 +43,8 @@ PYTHON = os.environ.get(
     "LNDP_PYTHON", r"C:\Users\raduc\miniconda3\envs\lndp\python.exe")
 
 # --------------------------------------------------------------------------
-# The settled configuration. Preflight evidence for every choice is in
-# experiments/OVERNIGHT_2026-09-12.md section 5; change it there too.
+# The settled configuration. The preflight behind each choice is summarised in
+# experiment_1/RESULTS.md, section 1.
 # --------------------------------------------------------------------------
 
 SEEDS = [0, 1, 2, 3, 4]

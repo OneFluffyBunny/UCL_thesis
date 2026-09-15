@@ -3,8 +3,7 @@
 The argument for the planted-bipartition metrics (`left_right_q`'s r, and
 circuit purity) in one picture. MVG seed 1's last AND-epoch champion is a
 LITERAL two-module network -- every hidden neuron's live ancestry traces to one
-retina side only, which is why purity and r are both exactly 1.00 (audited
-node-by-node in scratch_purity_audit.py). Greedy Newman Q, handed the same
+retina side only, which is why purity and r are both exactly 1.00. Greedy Newman Q, handed the same
 graph, reports FOUR communities: it cuts the left module in two and makes the
 integrator spine a "module" of its own. Its Q_m (+0.26) is also LOWER than seed
 0's (+0.46), whose purity is only 0.81 -- the metric ranks the perfectly split
@@ -119,9 +118,6 @@ def main():
                for i, j in zip(*np.nonzero(np.asarray(W)))):
             first_cross = l
             break
-    meet = ("the two halves meet only at the output neuron"
-            if first_cross >= len(wm) - 1
-            else f"the two halves first meet in layer {first_cross + 1}")
 
     fig, ax = plt.subplots(figsize=(8.0, 8.4))
     # Deliberately bare: one title, the legend, and the two retina-half labels.

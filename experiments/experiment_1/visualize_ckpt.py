@@ -10,7 +10,6 @@ not stored in the .eqx of leaves alone). Pass the same --n-in/--n-hidden/-K/etc.
 
 from __future__ import annotations
 
-import argparse
 import os
 
 import jax.random as jr

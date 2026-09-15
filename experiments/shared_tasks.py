@@ -19,9 +19,8 @@ A difficulty staircase of boolean problems, culminating in a retina-style task
 TWO RETINA VARIANTS LIVE HERE -- they are NOT interchangeable. Always record
 which one a result used.
 
-`retina` is the **stand-in**: left/right = (p0&p1)|(p2&p3). This repo's own docs
-(root CLAUDE.md, kashtan_alon/README.md, RESULTS.md) call it "the Clune (2013)
-reimplementation/adaptation", but that attribution is UNVERIFIED: Clune, Mouret
+`retina` is the **stand-in**: left/right = (p0&p1)|(p2&p3). It has been described
+as "the Clune (2013) reimplementation", but that attribution is UNVERIFIED: Clune, Mouret
 & Lipson 2013 ("The evolutionary origins of modularity", PMC3574393 /
 arXiv:1207.2743) also uses an 8-pixel left/right retina derived from KA, but its
 exact object rule is given only as a diagram in Figure 2a and is never spelled

@@ -228,15 +228,11 @@ def score_weights(w, n_in: int, n_hidden: int, n_out: int, *,
     #    undirected graph, KA's Q_m is undirected, and `newman_q`'s greedy
     #    method refuses a DiGraph outright. from_matrix(directed=False) keeps
     #    edge i-j when either direction exists, at the larger |w|.
-    #  * G_dir is passed to left_right_q to match experiment_1/score_2x2.py,
-    #    which is how the existing 2x2 in add_to_latex.md was scored, so these
-    #    numbers extend that table instead of being a second, incomparable set.
-    #    ⚠ CORRECTED 2026-09-12: passing a DiGraph there has NO EFFECT. The
+    #  * G_dir is passed to left_right_q, but this has NO EFFECT. The
     #    first thing `left_right_q` does is `_unweighted(G)`, which builds a
     #    fresh `nx.Graph()` from whatever it is given, so direction and weight
     #    are discarded before anything is measured; it sees the same edge set as
-    #    G_und. An earlier version of this comment claimed left_right_q was
-    #    scored DIRECTED. It never was. Consequence worth knowing: every metric
+    #    G_und. Consequence worth knowing: every metric
     #    in this module except `recurrent_purity` is blind to edge direction, so
     #    the reciprocity of the hidden block cannot corrupt Q / Q_m / lr_r — but
     #    none of them can detect it either. Measured on this study's 40

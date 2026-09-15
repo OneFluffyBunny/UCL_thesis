@@ -653,7 +653,7 @@ def retina_fitness(W: np.ndarray, config: dict, render=False, animate_graph_roll
     patterns, so raw accuracy has a shortcut-friendly local optimum (predicting
     all-0 already scores ~81%); setting config["balanced_fitness"] = True instead
     returns balanced accuracy (mean of per-class accuracy) as a float in [0, 1],
-    matching experiment_1's default (see root CLAUDE.md's retina/AND note).
+    matching experiment_1's default.
     """
     from ka_task import retina_dataset, to_bipolar
 

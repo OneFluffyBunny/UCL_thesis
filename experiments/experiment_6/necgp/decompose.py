@@ -17,8 +17,8 @@ to say about it.
 
 This is the general-purpose tool: it takes any already-built `ecgp.Individual`
 and draws it. Reproducing a SPECIFIC run's final individual is the caller's job
--- see `scratch_decompose_final.py` for a one-off seed-0 replay that imports and
-calls `draw_decomposition` below.
+-- see `decompose_seed0.py`, which replays seed 0 and calls `draw_decomposition`
+below.
 """
 
 from __future__ import annotations

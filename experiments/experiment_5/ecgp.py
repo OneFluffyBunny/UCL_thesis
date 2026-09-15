@@ -7,9 +7,9 @@ under CPython and PyPy. Everything else -- every operator, every module rule -- 
 experiment 4's code unchanged, which is what lets the two experiments be compared.
 This module is numpy-free, as it must be to import under PyPy.
 
-Spec: `PAPER_SPEC.md` (Walker & Miller, IEEE TEVC 12(4), 2008); section numbers below
+Spec: `../experiment_4/PAPER_SPEC.md` (Walker & Miller, IEEE TEVC 12(4), 2008); section numbers below
 refer to it. Everything the paper states is implemented as stated; everything it does
-not state is listed in PAPER_SPEC section 12 and marked `[our choice]` at the point of
+not state is listed in ../experiment_4/PAPER_SPEC section 12 and marked `[our choice]` at the point of
 use in this file.
 
 WHY A SEPARATE MODULE FROM `cgp.py`. A CGP node has a fixed arity, so `cgp.Genotype`
@@ -139,7 +139,7 @@ class Params:
     remove_input: float = 0.02
     add_output: float = 0.01
     remove_output: float = 0.02
-    max_module_size: int = 5          # `ms`, PAPER_SPEC section 9 `[our choice]`
+    max_module_size: int = 5          # `ms`, ../experiment_4/PAPER_SPEC section 9 `[our choice]`
     mutation_rate: float = 0.03       # Table II
 
 
@@ -287,7 +287,7 @@ def point_mutate(ind: Individual, rnd: random.Random, n_mut: int, n_in: int,
 def _clamp_refs_to(ind: Individual, j: int, n_in: int) -> None:
     """Repair references into node `j` after its output count shrank.
 
-    `[our choice]` -- PAPER_SPEC section 12. The paper is explicit that a node
+    `[our choice]` -- ../experiment_4/PAPER_SPEC section 12. The paper is explicit that a node
     changing type keeps or generates the *inputs* it needs, and that both integers of
     an input gene are mutated together "to ensure that every connection in the graph
     is still valid". It never says what happens to the references pointing *at* a
@@ -617,7 +617,7 @@ def remove_output(ind: Individual, mid: int, rnd: random.Random, n_in: int) -> b
     """Drop one module output (section 7, operator 5). Bound: min 1.
 
     ⚠️ The paper's prose for this operator says the *input* count is decremented --
-    an evident typo (PAPER_SPEC section 7); implemented as the symmetric reading.
+    an evident typo (../experiment_4/PAPER_SPEC section 7); implemented as the symmetric reading.
 
     `[our choice]` References carrying the dropped output index are re-pointed at a
     surviving output chosen at random; higher indices shift down. As with

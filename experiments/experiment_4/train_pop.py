@@ -3,7 +3,7 @@
     python train_pop.py --mvg --switch-interval 2000 --generations 40000 --n-seeds 5
 
 WHY THIS EXISTS. Under the (1+4) ES, modularly varying goals neither build nor
-remove modularity at matched accuracy (`add_to_latex.md`, "Experiment 4 (CGP)").
+remove modularity at matched accuracy (RESULTS.md, section 2).
 KA's mechanism is selection AMONG VARIANTS: in a population, lineages that happen to
 be modular recover faster after a switch and take over. A single lineage cannot
 express that. This script changes ONLY the search loop; genotype, gate set, task,
@@ -48,7 +48,6 @@ from types import SimpleNamespace
 
 import cgp
 import gates as gates_mod
-import tasks as tasks_mod
 from train import ARCHIVE_FIELDS, RECOVERY_FIELDS, _goal_at, _task_context
 
 LOG_FIELDS = ["seed", "gen", "goal", "hits", "acc", "pop_mean_hits", "active_nodes",

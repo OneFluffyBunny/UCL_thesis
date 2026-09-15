@@ -18,7 +18,7 @@ Four independent checks, each able to kill the result on its own:
   4. BALANCED ACCURACY -- the same champions under the shortcut-proof metric
      (chance = 0.5), in case raw accuracy is rewarding class priors.
 
-Usage: conda run -n lndp python kashtan_alon/scratch_audit_mvg_accuracy.py
+Usage: python kashtan_alon/analysis/audit_mvg_accuracy.py
 """
 from __future__ import annotations
 

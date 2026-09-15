@@ -2,7 +2,7 @@
 
 Flag groups mirror experiments 2/3 (`representation` here plays the role their
 `architecture` group plays). Defaults marked [Table II] are the paper's and should
-not be changed without recording it -- see PAPER_SPEC.md.
+not be changed without recording it -- see ../experiment_4/PAPER_SPEC.md.
 
 The ECGP flags (compress/expand, module point mutation, add/remove input/output,
 max module size) are deliberately absent: this is the CGP half. They land in an
@@ -46,9 +46,6 @@ class RunConfig:
     mvg: bool
     mvg_ops: tuple[str, ...]
     switch_interval: int
-    # `[exp5 -- SPECIALISATION.md]` staged demands: generations for which only
-    # program output 0 is scored. 0 == off (every output scored from gen 0).
-    stage1_gens: int
     # evolution
     popsize: int
     generations: int
@@ -80,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="experiment_5/train.py",
         description="CGP/ECGP on many-input, many-output tasks (experiment 5). See README.md "
-                    "for the hypothesis and PAPER_SPEC.md for every parameter's source.",
+                    "for the hypothesis and ../experiment_4/PAPER_SPEC.md for every parameter's source.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -111,7 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("ecgp")
     g.add_argument("--ecgp", dest="ecgp", action="store_true", default=False,
                    help="evolve modules: compress/expand, a global module list and "
-                        "the five module operators (PAPER_SPEC sections 4-7). "
+                        "the five module operators (../experiment_4/PAPER_SPEC sections 4-7). "
                         "Default off = plain CGP, the baseline in RESULTS.md")
     g.add_argument("--no-ecgp", dest="ecgp", action="store_false")
     g.add_argument("--compress-prob", type=float, default=0.1,
@@ -131,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--remove-output-prob", type=float, default=0.02,
                    help="per module per offspring [Table II]")
     g.add_argument("--max-module-size", type=int, default=5,
-                   help="ms: nodes per module, 2..ms. PAPER_SPEC section 9 "
+                   help="ms: nodes per module, 2..ms. ../experiment_4/PAPER_SPEC section 9 "
                         "[our choice] -- the paper's own sweep found no correlation "
                         "between ms and performance")
 
@@ -156,13 +153,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="goal cycle under --mvg")
     g.add_argument("--switch-interval", type=int, default=20,
                    help="generations per goal epoch under --mvg (E; matches kashtan_alon/)")
-    g.add_argument("--stage1-gens", type=int, default=0,
-                   help="STAGED DEMANDS [SPECIALISATION.md]: score ONLY program "
-                        "output 0 for this many generations, then score every "
-                        "output for the rest -- with output 0 still scored. The "
-                        "genotype always carries every output; this only changes "
-                        "which ones fitness looks at. 0 disables staging, which "
-                        "is the `cold` control arm.")
 
     g = p.add_argument_group("evolution")
     g.add_argument("--popsize", type=int, default=5,
@@ -294,23 +284,6 @@ def parse(argv=None) -> RunConfig:
             raise SystemExit(f"unknown --mvg-ops: {bad} (known: {list(tasks_mod.OPERATIONS)})")
         if args.switch_interval < 1:
             raise SystemExit("--switch-interval must be >= 1")
-    if args.stage1_gens:
-        if args.stage1_gens < 1:
-            raise SystemExit("--stage1-gens must be >= 1 (0 disables staging)")
-        if args.stage1_gens >= args.generations:
-            raise SystemExit(
-                f"--stage1-gens {args.stage1_gens} leaves no generations for stage 2 "
-                f"(--generations {args.generations}). Stage 2 is the treatment.")
-        if tasks_mod.n_outputs(args.task) < 2:
-            raise SystemExit(
-                f"--stage1-gens needs a task with >= 2 program outputs; "
-                f"--task {args.task} has {tasks_mod.n_outputs(args.task)}")
-        if args.mvg:
-            # Two different non-stationarities at once. Either could produce a
-            # modularity effect and the design could not say which, so this is
-            # refused rather than warned about.
-            raise SystemExit("--stage1-gens and --mvg cannot be combined: both make "
-                             "the goal non-stationary and the result uninterpretable")
     if args.popsize < 2:
         raise SystemExit("--popsize must be >= 2 (one parent plus at least one offspring)")
     if not 0.0 < args.mutation_rate <= 1.0:
@@ -326,8 +299,8 @@ def parse(argv=None) -> RunConfig:
         raise SystemExit("--wiring-weight must be in (0, 1]")
     if args.ecgp:
         if args.max_module_size < 2:
-            raise SystemExit("--max-module-size must be >= 2 (PAPER_SPEC section 4)")
-        # PAPER_SPEC section 1: "node arity 2" [verbatim], and a module body is
+            raise SystemExit("--max-module-size must be >= 2 (../experiment_4/PAPER_SPEC section 4)")
+        # ../experiment_4/PAPER_SPEC section 1: "node arity 2" [verbatim], and a module body is
         # encoded with two input genes per node. A function set whose max arity is
         # not 2 would silently mean something different inside modules than outside.
         if gates_mod.max_arity(gate_set) != 2:
@@ -356,7 +329,6 @@ def parse(argv=None) -> RunConfig:
         max_module_size=args.max_module_size,
         task=args.task, operation=args.operation, mvg=args.mvg, mvg_ops=mvg_ops,
         switch_interval=args.switch_interval,
-        stage1_gens=args.stage1_gens,
         popsize=args.popsize, generations=args.generations, stop_on_solution=stop,
         post_solve_gens=args.post_solve_gens,
         parsimony_tiebreak=args.parsimony_tiebreak,

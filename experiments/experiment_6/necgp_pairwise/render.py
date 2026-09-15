@@ -31,7 +31,6 @@ import matplotlib.pyplot as plt
 
 import census
 import decompose
-import ecgp
 import gates as gates_mod
 import tasks as tasks_mod
 import visualize as viz

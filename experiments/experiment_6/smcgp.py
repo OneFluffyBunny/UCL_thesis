@@ -47,7 +47,7 @@ because CGP active-node-ness never depends on wire values.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, NamedTuple, Sequence
 
 from gates import Gate

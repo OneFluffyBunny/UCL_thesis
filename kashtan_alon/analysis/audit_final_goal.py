@@ -15,7 +15,7 @@ This measures, per quantity, whether that actually changes the number:
              generations, which removes "the two brains come from different
              points in the run" as an explanation.
 
-Usage: conda run -n lndp python kashtan_alon/scratch_audit_final_goal.py
+Usage: python kashtan_alon/analysis/audit_final_goal.py
 """
 from __future__ import annotations
 

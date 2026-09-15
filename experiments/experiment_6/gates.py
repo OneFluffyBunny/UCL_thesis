@@ -18,7 +18,7 @@ section III-B).
 
 from __future__ import annotations
 
-from typing import Callable, NamedTuple, Sequence
+from typing import Callable, NamedTuple
 
 
 class Gate(NamedTuple):

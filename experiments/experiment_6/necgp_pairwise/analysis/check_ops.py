@@ -1,4 +1,4 @@
-import json, random, sys, pathlib, copy
+import json, random, sys, pathlib
 from collections import Counter
 import os; HERE = pathlib.Path(__file__).resolve().parents[1]; sys.path.insert(0, str(HERE)); os.chdir(HERE)
 import census, ecgp

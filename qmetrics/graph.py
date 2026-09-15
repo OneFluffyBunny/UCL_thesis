@@ -44,7 +44,7 @@ def _roles_array(n_in: int, n_hidden: int, n_out: int,
              conventions assume. The default.
       "ioh"  [inputs, outputs, hidden] -- NDP, whose I/O-anchor redesign pins the
              outputs immediately after the inputs so growth can never displace
-             them (see add_to_latex.md, "Input/output differentiation").
+             them.
 
     Passing the wrong one does not raise -- it silently labels hidden neurons as
     outputs and vice versa, and every metric downstream is then answering a
