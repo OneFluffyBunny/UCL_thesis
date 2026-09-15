@@ -5,19 +5,22 @@ repo — auto-memory does NOT travel through git — so everything a remote sess
 needs lives here or in the linked `.md` files.** This file *points*; the detail
 lives in the linked files (don't duplicate them).
 
-## ⚠️ Branches and what is actually saved — read before any git command (2026-08-20)
-There are **exactly two** branches: `main` and `fluffy_experiments`. `CGP`,
-`cgp_speedups` and `qmetrics` were **deleted**, local and remote, after being folded
-into `fluffy_experiments` by fast-forward (no commit was lost — each was already an
-ancestor of the tip). **If a session still believes it is on `CGP` or `cgp_speedups`,
-it is not** — the checkout is shared, so its HEAD already moved. Re-read the branch
-with `git rev-parse --abbrev-ref HEAD` rather than trusting remembered context, and
-do not recreate the deleted names.
+## ⚠️ Branches and what is actually saved — read before any git command (2026-09-15)
+There is **exactly one** branch: **`main`**. On 2026-09-15 `main` was fast-forwarded
+to `fluffy_experiments`, and `fluffy_experiments` and `spec-modularity` were then
+**deleted**, local and remote (no commit was lost — both were ancestors of `main`).
+Earlier, `CGP`, `cgp_speedups` and `qmetrics` went the same way into
+`fluffy_experiments`. **If a session still believes it is on any of those branches, it
+is not** — the checkout is shared, so its HEAD already moved. Re-read the branch with
+`git rev-parse --abbrev-ref HEAD` rather than trusting remembered context, and do not
+recreate the deleted names. (Older notes in this repo that say "`main` is frozen" or
+"work on `fluffy_experiments`" predate this.)
 
-- **`main` is frozen — do not commit to it, do not fast-forward it.** It is a
-  stable marker, not a working branch.
-- **All experiments and all work go on `fluffy_experiments`**, or on a branch forked
-  from it (fork freely; just never target `main`).
+- **All experiments and all work go on `main`.** Fork a short-lived branch if you want
+  one, and fast-forward it back.
+- The NDP subtree under `NDP/` is a *squashed* import. The standalone repo's full
+  history (branch `KA_experiments`, commit `01c800b`) is saved on GitHub as the tag
+  **`ndp-standalone-history`**.
 - **`git push` only sends COMMITTED files. An untracked file is on nobody's branch
   and no push will ever save it.** This is not theoretical: experiments 5 and 6 —
   two complete experiments with their test suites, ~11k lines — sat untracked for
