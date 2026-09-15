@@ -1,40 +1,44 @@
-# Experiment 3 — results log
+# Experiment 3 — results
 
-Direct encoding (`../shared_direct_model.py`), retina/xor, n_hidden=20, 5 seeds,
-Adam (lr=1e-2). Compare against `../experiment_2/RESULTS.md` (same task/net,
-CMA-ES): 5/5 seeds solved in 290–456 generations = 18,560–29,184 evals
-(popsize=64), density ~92–94%.
+Experiment 2's direct-encoding network (`../shared_direct_model.py`) trained by
+gradient descent instead of CMA-ES: stand-in `retina/xor`, 20 hidden neurons, Adam
+(lr = 1e-2), full batch, 5 seeds. Accuracy is balanced; density counts |w| > 0.05.
 
-## margin loss (fair, same objective CMA-ES maximises)
-```
+Reference point, experiment 2 on the same task and network: 5/5 seeds solved in
+290–456 generations = 18,560–29,184 evaluations (popsize 64), density 92–94%.
+
+## `--loss margin` (the objective CMA-ES maximises)
+
+```bash
 python train.py --task retina --operation xor --loss margin --n-seeds 5 --steps 5000 --no-open
 ```
+
 | seed | steps to solve | acc | density |
 |---|---|---|---|
 | 0 | 1680 | 1.000 | 89.3% |
 | 1 | 3984 | 1.000 | 90.9% |
 | 2 | 1635 | 1.000 | 89.5% |
 | 3 | 2181 | 1.000 | 90.7% |
-| 4 | 200  | 1.000 | 87.5% |
+| 4 | 200 | 1.000 | 87.5% |
 
-## bce loss (gradient-oracle bound)
-```
+## `--loss bce` (logistic loss, gradient descent's best case)
+
+```bash
 python train.py --task retina --operation xor --loss bce --n-seeds 5 --steps 5000 --no-open
 ```
+
 | seed | steps to solve | acc | density |
 |---|---|---|---|
 | 0 | 143 | 1.000 | 82.9% |
-| 1 | 88  | 1.000 | 87.9% |
-| 2 | 72  | 1.000 | 83.9% |
+| 1 | 88 | 1.000 | 87.9% |
+| 2 | 72 | 1.000 | 83.9% |
 | 3 | 204 | 1.000 | 85.9% |
-| 4 | 89  | 1.000 | 82.1% |
+| 4 | 89 | 1.000 | 82.1% |
 
-## Notes
-- 5/5 seeds solved under both losses — as expected, GD beats CMA-ES on
-  evals-to-solve by a wide margin: ~7–150x fewer evals under margin (same
-  objective), ~100–400x fewer under bce. Exact gradients help a lot on a
-  network this small.
-- Density is a bit lower than CMA-ES's ~92–94% (margin ~87.5–90.9%, bce
-  ~82.1–87.9%) but still dense/unstructured — GD isn't finding anything more
-  modular, just finding a dense solution faster. No modularity metric yet to
-  say more than that.
+## Reading
+
+One gradient step is one evaluation of all 256 patterns, so steps compare directly
+with CMA-ES evaluations. Gradient descent needs ~7–150× fewer evaluations than CMA-ES
+with the same objective, and ~100–400× fewer with BCE. Its solutions are slightly
+sparser (82–91% vs 92–94%) but still near fully connected: the gradient finds a dense
+solution faster, not a more structured one.

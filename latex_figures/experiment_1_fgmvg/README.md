@@ -1,8 +1,8 @@
 # Experiment 1 — FG vs MVG, compressed encoding, synaptic budget
 
-Promoted 2026-09-13, approved by the user. Source study:
-`experiments/experiment_1/runs/fgmvg/` (gitignored; regenerable). Repo at
-promotion time: branch `fluffy_experiments`, HEAD `26a4b97`.
+Source study: `experiments/experiment_1/runs/fgmvg/` (not committed; commands and
+results in `experiments/experiment_1/RESULTS.md`, section 1). Drawn at commit
+`26a4b97`.
 
 ## The arms these figures show
 
@@ -20,16 +20,12 @@ generations, evosax `CMA_ES` (not elitist) popsize 64, raw accuracy, 10000 gener
 | `brains_grid_leftright_budget.png` | goal-matched champion of all 10 runs; retina inputs square (KA convention), hidden neurons coloured by the left/right module `lr_r` is scored at; captions `acc / density / lr_r` at 2 dp | `fig_brains.py --root <study> --grid --constraint budget` |
 | `progress_fg_vs_mvg_budget.png` | champion accuracy, density and `lr_r` over 10000 generations; **5 seed mean per arm, shaded +- 1 SD**; sampled at reference-goal epoch ends | `fig_progress.py --root <study> --constraint budget` |
 | `switch_window_budget_seed0.png` | two KA windows [100,300] and [1000,1200]; champion accuracy on the ACTIVE goal, per-generation population mean, champion `lr_r`; off-goal epochs shaded | `fig_switch_window.py --root <study> --constraint budget --seed 0` |
-
 | `brains_grid_leftright_nobudget.png` | as above, unconstrained arms | `fig_brains.py --root <study> --grid --constraint nobudget` |
 | `progress_fg_vs_mvg_nobudget.png` | as above, unconstrained arms | `fig_progress.py --root <study> --constraint nobudget` |
 | `switch_window_nobudget_seed0.png` | as above, unconstrained arms; also a seed-0 replay | `fig_switch_window.py --root <study> --constraint nobudget --seed 0` |
 
-All six run from `experiments/analysis/`. Full replication detail: `add_to_latex.md`,
-"Replicating the study exactly".
-
-Switch-window figures restyled and re-promoted 2026-09-14, approved by the user:
-titles, axis labels and legend only (same replay data, same panels).
+All six run from `experiments/analysis/`. The windows figures need the dense replay
+first (`dense_replay.py --root <study> --constraint {budget,nobudget} --seed 0`).
 
 ## Caveats that must travel with these figures
 
@@ -44,8 +40,7 @@ titles, axis labels and legend only (same replay data, same panels).
   not a derived value. The *null* result is threshold-robust, but a *positive*
   `lr_r` in a budgeted arm is not (seed 0 FG reads +0.067 / +0.175 / +0.449 /
   +0.197 at cuts 0 / 0.05 / 0.10 / 0.20). Do not quote a positive `lr_r` without
-  its cut. See `add_to_latex.md`, "The FG vs MVG study — parameters as actually
-  run".
+  its cut (`experiments/experiment_1/RESULTS.md`, metric notes).
 * **Position in the brains figure is a spring layout, not a layer** — the model
   gives neurons no position at all. Read the colours, not the distances.
 * **In the no-budget figures true density is exactly 100%** — no allowed edge is

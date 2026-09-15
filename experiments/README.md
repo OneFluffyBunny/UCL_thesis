@@ -1,60 +1,67 @@
 # Experiments
 
-Minimal models for studying the **emergence of modularity** in evolved neural networks.
+Six models, each in its own folder with a `RESULTS.md` notebook. Experiments 1-3
+vary one thing at a time on the same recurrent network: 1 vs 2 changes the
+**encoding**, 2 vs 3 changes the **optimiser**. Experiments 4-6 move to Boolean
+circuits, where modules are explicit, countable objects.
 
-Core question: what makes a brain modular? Working hypothesis: modularity is **selected for** (not learned) because a modular DNA→brain encoding is more *evolvable* — when the task changes slightly, it re-adapts in few generations (facilitated variation).
+| | model | search |
+|---|---|---|
+| 1 | recurrent tanh network, compressed cell-type encoding (below) | CMA-ES; a Kashtan-Alon-style GA as a pilot |
+| 2 | the same network, one gene per synapse (`shared_direct_model.py`) | CMA-ES |
+| 3 | the same network as 2 | gradient descent (Optax), `README.md` there |
+| 4 | CGP and ECGP Boolean circuits | (1+4) ES, and a population GA (`train_pop.py`) |
+| 5 | fork of 4 for many outputs, PyPy-capable | (1+4) ES |
+| 6 | self-modifying CGP; nested ECGP (`necgp/`, `necgp_pairwise/`) | (1+4) ES |
 
-Guiding constraints (carried across experiments):
-- **No physical space** for neurons — modularity must come from something other than wiring-length cost.
-- **Fixed number of neurons**; only connections are determined by the DNA.
-- **Parsimony first** — as few rules/knobs as possible.
+## Shared code
 
----
+| file | used by | what it is |
+|---|---|---|
+| `shared_tasks.py` | 1, 2, 3 | the Boolean tasks; `retina_ka2005` is Kashtan & Alon's real object rule, `retina` an older stand-in (see its docstring) |
+| `shared_direct_model.py`, `shared_direct_viz.py` | 2, 3 | the direct-encoding network, its synaptic budget, and its drawing |
+| `shared_brain_metrics.py` | 1, 2, NDP | modularity scores for a recurrent (N, N) weight matrix (wraps `qmetrics/`) |
+| `run_fgmvg_study.py` | 1, 2 | launches the 4 arms x 5 seeds FG-vs-MVG study, resumable |
+| `analysis/` | 1, 2 | tables and figures for that study (`run_all.py` regenerates all of them) |
 
-## Experiment 1
+Commands run from inside the experiment folder unless a notebook says otherwise.
 
-Reuses much of the NDP/LNDP implementation, stripped down.
+## Experiment 1 — the compressed encoding
 
-- **Brain type:** *static* (NDP-style) — the DNA builds the brain, then it is frozen while solving the task. No within-lifetime plasticity. Adaptation happens across generations (evolution), not within a life.
-- **Neurons:** fixed count, three types — **input**, **hidden**, **output**. No physical space; the brain is a pure graph.
-- **Connections:** only **IH** (input→hidden), **HH** (hidden→hidden), and **HO** (hidden→output) are allowed.
-- **Output:** a **single output neuron**, thresholded to a binary decision (squash with `tanh`, threshold at 0). The multi-output + `argmax` head from NDP/LNDP may be revisited later.
-- **Activation:** `σ`, defaulting to `tanh`. Other activations may be tried later.
-- **Inference:** treat the brain as a directed graph and reuse LNDP's mechanics — a synchronous recurrent pass over the weighted adjacency matrix (see below), run for a fixed number of iterations.
-- **Tasks:** logical-gate problems in the style of Kashtan–Alon (modularly-varying goals).
-- **Search:** **CMA-ES** over the genome for now. Other evolutionary approaches (genetic algorithms, NES, MAP-Elites / quality-diversity, …) may be used later.
+**Network.** A fixed number of input, hidden and output neurons with no positions.
+Allowed connections are input→hidden, hidden→hidden (no self-loops) and
+hidden→output. Inference is a synchronous recurrent pass run for `--rnn-iters`
+steps (default 8) with the inputs re-clamped each step:
+`a_j ← tanh(Σ_i a_i W_ij + b_j)`. The decision is the sign of the output neuron.
 
-### DNA → brain encoding (cell-type identities)
+**Genome.** The genome does not store weights, and its size does not depend on the
+number of neurons. It holds:
 
-The DNA does **not** specify connection weights directly, and its size is **independent of the number of neurons** (`O(K)`). It stores:
+- `K` evolved **cell-type identity vectors** for hidden neurons, plus one for inputs
+  and one for outputs;
+- per-type **abundance** genes: `softplus(a)` normalised gives each type's share of
+  the hidden neurons (the total stays fixed);
+- one per-type bias;
+- one shared **connection rule** `g`, a small MLP.
 
-- a small set of evolved **cell-type identity vectors** — `K` for hidden neurons, plus 1 shared identity for inputs and 1 for outputs;
-- per-type **abundance** genes deciding how many hidden neurons are of each type (these evolve; total hidden count stays fixed; a type can grow, shrink, or go extinct);
-- one shared connection rule `g` (a small MLP) mapping a pair of neuron features to a weight.
+Each neuron's feature is `[type identity | positional code | role one-hot]`. Inputs
+and outputs get a fixed sinusoidal positional code; hidden neurons get none, so all
+hidden neurons of one type are identical. The weight of edge i→j is
+`w_ij = g(feat_i, feat_j)` (directed, deterministic). `g` is evaluated once per pair
+of distinct feature signatures (`K + n_in + n_out` of them), and the full matrix is
+gathered from that.
 
-Each neuron's feature vector is `[type identity | positional code | role one-hot]`:
+Because same-type hidden neurons are exact clones, a network with `K` types behaves
+like a `K`-unit recurrent network whose edges are scaled by the clone counts:
+abundance acts as a gain, and `K` sets how many distinct roles exist.
 
-- **Type identity** is evolved and *shared* within a type — this is the compression / modularity bottleneck. Few shared types ⇒ block-structured wiring.
-- **Positional code** is fixed (sinusoidal, zero evolved params) and given to **input/output neurons only**; hidden neurons are type-only, so same-type hidden neurons are interchangeable (keeps the encoding compressed; effective hidden capacity ≈ K).
-- The weight is `w_ij = g(feat_i, feat_j)`, with `g` **asymmetric** in its arguments ⇒ a **directed** graph. Output bounded to `[-1, 1]` (`tanh`). `g` is **deterministic** given the genome (no developmental noise deciding function — a lesson from past LNDP failures).
+**Synaptic budget** (`--synaptic-budget S --shrink τ`). Without it `g` never outputs
+an exact zero, so every allowed edge exists. With it, each non-input neuron's incoming
+|weights| are soft-thresholded at `τ ×` their own mean and rescaled to sum to `S`.
+Experiment 2 has the same mechanism. Exact equations: `experiment_1/model.py`.
 
-**Abundance → counts:** `softplus(abundance)` normalised gives the per-type fraction; cumulative boundaries bucket each hidden slot to a type. softplus (not softmax) keeps the response near-linear so counts mutate gradually (±1) and starved types can recover — no exponential extinction trap. Starts as an equal split.
-
-**Efficiency:** `g` is evaluated once per *distinct feature signature pair*, not per neuron pair. Hidden neurons of the same type share one signature, so the brain is built from `U = n_in + K + n_out` distinct signatures (`U²` evaluations of `g`) and the full `N×N` weight matrix is produced by gathering — no extra `g` calls.
-
-This encoding can express both modular and non-modular brains, so the modularity result is not rigged.
-
-> **Other encodings to try later:** direct weight encoding (control arm), genomic bottleneck (Zador/Koulakov), generative grammar / L-system, developmental GRN (Kouvaris 2017). See project notes.
-
-*(More details to be filled in.)*
-
----
-
-## Future ideas / levers to try
-
-- **Evolve `rnn_iters` as a gene.** Currently the number of synchronous recurrent passes is a fixed hyperparameter (default 8), hand-set and unrelated to the actual graph. Make it a per-genome gene so each DNA evolves its own "settling time" / thinking window. Alternative principled options: run the recurrent pass **to a fixed point** (`‖aₜ₊₁ − aₜ‖ < ε`) instead of a fixed step count, or scale iterations to the realised graph depth. Caveat: variable-length loops are awkward to `jit`/`vmap`, and fixed-point iteration isn't guaranteed to converge (can oscillate).
-- **Alternative encodings** (see callout above): direct weight encoding as a control arm, genomic bottleneck, L-system, developmental GRN.
-- **Other search methods:** genetic algorithms, NES, MAP-Elites / quality-diversity.
-- **Adam as a diagnostic baseline** (not in the fitness loop): gradient "oracle" to decompose why CMA-ES fails — brain-ceiling / encoding-ceiling / evolvability ladder. Caveat: the `>0` output is non-differentiable, so it needs a soft surrogate loss.
-- **Real sparsity** (vs cosmetic prune-threshold): L1/L0 penalty on weights or hard-thresholding inside `forward`, so a modular brain genuinely has few cross-module edges.
-- **Sensory adaptation:** input clamp is currently exact and noiseless; real receptors attenuate sustained input.
+Files in `experiment_1/`: `model.py` (genome → weights), `train.py` (CMA-ES or
+`--strategy KA_GA`), `ga.py` (the GA), `config.py` (flags), `oracle.py` and
+`reachability.py` (hand-built solutions and basin probes), `curriculum.py`
+(curriculum vs cold start), `visualize.py`, `visualize_ckpt.py`, `smoke_test.py`,
+`test_ga.py`.

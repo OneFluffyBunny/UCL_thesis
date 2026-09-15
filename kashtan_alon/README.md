@@ -10,11 +10,7 @@ NDP / g-encoding framework, as an external reference point. The question it answ
 Every value is locked to the **verified primary source** (KA 2005, PMC1236541); see
 [`PAPER_SPEC.md`](./PAPER_SPEC.md) for the exact quotes and sources.
 
-> ⚠️ **History.** Runs 1–3 (see `RESULTS.md`) accidentally ran **Clune 2013's
-> reimplementation**, not KA — the spec had been reconstructed from Clune and
-> mislabelled "confirmed KA", and it produced a null. On 2026-08-03 the code was
-> rewritten to the actual paper. If you touch this folder, read `RESULTS.md` and
-> `PAPER_SPEC.md` first.
+Results: [`RESULTS.md`](./RESULTS.md).
 
 ## Why this is separate from `experiments/`
 `experiments/` studies *our* model (fixed-neuron, non-spatial, evolved encoding).
@@ -41,6 +37,7 @@ MVG→modularity claim and for the Newman-Q metric. It uses **KA's own retina ta
 ## Files
 - `run_paper.py` — **the canonical "exactly as in the paper" command** (MVG vs
   Fixed-Goal, every parameter locked to KA 2005). Start here.
+- `run_ablation_no_fanin.py` — the same runs with the fan-in cap removed.
 - `model.py` — the threshold net, population-vectorised in numpy (`weights[l]`,
   `biases[l]`), with per-layer fan-in caps.
 - `ga.py` — the KA GA: elite selection + crossover + mutation.
@@ -53,6 +50,8 @@ MVG→modularity claim and for the Newman-Q metric. It uses **KA's own retina ta
   real Fig. 5a definition.
 - `test_tasks.py` — checks KA's exact object truth counts (left 8/16, AND 64/256,
   OR 192/256, left/right independence) and copy/and2 parity with `shared_tasks.py`.
+- `highlight_modules.py` — network drawings with modules highlighted.
+- `analysis/` — replays, tables and the thesis figures (`latex_figures/Kashtan-Alon/README.md`).
 - `PAPER_SPEC.md` — the verified paper numbers + a source audit.
 
 **Dependencies:** numpy, networkx, matplotlib only — **no JAX, no GPU, 0 VRAM**.
@@ -64,8 +63,8 @@ locked to KA 2005 (`retina(8)→8→4→2→1`, ±1 weights, threshold units, fa
 pop 600, elite 150, crossover Pc=0.5, mutation Pm=0.5, 25000 gens, **raw
 fraction-correct fitness** over all 256 patterns, Q_m over 1000 randomizations):
 ```
-conda run -n lndp python run_paper.py --n-seeds 5 --viz   # the full paper run (slow)
-conda run -n lndp python run_paper.py --smoke             # tiny, just checks the pipeline
+python run_paper.py --n-seeds 5 --viz   # the full paper run (~10 min per seed per arm)
+python run_paper.py --smoke             # tiny, just checks the pipeline
 ```
 It prints mean **Q_m** for MVG vs FG at the end. **Expected (paper):** `Q_m ≈ 0.35`
 under MVG, `≈ 0.15` under the fixed goal.
@@ -91,8 +90,7 @@ is deleted on completion. Force a clean restart with `--no-resume` (train.py) or
 
 ## Caveats
 - **Run length.** Defaults mirror the paper (`--pop 600 --generations 25000`); the
-  Q_m separation only appears over many generations. numpy is fine but CPU-bound — do
-  full runs in a per-experiment chat / on the GPU box, not the hub.
+  Q_m separation only appears over many generations.
 - **AND shortcut.** The paper's fixed-goal control **is** `L AND R` (`--operation
   and`); under raw fitness the retina AND goal has 64/256 positives, so a
   constant-false net scores **192/256 ≈ 0.75** — FG plateaus there for a while

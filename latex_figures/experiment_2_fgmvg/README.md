@@ -1,8 +1,8 @@
 # Experiment 2 — FG vs MVG, direct encoding, synaptic budget
 
-Promoted 2026-09-14, approved by the user. Source study:
-`experiments/experiment_2/runs/fgmvg/` (gitignored; regenerable). Repo at
-promotion time: branch `fluffy_experiments`, HEAD `26a4b97`. Runs' own commits
+Source study: `experiments/experiment_2/runs/fgmvg/` (not committed; commands and
+results in `experiments/experiment_2/RESULTS.md`, section 1). Drawn at commit
+`26a4b97`. Runs' own commits
 (from `config.json`): `15a09f8` for 9 of the 10 budget runs, `71134c7` for
 `budget_fg` seed 0 (the two were not diffed).
 
@@ -13,9 +13,7 @@ Direct encoding (one gene per allowed synapse plus one bias per non-input neuron
 8 in / 24 hidden / 1 out, 768 allowed edges, `retina_ka2005`, reference goal AND,
 MVG alternating AND <-> OR every 20 generations, evosax `CMA_ES` (not elitist)
 popsize 64, raw accuracy, margin fitness, **5000 generations** (exp_1 ran 10000 —
-generation counts are not matched across encodings), 5 seeds per arm. Full
-replication detail: `add_to_latex.md`, "Replicating the study exactly" (exp_2
-differs only as stated there).
+generation counts are not matched across encodings), 5 seeds per arm.
 
 ## The files
 
@@ -26,9 +24,6 @@ differs only as stated there).
 | `switch_window_budget_seed0.png` | windows [100,300] and [1000,1200]; champion accuracy on the ACTIVE goal, per-generation population mean, champion `lr_r`; off-goal epochs shaded | `fig_switch_window.py --root <study> --constraint budget --seed 0` |
 
 All three run from `experiments/analysis/`.
-
-Switch-window figures restyled and re-promoted 2026-09-14, approved by the user:
-titles, axis labels and legend only (same replay data, same panels).
 
 ## Caveats that must travel with these figures
 

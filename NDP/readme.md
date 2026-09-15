@@ -23,11 +23,13 @@ Compare this folder with upstream commit `d735305` to see every change exactly.
 - **Modified:** `NDP.py`, `train.py`, `train_backend.py`, `optimizers.py`, `utils.py`,
   `run_experiment.yaml`, `experiments_paper/XOR/run_experiment.yaml`,
   `experiments_paper/lunarlander/run_experiment.yaml`.
-- **Added:** `ka_task.py`, `growth_stages.py`, `inspect_dna.py`, `fluffy_experiments.md`,
-  `experiments_paper/XOR/graph_paper_best.png`, and everything under
-  `experiments_paper/retina/` (the Kashtan-Alon retina study; start at its `RESULTS.md`).
-- **Unchanged from upstream:** everything else, including `NDP-RL/`, `images/`,
-  `tests_checks/` and the other `experiments_paper/` tasks.
+- **Added:** `ka_task.py`, `growth_stages.py`, `inspect_dna.py`,
+  `experiments_paper/XOR/graph_paper_best.png`, `experiments_paper/lunarlander/RESULTS.md`,
+  and everything under `experiments_paper/retina/` (the retina study; start at its
+  `RESULTS.md`).
+- **Removed:** `NDP-RL/notebooks/Untitled.ipynb` (an empty scratch notebook).
+- **Unchanged from upstream:** everything else, including the rest of `NDP-RL/`,
+  `images/`, `tests_checks/` and the other `experiments_paper/` tasks.
 
 The retina analysis scripts import `qmetrics/` and `experiments/shared_brain_metrics.py`
 from the enclosing thesis repository, so they run only from inside it. Trained runs

@@ -15,12 +15,10 @@ Two things make this a separate experiment rather than a bigger run of experimen
    the structure. With many outputs there is a behavioural handle: which inputs does
    each output actually depend on, and do those dependency sets factorise?
 
-> **Status.** The *machinery* is built, tested and benchmarked (this file, plus
-> `RESULTS.md` §1). The *science* is not started: no hypothesis has been run, and
-> `PAPER_SPEC.md` is still mostly TODO. What exists is a many-output search that runs
-> **4.6–13.6× faster** than experiment 4 in the regime where that is possible (and
-> knows to tell you when it is not), an exact behavioural-dependency readout, and a
-> proof that none of it changed the algorithm.
+> **Status.** Infrastructure only: a many-output search that runs 4.6–13.6× faster
+> than experiment 4 where that is possible, an exact behavioural-dependency readout,
+> and a test that none of it changed the algorithm. No modularity hypothesis has been
+> run (`RESULTS.md`).
 
 ---
 
@@ -121,7 +119,7 @@ wire is a big integer, CPython's big-integer bitwise ops are hand-written C, and
 one bitwise op costs more than the interpreter overhead around it, PyPy's only
 advantage is gone and its slower `rbigint` shows through. Since "big brains" means
 "wider truth tables", **the regime this experiment is named after is the regime where
-PyPy loses.** `RESULTS.md` §1 has the table.
+PyPy loses.** `RESULTS.md` has the table.
 
 `train.py` prints a one-line note at startup when you are on the wrong side of the
 line. Re-measure on any new machine with:
@@ -171,16 +169,11 @@ make the PyPy run unable to fail.
 
 ## What this does NOT prove
 
-Nothing about modularity yet. This is infrastructure. In particular:
+Nothing about modularity yet. In particular:
 
-- No hypothesis has been stated (`PAPER_SPEC.md` is a skeleton) and no experiment run.
 - `beh_pure` being high on a task whose outputs are independent **by construction**
   (`retina_xN`) is not evidence of anything on its own — the control is `multN` and
   `parityN`, where it should stay low.
 - The exhaustive-evaluation ceiling means "big brain" currently tops out around 20
   inputs. That is wide enough for `retina_x2`, `add8`, `mult8`; it is not wide enough
   for anything one would casually call big.
-
-## Status
-
-Machinery complete and verified, 2026-08-18. Science not started. See `RESULTS.md`.

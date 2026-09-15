@@ -1,6 +1,6 @@
 # Experiment 4 — FG vs MVG, CGP circuits searched by Kashtan–Alon's population GA
 
-Promoted 2026-09-15, approved by the user. Source study:
+Source study:
 `experiments/experiment_4/runs/study_ga_E2000/` (gitignored; regenerable), a
 `study.json` that pairs two run directories:
 
@@ -9,7 +9,7 @@ Promoted 2026-09-15, approved by the user. Source study:
 | FG | `fgmvg50_ga_fg/cgppop_retina_ka2005_fg-and_n50_S600L150_g100000` |
 | MVG | `fgmvg50_pop/cgppop_retina_ka2005_mvg-and-or_n50_S600L150_g100000` |
 
-Repo at promotion time: branch `fluffy_experiments`, HEAD `e1ab8dc`. The search code
+Drawn at commit `e1ab8dc`. The search code
 (`train_pop.py`, `cgp.py`) is unchanged since `7dffb55`; the runs predate that commit
 (`config.json` records no commit), so they were checked against it: rerunning seed 0 of
 both arms for 2,500 generations with `7dffb55`'s `train_pop.py` gives archive rows
@@ -34,8 +34,7 @@ as experiment 4's `train.py`; only the search loop is KA's GA
 | evaluations | ~33.8M per seed (both arms) |
 | wall time | ~18–21 min per seed, 5 seeds in parallel, CPython, laptop |
 
-Commands, replication detail and the (1+4)-vs-GA comparison: `add_to_latex.md`,
-"Roadmap: from standard CGP to KA's population GA".
+Training commands and results: `experiments/experiment_4/RESULTS.md`, section 2.
 
 ## The files
 
@@ -87,12 +86,10 @@ gates; MVG acc 0.981 (on OR, the active goal), purity 1.000, 16.0 gates.
 
 # The (1+4) ES baseline — `*_es1p4*.png`
 
-Promoted 2026-09-15, approved by the user; drawn with the same (restyled) scripts, so
-the two sets read alike. Source study: `experiments/experiment_4/runs/fgmvg50/`
+Drawn with the same scripts as the GA set, so the two read alike. Source study: `experiments/experiment_4/runs/fgmvg50/`
 (gitignored), no `study.json` — the two run directories are found by glob:
 `cgp_retina_ka2005_fg-and_n50_m0.03_g800000_arch` and
-`cgp_retina_ka2005_mvg-and-or_n50_m0.03_g800000_arch`. Repo at promotion time: branch
-`fluffy_experiments`, HEAD `e1ab8dc`.
+`cgp_retina_ka2005_mvg-and-or_n50_m0.03_g800000_arch`. Drawn at commit `e1ab8dc`.
 
 ## The arm
 
@@ -100,8 +97,7 @@ Experiment 4's own frozen search, `train.py`: the CGP paper's **(1+4) ES** (one 
 4 mutated offspring, offspring win ties = neutral drift, no crossover). Same task,
 genotype (50 nodes, `and,nand,or,nor`), raw accuracy, 3% point mutation and MVG
 schedule (AND <-> OR, E = 2000) as the GA set above. **800,000 generations**, 3.2M
-evaluations per seed, seeds 0–4. Command and the side-by-side comparison with the GA:
-`add_to_latex.md`, "(1+4) ES vs KA's GA — what actually differs".
+evaluations per seed, seeds 0–4. Command: `experiments/experiment_4/RESULTS.md`, section 2.
 
 ## The files
 
@@ -133,7 +129,7 @@ gates; MVG acc 0.840, purity 0.685, 10.4 gates.
 * **The windows figure is the archived trajectory** (`--dense-archive` over those
   three windows); outside them the archive is every 100 generations.
 * **FG > MVG purity here is a solving effect, not an MVG effect.** At matched accuracy
-  (0.81–0.85) FG and MVG champions have the same purity (median 0.60 vs 0.62) and size
-  (7 gates) — `add_to_latex.md`, "The 5 FG vs 5 MVG study".
+  (0.81–0.85) FG and MVG champions have the same purity (median 0.55 vs 0.53) and size
+  (7–8 gates) — `experiments/experiment_4/analysis/matched_accuracy_purity.py`.
 * **Not budget-matched to the GA set:** 800k generations / 3.2M evaluations vs 100k /
   ~33.8M.
