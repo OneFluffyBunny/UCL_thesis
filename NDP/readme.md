@@ -1,3 +1,40 @@
+# Credit and provenance
+
+**This folder is not original work of this thesis.** It is the code of
+
+> Elias Najarro, Shyam Sudhakaran and Sebastian Risi, *Towards Self-Assembling Artificial
+> Neural Networks through Neural Developmental Programs*, ALIFE 2023 (MIT Press),
+> doi:[10.1162/isal_a_00697](https://doi.org/10.1162/isal_a_00697),
+> arXiv:[2307.08197](https://arxiv.org/abs/2307.08197)
+
+taken from the authors' repository, [github.com/enajx/NDP](https://github.com/enajx/NDP),
+at commit [`d735305`](https://github.com/enajx/NDP/commit/d735305) (2024-05-24, "add NDP RL
+version"). All credit for the Neural Developmental Program method and its original
+implementation belongs to those authors. The upstream repository has no license file at
+its root, so all rights to the main NDP code remain with them; the `NDP-RL/` subfolder
+carries its own MIT license (Copyright (c) 2021 Shyam Sudhakaran), kept unchanged. The
+code is included here only so the thesis experiments built on it can be inspected and
+reproduced.
+
+## What was changed for the thesis (Andrei Raducea-Marin, from 2026-05-29)
+
+Compare this folder with upstream commit `d735305` to see every change exactly.
+
+- **Modified:** `NDP.py`, `train.py`, `train_backend.py`, `optimizers.py`, `utils.py`,
+  `run_experiment.yaml`, `experiments_paper/XOR/run_experiment.yaml`,
+  `experiments_paper/lunarlander/run_experiment.yaml`.
+- **Added:** `ka_task.py`, `growth_stages.py`, `inspect_dna.py`, `fluffy_experiments.md`,
+  `experiments_paper/XOR/graph_paper_best.png`, and everything under
+  `experiments_paper/retina/` (the Kashtan-Alon retina study; start at its `RESULTS.md`).
+- **Unchanged from upstream:** everything else, including `NDP-RL/`, `images/`,
+  `tests_checks/` and the other `experiments_paper/` tasks.
+
+The retina analysis scripts import `qmetrics/` and `experiments/shared_brain_metrics.py`
+from the enclosing thesis repository, so they run only from inside it. Trained runs
+(`saved_models/`) are not committed.
+
+Everything below this line is the original authors' README, unchanged.
+
  
 ---
 

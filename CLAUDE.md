@@ -27,7 +27,7 @@ do not recreate the deleted names.
   there is unsaved.
 - Deliberately NOT saved, by design: `runs/` (regenerable — conclusions belong in
   `RESULTS.md`), `*.png` under `experiments/` (put figures worth keeping in
-  `latex_figures/`), `papers/`, `.venv-pypy/`, `LNDP/`, `NDP/`.
+  `latex_figures/`), `papers/`, `.venv-pypy/`, `LNDP/`, `NDP/saved_models/`.
 - `scratch_*.py` are untracked by convention. That is a choice, not an accident —
   but it does mean they are one `git clean` away from gone.
 
@@ -154,8 +154,12 @@ touching this. Run with `conda run -n lndp python kashtan_alon/run_paper.py` (th
   stdlib-only. Diagrams stay a CPython job (`render.py`).
 - Experiment outputs go to `runs/` (gitignored — regenerable; conclusions go in
   RESULTS.md).
-- Siblings `LNDP/` (the abandoned original framework) and `NDP/` are gitignored,
-  not part of this repo.
+- `LNDP/` (the abandoned original framework) is gitignored, not part of this repo.
+- `NDP/` IS tracked (since 2026-09-15): a `git subtree --squash` import of the standalone
+  NDP repo at `C:\Users\raduc\programare\NDP` (full history, branch `KA_experiments`).
+  Credit to the original authors is at the top of `NDP/readme.md`. Sync with
+  `git subtree push --prefix=NDP <standalone> KA_experiments` (edits made here) or
+  `git subtree pull --prefix=NDP <standalone> KA_experiments --squash` (edits made there).
 
 ## Remote (UCL GPU lab)
 - GitHub: `https://github.com/OneFluffyBunny/UCL_thesis`
